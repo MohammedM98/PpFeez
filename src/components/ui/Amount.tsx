@@ -19,7 +19,7 @@ export function Amount({ minor, currency, tone = 'plain', showCurrency = true, e
   return (
     <bdi dir="ltr" className={cx('num whitespace-nowrap', color, estimated && 'text-fg-3', className)}>
       {formatMinor(minor, currency)}
-      {showCurrency && <span className="ms-1 text-[0.8em] text-fg-3">{currency}</span>}
+      {showCurrency && <>{' '}<span className="text-[0.8em] text-fg-3">{currency}</span></>}
     </bdi>
   );
 }
