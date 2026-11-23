@@ -50,6 +50,30 @@ fn clean_name(s: &str) -> Option<String> {
     }
 }
 
+/// "Note from John Doe: text", "Note from John Doe:" + next line, or "Message: text".
+fn note(email: &ParsedEmail) -> Option<String> {
+    let clean = |s: &str| s.trim().trim_matches(['"', '“', '”']).trim().to_string();
+    for (i, line) in email.lines.iter().enumerate() {
+        let l = lower(line);
+        let Some(label) = NOTE.iter().find(|n| l.starts_with(&lower(n))) else { continue };
+        let rest = &line[label.len().min(line.len())..];
+        if rest.chars().next().map(|c| c.is_alphanumeric()).unwrap_or(false) {
+            continue; // e.g. "Messages"
+        }
+        let value = match rest.find(':') {
+            Some(p) => clean(&rest[p + 1..]),
+            // "Note from John Doe" without colon: the note is on the next line.
+            None if label.ends_with("from") => String::new(),
+            None => clean(rest),
+        };
+        let value = if value.is_empty() { email.lines.get(i + 1).map(|n| clean(n)).unwrap_or_default() } else { value };
+        if !value.is_empty() {
+            return Some(value);
+        }
+    }
+    None
+}
+
 impl PaypalParser for PaymentReceivedParser {
     fn name(&self) -> &'static str {
         "paypal_payment_received_en"
@@ -112,11 +136,10 @@ impl PaypalParser for PaymentReceivedParser {
         let payer_email = labeled(email, PAYER_EMAIL).and_then(|v| email_in(&v)).or_else(|| {
             // "John Doe (john@example.com)" next to the payer name.
             let name = payer_name.as_deref()?;
-            email.lines.iter().find(|l| l.contains(name)).and_then(|l| email_in(l))
+            email.lines.iter().filter(|l| l.contains(name)).find_map(|l| email_in(l))
         });
 
-        let payer_note =
-            labeled(email, NOTE).map(|n| n.trim_matches(['"', '“', '”']).trim().to_string()).filter(|n| !n.is_empty());
+        let payer_note = note(email);
 
         let occurred_at =
             labeled(email, DATE).and_then(|d| parse_paypal_date(&d, email.received_at)).unwrap_or(email.received_at);
