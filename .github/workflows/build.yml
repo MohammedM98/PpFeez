@@ -7,9 +7,11 @@ on:
     branches: [desktop]
   workflow_dispatch:
 
+# A running build always finishes (the UI and backend sessions push often); only the
+# newest waiting run is kept.
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   core-tests:
