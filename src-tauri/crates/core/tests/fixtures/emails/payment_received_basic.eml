@@ -1,0 +1,51 @@
+Delivered-To: owner@example.com
+Received: by 2002:a05:6400:1234:b0:2a1:aaaa:bbbb with SMTP id x12csp123456;
+        Fri, 20 Nov 2026 14:22:01 -0800
+X-Google-Smtp-Source: AGHT+IFakeFixtureValue
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.com header.s=pp-dkim1 header.b=Xy12AbCd;
+       spf=pass (google.com: domain of service@paypal.com designates 173.0.84.4 as permitted sender) smtp.mailfrom=service@paypal.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paypal.com
+Received: from mx1.slc.paypal.com (mx1.slc.paypal.com. [173.0.84.4])
+        by mx.google.com with ESMTPS id fixture.123
+        for <owner@example.com>;
+        Fri, 20 Nov 2026 14:22:01 -0800
+DKIM-Signature: v=1; a=rsa-sha256; d=paypal.com; i=@paypal.com; s=pp-dkim1; b=FIXTURE
+From: "service@paypal.com" <service@paypal.com>
+To: Owner Example <owner@example.com>
+Subject: You've got money
+Date: Fri, 20 Nov 2026 14:22:01 -0800
+Message-ID: <payment-basic-001@paypal.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b1"
+
+--b1
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+John Doe sent you $100.00 USD
+
+--b1
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<html><head><style>td{font-family:Arial}</style></head><body>
+<table width=3D"100%"><tr><td>
+<p>Hello, Owner Example</p>
+<h1>John Doe sent you $100.00&nbsp;USD</h1>
+<p>John Doe (john.doe@example.com)</p>
+<table>
+<tr><td><b>Note from John Doe:</b></td></tr>
+<tr><td>&ldquo;For Ahmed &ndash; order #12&rdquo;</td></tr>
+</table>
+<table>
+<tr><td>Transaction ID</td><td><a href=3D"https://www.paypal.com/activity/payment/9AB12345CD6789012">9AB12345CD6789012</a></td></tr>
+<tr><td>Transaction date</td><td>Nov 20, 2026</td></tr>
+<tr><td>Amount received</td><td>$100.00 USD</td></tr>
+</table>
+<p>It may take a few moments for this transaction to appear in your account.</p>
+<script>alert('x')</script>
+</td></tr></table>
+</body></html>
+
+--b1--

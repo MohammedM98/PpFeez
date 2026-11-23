@@ -1,0 +1,30 @@
+Delivered-To: owner@example.com
+Received: by 2002:a05:6400:1234:b0:2a1:aaaa:bbbb with SMTP id x12csp123456;
+        Tue, 24 Nov 2026 12:00:00 -0800
+X-Google-Smtp-Source: AGHT+IFakeFixtureValue
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.com header.s=pp-dkim1 header.b=Xy12AbCd;
+       spf=pass (google.com: domain of service@paypal.com designates 173.0.84.4 as permitted sender) smtp.mailfrom=service@paypal.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paypal.com
+Received: from mx1.slc.paypal.com (mx1.slc.paypal.com. [173.0.84.4])
+        by mx.google.com with ESMTPS id fixture.123
+        for <owner@example.com>;
+        Tue, 24 Nov 2026 12:00:00 -0800
+DKIM-Signature: v=1; a=rsa-sha256; d=paypal.com; i=@paypal.com; s=pp-dkim1; b=FIXTURE
+From: "service@paypal.com" <service@paypal.com>
+To: Owner Example <owner@example.com>
+Subject: You sent a refund to John Doe
+Date: Tue, 24 Nov 2026 12:00:00 -0800
+Message-ID: <refund-005@paypal.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset="UTF-8"
+
+<html><body>
+<p>You sent a refund of $40.00 USD to John Doe</p>
+<table>
+<tr><td>Refund amount</td><td>$40.00 USD</td></tr>
+<tr><td>Refund transaction ID</td><td>7RF98765QP4321098</td></tr>
+<tr><td>Original transaction ID</td><td>9AB12345CD6789012</td></tr>
+<tr><td>Refund date</td><td>Nov 24, 2026</td></tr>
+</table>
+</body></html>

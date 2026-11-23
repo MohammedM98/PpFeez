@@ -1,0 +1,30 @@
+Delivered-To: owner@example.com
+Received: by 2002:a05:6400:1234:b0:2a1:aaaa:bbbb with SMTP id x12csp123456;
+        Mon, 23 Nov 2026 10:00:00 +0100
+X-Google-Smtp-Source: AGHT+IFakeFixtureValue
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.com header.s=pp-dkim1 header.b=Xy12AbCd;
+       spf=pass (google.com: domain of service@paypal.com designates 173.0.84.4 as permitted sender) smtp.mailfrom=service@paypal.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paypal.com
+Received: from mx1.slc.paypal.com (mx1.slc.paypal.com. [173.0.84.4])
+        by mx.google.com with ESMTPS id fixture.123
+        for <owner@example.com>;
+        Mon, 23 Nov 2026 10:00:00 +0100
+DKIM-Signature: v=1; a=rsa-sha256; d=paypal.com; i=@paypal.com; s=pp-dkim1; b=FIXTURE
+From: "service@paypal.com" <service@paypal.com>
+To: Owner Example <owner@example.com>
+Subject: Payment received from Hans Muller
+Date: Mon, 23 Nov 2026 10:00:00 +0100
+Message-ID: <payment-eur-004@paypal.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset="UTF-8"
+
+<html><body>
+<div>Hans Muller sent you 1.234,56 EUR</div>
+<table>
+<tr><td>Transaction ID:</td><td>8EU11112222333344</td></tr>
+<tr><td>Amount received</td><td>1.234,56 EUR</td></tr>
+<tr><td>Net amount</td><td>1.180,23 EUR</td></tr>
+<tr><td>Sender email</td><td>hans.muller@example.net</td></tr>
+</table>
+</body></html>

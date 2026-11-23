@@ -1,0 +1,30 @@
+Delivered-To: owner@example.com
+Received: by 2002:a05:6400:1234:b0:2a1:aaaa:bbbb with SMTP id x12csp123456;
+        Wed, 25 Nov 2026 08:30:00 -0800
+X-Google-Smtp-Source: AGHT+IFakeFixtureValue
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.com header.s=pp-dkim1 header.b=Xy12AbCd;
+       spf=pass (google.com: domain of service@paypal.com designates 173.0.84.4 as permitted sender) smtp.mailfrom=service@paypal.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paypal.com
+Received: from mx1.slc.paypal.com (mx1.slc.paypal.com. [173.0.84.4])
+        by mx.google.com with ESMTPS id fixture.123
+        for <owner@example.com>;
+        Wed, 25 Nov 2026 08:30:00 -0800
+DKIM-Signature: v=1; a=rsa-sha256; d=paypal.com; i=@paypal.com; s=pp-dkim1; b=FIXTURE
+From: "PayPal" <service@paypal.com>
+To: Owner Example <owner@example.com>
+Subject: A payment was reversed
+Date: Wed, 25 Nov 2026 08:30:00 -0800
+Message-ID: <reversal-006@paypal.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+
+Hello Owner Example,
+
+A payment you received was reversed because the buyer filed a chargeback.
+
+Reversed amount: $100.00 USD
+Transaction ID: 9AB12345CD6789012
+Case ID: PP-D-123456
+Buyer: John Doe
+Reason: Unauthorized transaction

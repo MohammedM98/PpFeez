@@ -1,0 +1,82 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [desktop]
+  pull_request:
+    branches: [desktop]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-tests:
+    name: Core tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: core
+
+      - name: cargo test (ppfeez-core)
+        working-directory: src-tauri
+        run: cargo test -p ppfeez-core --locked
+
+      - name: cargo clippy (ppfeez-core)
+        working-directory: src-tauri
+        run: cargo clippy -p ppfeez-core --locked --all-targets -- -D warnings
+
+  bundle:
+    name: Windows installer (NSIS .exe)
+    needs: core-tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect frontend
+        id: fe
+        shell: pwsh
+        run: |
+          if (Test-Path package.json) { "present=true" >> $env:GITHUB_OUTPUT }
+          else {
+            "present=false" >> $env:GITHUB_OUTPUT
+            Write-Output "::notice title=Installer skipped::package.json is not on this branch yet (the UI session adds it). The installer is built once the frontend exists."
+          }
+
+      - uses: actions/setup-node@v4
+        if: steps.fe.outputs.present == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.fe.outputs.present == 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.fe.outputs.present == 'true'
+        with:
+          workspaces: src-tauri -> target
+          key: bundle
+
+      - name: Install frontend dependencies
+        if: steps.fe.outputs.present == 'true'
+        run: npm ci
+
+      - name: Build installer
+        if: steps.fe.outputs.present == 'true'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --bundles nsis
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: PpFeez-[version]-windows-[arch]-[bundle]

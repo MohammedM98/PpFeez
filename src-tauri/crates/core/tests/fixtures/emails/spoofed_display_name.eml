@@ -1,0 +1,14 @@
+Delivered-To: owner@example.com
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@evil.example header.s=s1 header.b=ZZZ;
+       spf=pass (google.com: domain of attacker@evil.example designates 203.0.113.9 as permitted sender) smtp.mailfrom=attacker@evil.example
+From: "service@paypal.com" <attacker@evil.example>
+To: owner@example.com
+Subject: You've got money
+Date: Thu, 26 Nov 2026 11:00:00 +0000
+Message-ID: <spoof-009@evil.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+
+Fake Person sent you $5,000.00 USD
+Transaction ID: 1FAKE234567890123

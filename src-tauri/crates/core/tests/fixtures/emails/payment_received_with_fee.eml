@@ -1,0 +1,37 @@
+Delivered-To: owner@example.com
+Received: by 2002:a05:6400:1234:b0:2a1:aaaa:bbbb with SMTP id x12csp123456;
+        Sat, 21 Nov 2026 09:05:44 +0100
+X-Google-Smtp-Source: AGHT+IFakeFixtureValue
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.com header.s=pp-dkim1 header.b=Xy12AbCd;
+       spf=pass (google.com: domain of service@paypal.com designates 173.0.84.4 as permitted sender) smtp.mailfrom=service@paypal.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paypal.com
+Received: from mx1.slc.paypal.com (mx1.slc.paypal.com. [173.0.84.4])
+        by mx.google.com with ESMTPS id fixture.123
+        for <owner@example.com>;
+        Sat, 21 Nov 2026 09:05:44 +0100
+DKIM-Signature: v=1; a=rsa-sha256; d=paypal.com; i=@paypal.com; s=pp-dkim1; b=FIXTURE
+From: "PayPal" <service@intl.paypal.com>
+To: Owner Example <owner@example.com>
+Subject: You received a payment of €50,00 EUR from Maria Rossi
+Date: Sat, 21 Nov 2026 09:05:44 +0100
+Message-ID: <payment-fee-002@paypal.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 8bit
+
+Hello Owner Example,
+
+You received a payment of €50,00 EUR from Maria Rossi (maria.rossi@example.org).
+
+Payment details
+Transaction ID: 3KL45678MN9012345
+Transaction date: 21 Nov 2026 09:05:12 CET
+Amount received: €50,00 EUR
+PayPal fee: -€2,05 EUR
+Net amount: €47,95 EUR
+
+Message: Rent share November
+
+Thanks,
+PayPal
