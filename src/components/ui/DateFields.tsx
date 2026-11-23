@@ -42,6 +42,7 @@ export function DatePicker({ label, value, onChange, withTime, className, isRequ
       onChange={(v) => onChange(v ? (withTime ? v.toString().slice(0, 16).replace('T', ' ') : v.toString().slice(0, 10)) : null)}
       granularity={withTime ? 'minute' : 'day'}
       hourCycle={24}
+      shouldForceLeadingZeros
       isRequired={isRequired}
       className={cx('flex flex-col gap-1.5', className)}
     >
@@ -67,7 +68,7 @@ export function DateRangePicker({ label, value, onChange, className }: { label: 
   try { v = value.from && value.to ? { start: parseDate(value.from), end: parseDate(value.to) } : null; } catch { v = null; }
   return (
     <I18nProvider locale={FIELD_LOCALE}>
-    <RacDateRangePicker aria-label={label} value={v} onChange={(r) => onChange(r ? { from: r.start.toString(), to: r.end.toString() } : {})} className={cx('flex flex-col', className)}>
+    <RacDateRangePicker shouldForceLeadingZeros aria-label={label} value={v} onChange={(r) => onChange(r ? { from: r.start.toString(), to: r.end.toString() } : {})} className={cx('flex flex-col', className)}>
       <Group className={cx('flex items-center gap-1 pe-1 ps-3', fieldShell)}>
         <div dir="ltr" className="flex flex-1 items-center justify-end gap-1 text-sm">
           <DateInput slot="start" className="flex">{(s) => <DateSegment segment={s} className={segment} />}</DateInput>
