@@ -12,7 +12,8 @@ use std::sync::OnceLock;
 pub struct RefundParser;
 
 pub const REFUND_ID: &[&str] = &["Refund transaction ID", "Refund ID", "Transaction ID"];
-pub const ORIGINAL_ID: &[&str] = &["Original transaction ID", "Original transaction", "Original payment ID", "For transaction"];
+pub const ORIGINAL_ID: &[&str] =
+    &["Original transaction ID", "Original transaction", "Original payment ID", "For transaction"];
 pub const AMOUNT: &[&str] = &["Refund amount", "Amount refunded", "Total refund", "Refunded amount", "Amount"];
 pub const DATE: &[&str] = &["Refund date", "Transaction date", "Date"];
 pub const TO_NAME: &[&str] = &["Refunded to", "Refund to", "Buyer", "Recipient"];
@@ -32,7 +33,10 @@ impl PaypalParser for RefundParser {
         if s.contains("received a refund") || s.contains("refund from") {
             return false;
         }
-        subject_has(email, &["you sent a refund", "you've sent a refund", "you have sent a refund", "refund to", "you refunded"])
+        subject_has(
+            email,
+            &["you sent a refund", "you've sent a refund", "you have sent a refund", "refund to", "you refunded"],
+        )
     }
 
     fn parse(&self, email: &ParsedEmail) -> Result<ParsedTransaction, ParseError> {
@@ -56,9 +60,8 @@ impl PaypalParser for RefundParser {
             .map(|n| n.trim().to_string())
             .filter(|n| !n.is_empty() && !n.contains('@'));
         let payer_email = labeled(email, &["Buyer email", "Recipient email", "Email"]).and_then(|v| email_in(&v));
-        let occurred_at = labeled(email, DATE)
-            .and_then(|d| parse_paypal_date(&d, email.received_at))
-            .unwrap_or(email.received_at);
+        let occurred_at =
+            labeled(email, DATE).and_then(|d| parse_paypal_date(&d, email.received_at)).unwrap_or(email.received_at);
         Ok(ParsedTransaction {
             kind: TxnType::Refund,
             paypal_txn_id,

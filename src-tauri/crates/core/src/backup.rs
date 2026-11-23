@@ -59,9 +59,7 @@ impl Core {
     }
 
     pub fn backup_now(&self) -> AppResult<BackupFile> {
-        let dir = self
-            .backup_dir()?
-            .ok_or_else(|| failed("لم يُحدَّد مجلد النسخ الاحتياطي. اختره من الإعدادات"))?;
+        let dir = self.backup_dir()?.ok_or_else(|| failed("لم يُحدَّد مجلد النسخ الاحتياطي. اختره من الإعدادات"))?;
         let file = self.backup_into(&dir)?;
         self.prune_backups(&dir)?;
         Ok(file)

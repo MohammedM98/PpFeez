@@ -54,11 +54,7 @@ pub fn find_all(text: &str) -> Vec<FoundMoney> {
         };
         let num = c.name("num").unwrap().as_str();
         let Some(minor) = parse_amount(num, &currency) else { continue };
-        out.push(FoundMoney {
-            minor,
-            currency,
-            negative: c.name("neg").is_some() || c.name("neg2").is_some(),
-        });
+        out.push(FoundMoney { minor, currency, negative: c.name("neg").is_some() || c.name("neg2").is_some() });
     }
     out
 }

@@ -53,10 +53,7 @@ pub struct FixedClock {
 
 impl FixedClock {
     pub fn new(now: DateTime<Utc>, offset_hours: i32) -> Self {
-        FixedClock {
-            now: Mutex::new(now),
-            offset: FixedOffset::east_opt(offset_hours * 3600).expect("valid offset"),
-        }
+        FixedClock { now: Mutex::new(now), offset: FixedOffset::east_opt(offset_hours * 3600).expect("valid offset") }
     }
 
     pub fn set(&self, now: DateTime<Utc>) {
@@ -75,11 +72,7 @@ impl Clock for FixedClock {
     }
 
     fn local_to_utc(&self, local: NaiveDateTime) -> DateTime<Utc> {
-        self.offset
-            .from_local_datetime(&local)
-            .single()
-            .expect("fixed offset is unambiguous")
-            .with_timezone(&Utc)
+        self.offset.from_local_datetime(&local).single().expect("fixed offset is unambiguous").with_timezone(&Utc)
     }
 
     fn utc_to_local(&self, utc: DateTime<Utc>) -> NaiveDateTime {

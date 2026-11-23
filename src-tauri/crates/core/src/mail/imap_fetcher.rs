@@ -26,7 +26,9 @@ fn connect_error(detail: impl std::fmt::Display) -> AppError {
 /// Map a server error text to a contract error code.
 pub fn classify_server_error(text: &str) -> AppError {
     let lower = text.to_ascii_lowercase();
-    if lower.contains("not enabled for imap") || lower.contains("imap access is disabled") || lower.contains("imap is disabled")
+    if lower.contains("not enabled for imap")
+        || lower.contains("imap access is disabled")
+        || lower.contains("imap is disabled")
     {
         AppError::new(
             ErrorCode::ImapDisabled,
@@ -102,10 +104,8 @@ impl MailFetcher for ImapFetcher {
         }
         let set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
         let fetches = self.session.uid_fetch(set, "(UID BODY.PEEK[])").map_err(map_err)?;
-        let mut out: Vec<FetchedMessage> = fetches
-            .iter()
-            .filter_map(|f| Some(FetchedMessage { uid: f.uid?, raw: f.body()?.to_vec() }))
-            .collect();
+        let mut out: Vec<FetchedMessage> =
+            fetches.iter().filter_map(|f| Some(FetchedMessage { uid: f.uid?, raw: f.body()?.to_vec() })).collect();
         out.sort_by_key(|m| m.uid);
         Ok(out)
     }

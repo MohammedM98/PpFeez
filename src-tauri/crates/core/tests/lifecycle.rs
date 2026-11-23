@@ -6,8 +6,8 @@ use ppfeez_core::customers::CustomerInput;
 use ppfeez_core::error::ErrorCode;
 use ppfeez_core::settings::SettingsPatch;
 use ppfeez_core::transactions::{
-    BulkAction, CommissionInput, FeeInput, ManualTxnInput, StatusFilter, TxnAction, TxnFilter, TxnSort, TxnSortKey,
-    SortDir, TxnStatus,
+    BulkAction, CommissionInput, FeeInput, ManualTxnInput, SortDir, StatusFilter, TxnAction, TxnFilter, TxnSort,
+    TxnSortKey, TxnStatus,
 };
 
 #[test]
@@ -97,10 +97,7 @@ fn full_happy_path_assign_fee_approve() {
     assert_eq!(e.amount_minor, 7125);
     assert_eq!(e.entry_date, "2026-11-23");
     assert_eq!(e.transaction_id, Some(t.id));
-    assert_eq!(
-        e.description,
-        "دفعة من John Doe — أصلي 100.00 USD، رسوم 5.00 USD، عمولة 25.00%"
-    );
+    assert_eq!(e.description, "دفعة من John Doe — أصلي 100.00 USD، رسوم 5.00 USD، عمولة 25.00%");
 
     let history = h.core.txn_history(t.id).unwrap();
     let actions: Vec<_> = history.iter().map(|i| i.action.as_str()).collect();
@@ -112,10 +109,7 @@ fn assign_with_override_and_direct_approval() {
     let h = harness();
     let c = h.customer("Ali", 2500);
     let t = h.manual("USD", "100.00", Some("5.00"));
-    let t = h
-        .core
-        .txn_assign(t.id, c.id, Some(CommissionInput::Fixed { amount_text: "10".into() }), true)
-        .unwrap();
+    let t = h.core.txn_assign(t.id, c.id, Some(CommissionInput::Fixed { amount_text: "10".into() }), true).unwrap();
     assert_eq!(t.status, TxnStatus::Approved);
     assert_eq!(t.commission_mode, Some(CommissionMode::Fixed));
     assert_eq!(t.customer_amount_minor, Some(8500));
@@ -149,9 +143,7 @@ fn fee_and_net_inputs() {
 #[test]
 fn fee_estimate_is_suggested_and_saved_only_on_confirmation() {
     let h = harness();
-    h.core
-        .update_settings(SettingsPatch { fee_estimate_enabled: Some(true), ..Default::default() })
-        .unwrap();
+    h.core.update_settings(SettingsPatch { fee_estimate_enabled: Some(true), ..Default::default() }).unwrap();
     let t = h.manual("USD", "100.00", None);
     let p = h.core.txn_preview(t.id, None, None, None).unwrap();
     assert_eq!(p.fee_estimate_minor, Some(470));
@@ -170,14 +162,16 @@ fn preview_does_not_save_and_reports_errors() {
     let t = h.manual("USD", "100.00", Some("5"));
     let p = h.core.txn_preview(t.id, None, None, Some(c.id)).unwrap();
     assert_eq!((p.net_minor, p.commission_minor, p.customer_amount_minor), (Some(9500), Some(1900), Some(7600)));
-    let p = h
-        .core
-        .txn_preview(t.id, None, Some(CommissionInput::Fixed { amount_text: "96".into() }), None)
-        .unwrap();
+    let p = h.core.txn_preview(t.id, None, Some(CommissionInput::Fixed { amount_text: "96".into() }), None).unwrap();
     assert_eq!(p.error.map(|e| e.code), Some(ErrorCode::CommissionExceedsNet));
     let p = h
         .core
-        .txn_preview(t.id, Some(FeeInput::Fee { fee_text: "10".into() }), Some(CommissionInput::Percent { bps: 1000 }), None)
+        .txn_preview(
+            t.id,
+            Some(FeeInput::Fee { fee_text: "10".into() }),
+            Some(CommissionInput::Percent { bps: 1000 }),
+            None,
+        )
         .unwrap();
     assert_eq!(p.customer_amount_minor, Some(8100));
     let saved = h.core.txn_get(t.id).unwrap();
@@ -198,7 +192,10 @@ fn set_commission_recomputes_and_rejects_more_than_net() {
     );
     // Raising the fee above what a fixed commission allows is rejected too.
     h.core.txn_set_commission(t.id, CommissionInput::Fixed { amount_text: "90".into() }).unwrap();
-    assert_eq!(code(h.core.txn_set_fee(t.id, FeeInput::Fee { fee_text: "11".into() })), ErrorCode::CommissionExceedsNet);
+    assert_eq!(
+        code(h.core.txn_set_fee(t.id, FeeInput::Fee { fee_text: "11".into() })),
+        ErrorCode::CommissionExceedsNet
+    );
 }
 
 #[test]
@@ -213,7 +210,10 @@ fn forbidden_transitions() {
     assert_eq!(code(h.core.txn_approve(t.id)), ErrorCode::InvalidTransition);
     assert_eq!(code(h.core.txn_unassign(t.id)), ErrorCode::InvalidTransition);
     assert_eq!(code(h.core.txn_unapprove(t.id, "x")), ErrorCode::InvalidTransition);
-    assert_eq!(code(h.core.txn_set_commission(t.id, CommissionInput::Percent { bps: 1 })), ErrorCode::InvalidTransition);
+    assert_eq!(
+        code(h.core.txn_set_commission(t.id, CommissionInput::Percent { bps: 1 })),
+        ErrorCode::InvalidTransition
+    );
     assert_eq!(code(h.core.txn_set_excluded(t.id, false)), ErrorCode::InvalidTransition);
     // inactive customer
     assert_eq!(code(h.core.txn_assign(t.id, inactive.id, None, false)), ErrorCode::CustomerInactive);
@@ -227,7 +227,10 @@ fn forbidden_transitions() {
     // approved: locked
     h.core.txn_approve(t.id).unwrap();
     assert_eq!(code(h.core.txn_set_fee(t.id, FeeInput::Zero)), ErrorCode::InvalidTransition);
-    assert_eq!(code(h.core.txn_set_commission(t.id, CommissionInput::Percent { bps: 0 })), ErrorCode::InvalidTransition);
+    assert_eq!(
+        code(h.core.txn_set_commission(t.id, CommissionInput::Percent { bps: 0 })),
+        ErrorCode::InvalidTransition
+    );
     assert_eq!(code(h.core.txn_unassign(t.id)), ErrorCode::InvalidTransition);
     assert_eq!(code(h.core.txn_approve(t.id)), ErrorCode::InvalidTransition);
     assert_eq!(code(h.core.txn_set_excluded(t.id, true)), ErrorCode::InvalidTransition);
@@ -263,7 +266,16 @@ fn default_commission_change_does_not_touch_assigned() {
     let t = h.manual("USD", "100", Some("0"));
     h.core.txn_assign(t.id, c.id, None, false).unwrap();
     h.core
-        .customer_update(c.id, CustomerInput { name: "Ali".into(), phone: None, default_commission_bps: 1000, notes: None, is_active: None })
+        .customer_update(
+            c.id,
+            CustomerInput {
+                name: "Ali".into(),
+                phone: None,
+                default_commission_bps: 1000,
+                notes: None,
+                is_active: None,
+            },
+        )
         .unwrap();
     assert_eq!(h.core.txn_get(t.id).unwrap().commission_bps, Some(2500));
 }
@@ -330,7 +342,10 @@ fn list_filter_sort_page_totals_and_counts() {
 
     // Period: occurred 2026-11-20 10:30 local
     let f = TxnFilter {
-        period: Some(ppfeez_core::transactions::Period { from: Some("2026-11-20".into()), to: Some("2026-11-20".into()) }),
+        period: Some(ppfeez_core::transactions::Period {
+            from: Some("2026-11-20".into()),
+            to: Some("2026-11-20".into()),
+        }),
         ..Default::default()
     };
     assert_eq!(h.core.txn_list(&f, TxnSort::default(), 1, 50).unwrap().total, 61);

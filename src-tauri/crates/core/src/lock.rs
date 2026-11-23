@@ -35,10 +35,7 @@ pub struct AppStatus {
 }
 
 pub fn hash_password(password: &str) -> AppResult<String> {
-    Argon2::default()
-        .hash_password(password.as_bytes())
-        .map(|h| h.to_string())
-        .map_err(AppError::internal)
+    Argon2::default().hash_password(password.as_bytes()).map(|h| h.to_string()).map_err(AppError::internal)
 }
 
 pub fn verify_password(password: &str, hash: &str) -> bool {
@@ -138,28 +135,30 @@ impl Core {
         if self.lock_enabled()? {
             let hash = settings::get_raw(&self.conn(), K_LOCK_HASH)?.unwrap_or_default();
             if !current.map(|c| verify_password(c, &hash)).unwrap_or(false) {
-                return Err(AppError::new(ErrorCode::WrongPassword, "كلمة المرور الحالية غير صحيحة").with_field("current"));
+                return Err(
+                    AppError::new(ErrorCode::WrongPassword, "كلمة المرور الحالية غير صحيحة").with_field("current")
+                );
             }
         }
         {
-        let conn = self.conn();
-        match next {
-            Some(p) => {
-                if p.chars().count() < MIN_PASSWORD_LEN {
-                    return Err(AppError::validation(
-                        "next",
-                        format!("كلمة القفل يجب أن تكون {MIN_PASSWORD_LEN} أحرف على الأقل"),
-                    ));
+            let conn = self.conn();
+            match next {
+                Some(p) => {
+                    if p.chars().count() < MIN_PASSWORD_LEN {
+                        return Err(AppError::validation(
+                            "next",
+                            format!("كلمة القفل يجب أن تكون {MIN_PASSWORD_LEN} أحرف على الأقل"),
+                        ));
+                    }
+                    let h = hash_password(p)?;
+                    settings::set_raw(&conn, K_LOCK_HASH, &h)?;
+                    settings::set_raw(&conn, K_LOCK_ENABLED, "1")?;
                 }
-                let h = hash_password(p)?;
-                settings::set_raw(&conn, K_LOCK_HASH, &h)?;
-                settings::set_raw(&conn, K_LOCK_ENABLED, "1")?;
+                None => {
+                    settings::delete_raw(&conn, K_LOCK_HASH)?;
+                    settings::set_raw(&conn, K_LOCK_ENABLED, "0")?;
+                }
             }
-            None => {
-                settings::delete_raw(&conn, K_LOCK_HASH)?;
-                settings::set_raw(&conn, K_LOCK_ENABLED, "0")?;
-            }
-        }
         }
         let mut st = self.lock_state.lock().unwrap();
         st.locked = false;

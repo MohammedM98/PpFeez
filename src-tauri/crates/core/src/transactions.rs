@@ -536,8 +536,9 @@ pub fn derive(gross: i64, fee: Option<i64>, rule: Option<Commission>) -> AppResu
                 return Err(AppError::invalid_amount("amountText"));
             }
             if amount > gross {
-                return Err(AppError::new(ErrorCode::CommissionExceedsNet, "العمولة أكبر من المبلغ")
-                    .with_field("amountText"));
+                return Err(
+                    AppError::new(ErrorCode::CommissionExceedsNet, "العمولة أكبر من المبلغ").with_field("amountText")
+                );
             }
             Ok(Derived { net_minor: None, commission_minor: Some(amount), customer_amount_minor: None })
         }
@@ -613,11 +614,7 @@ fn write_amounts(conn: &Connection, id: i64, d: &Derived, now: &str) -> AppResul
 
 /// Description of the ledger credit written on approval (SPEC §6.5).
 pub fn credit_description(row: &TxnRow) -> String {
-    let payer = row
-        .payer_name
-        .clone()
-        .or_else(|| row.payer_email.clone())
-        .unwrap_or_else(|| row.paypal_txn_id.clone());
+    let payer = row.payer_name.clone().or_else(|| row.payer_email.clone()).unwrap_or_else(|| row.paypal_txn_id.clone());
     let commission = match row.commission_mode {
         Some(CommissionMode::Percent) => format_bps(row.commission_bps.unwrap_or(0)),
         _ => format_amount(row.commission_minor.unwrap_or(0), &row.currency),
@@ -646,11 +643,9 @@ pub(crate) fn assign_in(
         return Err(AppError::invalid_transition("صفوف الاسترداد والعكس لا تُخصَّص لعميل"));
     }
     let (active, default_bps): (bool, i64) = conn
-        .query_row(
-            "SELECT is_active, default_commission_bps FROM customers WHERE id = ?1",
-            params![customer_id],
-            |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?)),
-        )
+        .query_row("SELECT is_active, default_commission_bps FROM customers WHERE id = ?1", params![customer_id], |r| {
+            Ok((r.get::<_, i64>(0)? != 0, r.get(1)?))
+        })
         .optional()?
         .ok_or_else(|| AppError::not_found("العميل"))?;
     if !active {
@@ -864,8 +859,8 @@ impl Core {
         let local = parse_local_datetime(&input.occurred_at)
             .ok_or_else(|| AppError::validation("occurredAt", "التاريخ غير صالح (YYYY-MM-DD HH:mm)"))?;
         let occurred_at = iso(self.clock.local_to_utc(local));
-        let paypal_txn_id = clean(input.paypal_txn_id.clone())
-            .unwrap_or_else(|| format!("MANUAL-{}", uuid::Uuid::new_v4()));
+        let paypal_txn_id =
+            clean(input.paypal_txn_id.clone()).unwrap_or_else(|| format!("MANUAL-{}", uuid::Uuid::new_v4()));
         let now = self.now_iso();
         let conn = self.conn();
         let tx = conn.unchecked_transaction()?;
@@ -1066,11 +1061,9 @@ impl Core {
                 (Some(c), _) => Some(resolve_commission(c, &row.currency)?),
                 (None, Some(cid)) => {
                     let bps: i64 = conn
-                        .query_row(
-                            "SELECT default_commission_bps FROM customers WHERE id = ?1",
-                            params![cid],
-                            |r| r.get(0),
-                        )
+                        .query_row("SELECT default_commission_bps FROM customers WHERE id = ?1", params![cid], |r| {
+                            r.get(0)
+                        })
                         .optional()?
                         .ok_or_else(|| AppError::not_found("العميل"))?;
                     Some(Commission::Percent(bps))
@@ -1176,11 +1169,7 @@ impl Core {
     }
 
     /// Build the WHERE clause of a transaction filter.
-    fn where_clause(
-        &self,
-        f: &TxnFilter,
-        with_status: bool,
-    ) -> AppResult<(String, Vec<rusqlite::types::Value>)> {
+    fn where_clause(&self, f: &TxnFilter, with_status: bool) -> AppResult<(String, Vec<rusqlite::types::Value>)> {
         let mut w = vec!["1=1".to_string()];
         let mut a: Vec<rusqlite::types::Value> = vec![];
         if with_status {
@@ -1238,7 +1227,8 @@ impl Core {
             match s.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
                 None => Ok(None),
                 Some(v) => {
-                    let d = parse_date(v).ok_or_else(|| AppError::validation(field, "التاريخ غير صالح (YYYY-MM-DD)"))?;
+                    let d =
+                        parse_date(v).ok_or_else(|| AppError::validation(field, "التاريخ غير صالح (YYYY-MM-DD)"))?;
                     let d = if add_day { d + Duration::days(1) } else { d };
                     Ok(Some(iso(self.clock.local_to_utc(d.and_hms_opt(0, 0, 0).unwrap()))))
                 }

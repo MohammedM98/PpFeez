@@ -113,7 +113,13 @@ fn load(conn: &Connection, id: i64) -> AppResult<(RawEmail, i64, StoredEmail)> {
 }
 
 impl Core {
-    pub fn emails_list(&self, status: ParseStatus, search: Option<&str>, page: i64, page_size: i64) -> AppResult<Page<RawEmailSummary>> {
+    pub fn emails_list(
+        &self,
+        status: ParseStatus,
+        search: Option<&str>,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<Page<RawEmailSummary>> {
         let page = page.max(1);
         let page_size = page_size.clamp(1, 500);
         let conn = self.conn();

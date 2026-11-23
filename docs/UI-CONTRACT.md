@@ -274,6 +274,7 @@ export type PullRun = {
 // mailbox_create({ input: MailboxInput }): Mailbox
 // mailbox_update({ id, input: MailboxInput }): Mailbox
 // mailbox_set_password({ id, password }): void
+// mailbox_set_active({ id, active: boolean }): Mailbox   // "إيقاف"/تفعيل البريد (SPEC §6.7)؛ السحب يُرفض لبريد موقوف
 // mailbox_test({ id } | { input: MailboxInput }): { ok: true; folderCount: number }   throws imap_auth | imap_connect | imap_disabled
 // mailbox_delete({ id }): void                   throws has_dependents
 // pull_start({ mailboxId }): PullRun              throws pull_running

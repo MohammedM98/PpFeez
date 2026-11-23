@@ -85,7 +85,8 @@ impl Core {
                    AND (?1 IS NULL OR occurred_at >= ?1) AND (?2 IS NULL OR occurred_at < ?2)
                  GROUP BY currency",
             )?;
-            let rows = stmt.query_map(params![from_ts, to_ts], |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?)))?;
+            let rows =
+                stmt.query_map(params![from_ts, to_ts], |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?)))?;
             for row in rows {
                 let (c, g, f): (String, i64, i64) = row?;
                 let e = slot(&mut by, c);

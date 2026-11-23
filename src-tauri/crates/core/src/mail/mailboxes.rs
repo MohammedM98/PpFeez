@@ -268,7 +268,9 @@ impl Core {
             let conn = self.conn();
             load(&conn, id)?;
             let txns: i64 =
-                conn.query_row("SELECT COUNT(*) FROM paypal_transactions WHERE mailbox_id = ?1", params![id], |r| r.get(0))?;
+                conn.query_row("SELECT COUNT(*) FROM paypal_transactions WHERE mailbox_id = ?1", params![id], |r| {
+                    r.get(0)
+                })?;
             if txns > 0 {
                 return Err(AppError::new(
                     ErrorCode::HasDependents,

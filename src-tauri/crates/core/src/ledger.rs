@@ -201,9 +201,7 @@ pub fn get_entry(conn: &Connection, id: i64) -> AppResult<LedgerEntry> {
 }
 
 fn validate_date(s: &str) -> AppResult<String> {
-    parse_date(s)
-        .map(date_str)
-        .ok_or_else(|| AppError::validation("entryDate", "التاريخ غير صالح (YYYY-MM-DD)"))
+    parse_date(s).map(date_str).ok_or_else(|| AppError::validation("entryDate", "التاريخ غير صالح (YYYY-MM-DD)"))
 }
 
 fn clean(s: Option<String>) -> Option<String> {
@@ -214,15 +212,24 @@ fn ensure_customer(conn: &Connection, id: i64) -> AppResult<()> {
     customers::customer_ref(conn, id).map(|_| ())
 }
 
-pub(crate) fn view(conn: &Connection, customer_id: i64, currency: &str, period: Option<&Period>) -> AppResult<LedgerView> {
+pub(crate) fn view(
+    conn: &Connection,
+    customer_id: i64,
+    currency: &str,
+    period: Option<&Period>,
+) -> AppResult<LedgerView> {
     let from = period.and_then(|p| p.from.as_deref()).map(str::trim).filter(|s| !s.is_empty());
     let to = period.and_then(|p| p.to.as_deref()).map(str::trim).filter(|s| !s.is_empty());
     let from = match from {
-        Some(f) => Some(parse_date(f).map(date_str).ok_or_else(|| AppError::validation("period.from", "التاريخ غير صالح"))?),
+        Some(f) => {
+            Some(parse_date(f).map(date_str).ok_or_else(|| AppError::validation("period.from", "التاريخ غير صالح"))?)
+        }
         None => None,
     };
     let to = match to {
-        Some(t) => Some(parse_date(t).map(date_str).ok_or_else(|| AppError::validation("period.to", "التاريخ غير صالح"))?),
+        Some(t) => {
+            Some(parse_date(t).map(date_str).ok_or_else(|| AppError::validation("period.to", "التاريخ غير صالح"))?)
+        }
         None => None,
     };
     let opening: i64 = match &from {
@@ -299,7 +306,12 @@ impl Core {
              FROM ledger_entries WHERE customer_id = ?1 GROUP BY currency ORDER BY currency",
         )?;
         let rows = stmt.query_map(params![customer_id], |r| {
-            Ok(BalanceCard { currency: r.get(0)?, credits_minor: r.get(1)?, debits_minor: r.get(2)?, balance_minor: r.get(3)? })
+            Ok(BalanceCard {
+                currency: r.get(0)?,
+                credits_minor: r.get(1)?,
+                debits_minor: r.get(2)?,
+                balance_minor: r.get(3)?,
+            })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
@@ -328,8 +340,8 @@ impl Core {
                 ),
             ));
         }
-        let description = clean(input.description.clone())
-            .unwrap_or_else(|| format!("دفعة للعميل — {}", input.method.label_ar()));
+        let description =
+            clean(input.description.clone()).unwrap_or_else(|| format!("دفعة للعميل — {}", input.method.label_ar()));
         let tx = conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO ledger_entries (customer_id, currency, type, amount_minor, payout_method, reference,
@@ -405,11 +417,10 @@ impl Core {
         let conn = self.conn();
         let orig = get_entry(&conn, entry_id)?;
         if let Some(tid) = orig.transaction_id {
-            let (kind, status): (String, String) = conn.query_row(
-                "SELECT type, status FROM paypal_transactions WHERE id = ?1",
-                params![tid],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
+            let (kind, status): (String, String) =
+                conn.query_row("SELECT type, status FROM paypal_transactions WHERE id = ?1", params![tid], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })?;
             if TxnType::parse(&kind) == TxnType::Payment {
                 let msg = if TxnStatus::parse(&status) == TxnStatus::Approved {
                     "هذا قيد اعتماد معاملة. استخدم «إلغاء الاعتماد» من شاشة المعاملات"
@@ -441,7 +452,13 @@ impl Core {
     }
 
     /// CSV (UTF-8 with BOM so Excel shows Arabic correctly).
-    pub fn ledger_export_csv(&self, customer_id: i64, currency: &str, period: Option<&Period>, path: &Path) -> AppResult<()> {
+    pub fn ledger_export_csv(
+        &self,
+        customer_id: i64,
+        currency: &str,
+        period: Option<&Period>,
+        path: &Path,
+    ) -> AppResult<()> {
         let st = self.ledger_statement(customer_id, currency, period)?;
         let cur = normalize_currency(currency)?;
         let mut out = String::from("\u{feff}");
@@ -449,11 +466,7 @@ impl Core {
         out.push_str(&format!("{},{}\r\n", esc("العميل"), esc(&st.customer.name)));
         out.push_str(&format!("{},{}\r\n", esc("العملة"), esc(&cur)));
         out.push_str("التاريخ,النوع,الوصف,له,عليه,الرصيد,المرجع\r\n");
-        out.push_str(&format!(
-            ",,{},,,{},\r\n",
-            esc("رصيد سابق"),
-            format_plain(st.view.opening_balance_minor, &cur)
-        ));
+        out.push_str(&format!(",,{},,,{},\r\n", esc("رصيد سابق"), format_plain(st.view.opening_balance_minor, &cur)));
         for e in &st.view.entries {
             let (credit, debit) = if e.amount_minor >= 0 {
                 (format_plain(e.amount_minor, &cur), String::new())

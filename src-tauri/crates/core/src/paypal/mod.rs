@@ -25,7 +25,13 @@ pub struct ParsedEmail {
 
 impl ParsedEmail {
     /// Build from stored fields; HTML is preferred over the plain-text part when present.
-    pub fn new(subject: &str, from_addr: &str, received_at: DateTime<Utc>, body_html: Option<&str>, body_text: Option<&str>) -> Self {
+    pub fn new(
+        subject: &str,
+        from_addr: &str,
+        received_at: DateTime<Utc>,
+        body_html: Option<&str>,
+        body_text: Option<&str>,
+    ) -> Self {
         let text = match body_html.filter(|h| !h.trim().is_empty()) {
             Some(h) => html_to_text(h),
             None => body_text.unwrap_or_default().to_string(),
@@ -70,8 +76,28 @@ pub enum Outcome {
 }
 
 const BLOCK: [&str; 22] = [
-    "p", "div", "br", "tr", "td", "th", "li", "ul", "ol", "table", "tbody", "thead", "h1", "h2", "h3", "h4", "h5", "h6",
-    "section", "center", "hr", "blockquote",
+    "p",
+    "div",
+    "br",
+    "tr",
+    "td",
+    "th",
+    "li",
+    "ul",
+    "ol",
+    "table",
+    "tbody",
+    "thead",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "section",
+    "center",
+    "hr",
+    "blockquote",
 ];
 const SKIP: [&str; 5] = ["script", "style", "head", "title", "noscript"];
 
@@ -158,7 +184,8 @@ const NON_TRANSACTIONAL: [&str; 25] = [
 
 /// Words that suggest money moved; such an email that no parser understood is a failure,
 /// not something to silently ignore.
-const MONEY_CUES: [&str; 8] = ["received", "money", "payment", "refund", "reversed", "reversal", "chargeback", "sent you"];
+const MONEY_CUES: [&str; 8] =
+    ["received", "money", "payment", "refund", "reversed", "reversal", "chargeback", "sent you"];
 
 pub fn parse_email(email: &ParsedEmail) -> Outcome {
     for p in registry() {

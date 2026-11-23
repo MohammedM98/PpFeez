@@ -5,7 +5,14 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::Value;
 
-pub fn log(conn: &Connection, now: &str, action: &str, entity: &str, entity_id: Option<i64>, details: Value) -> AppResult<()> {
+pub fn log(
+    conn: &Connection,
+    now: &str,
+    action: &str,
+    entity: &str,
+    entity_id: Option<i64>,
+    details: Value,
+) -> AppResult<()> {
     conn.execute(
         "INSERT INTO audit_log (action, entity, entity_id, details, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![action, entity, entity_id, details.to_string(), now],

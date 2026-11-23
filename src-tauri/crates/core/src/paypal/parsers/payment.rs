@@ -62,8 +62,15 @@ impl PaypalParser for PaymentReceivedParser {
         }
         subject_has(
             email,
-            &["you've got money", "you have got money", "you received a payment", "you've received", "you received",
-              "payment received", "sent you"],
+            &[
+                "you've got money",
+                "you have got money",
+                "you received a payment",
+                "you've received",
+                "you received",
+                "payment received",
+                "sent you",
+            ],
         )
     }
 
@@ -76,9 +83,11 @@ impl PaypalParser for PaymentReceivedParser {
             .ok_or(ParseError { field: "paypal_txn_id" })?;
 
         // "{name} sent you {amount}" line, used for name and as an amount fallback.
-        let sent_you = email.lines.iter().chain(std::iter::once(&email.subject)).find_map(|l| {
-            sent_you_re().captures(l).map(|c| (c["name"].to_string(), c["amount"].to_string()))
-        });
+        let sent_you = email
+            .lines
+            .iter()
+            .chain(std::iter::once(&email.subject))
+            .find_map(|l| sent_you_re().captures(l).map(|c| (c["name"].to_string(), c["amount"].to_string())));
 
         let gross = labeled_money(email, GROSS)
             .or_else(|| sent_you.as_ref().and_then(|(_, a)| find_first(a)))
@@ -100,20 +109,17 @@ impl PaypalParser for PaymentReceivedParser {
             .or_else(|| labeled(email, PAYER_NAME).and_then(|v| clean_name(&v)))
             .or_else(|| subject_from_re().captures(&email.subject).and_then(|c| clean_name(&c["name"])));
 
-        let payer_email = labeled(email, PAYER_EMAIL)
-            .and_then(|v| email_in(&v))
-            .or_else(|| {
-                // "John Doe (john@example.com)" next to the payer name.
-                let name = payer_name.as_deref()?;
-                email.lines.iter().find(|l| l.contains(name)).and_then(|l| email_in(l))
-            });
+        let payer_email = labeled(email, PAYER_EMAIL).and_then(|v| email_in(&v)).or_else(|| {
+            // "John Doe (john@example.com)" next to the payer name.
+            let name = payer_name.as_deref()?;
+            email.lines.iter().find(|l| l.contains(name)).and_then(|l| email_in(l))
+        });
 
-        let payer_note = labeled(email, NOTE).map(|n| n.trim_matches(['"', '“', '”']).trim().to_string())
-            .filter(|n| !n.is_empty());
+        let payer_note =
+            labeled(email, NOTE).map(|n| n.trim_matches(['"', '“', '”']).trim().to_string()).filter(|n| !n.is_empty());
 
-        let occurred_at = labeled(email, DATE)
-            .and_then(|d| parse_paypal_date(&d, email.received_at))
-            .unwrap_or(email.received_at);
+        let occurred_at =
+            labeled(email, DATE).and_then(|d| parse_paypal_date(&d, email.received_at)).unwrap_or(email.received_at);
 
         Ok(ParsedTransaction {
             kind: TxnType::Payment,

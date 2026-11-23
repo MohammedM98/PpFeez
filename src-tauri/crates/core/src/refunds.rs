@@ -115,7 +115,11 @@ impl Core {
         let customer_id = original.customer_id.ok_or_else(|| AppError::internal("approved without customer"))?;
         let amount = match amount_text.map(str::trim).filter(|s| !s.is_empty()) {
             Some(t) => -parse_positive(t.trim_start_matches(['-', '−']), &original.currency, "amountText")?,
-            None => suggested_reversal(refund.gross_minor, original.gross_minor, original.customer_amount_minor.unwrap_or(0)),
+            None => suggested_reversal(
+                refund.gross_minor,
+                original.gross_minor,
+                original.customer_amount_minor.unwrap_or(0),
+            ),
         };
         if amount >= 0 {
             return Err(AppError::invalid_amount("amountText"));

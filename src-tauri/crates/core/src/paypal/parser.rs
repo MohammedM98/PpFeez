@@ -66,10 +66,7 @@ fn txn_id_re() -> &'static Regex {
 
 /// A PayPal transaction id (12–20 upper-case letters/digits, at least one digit).
 pub fn txn_id_in(value: &str) -> Option<String> {
-    txn_id_re()
-        .captures_iter(value)
-        .map(|c| c[1].to_string())
-        .find(|id| id.chars().any(|c| c.is_ascii_digit()))
+    txn_id_re().captures_iter(value).map(|c| c[1].to_string()).find(|id| id.chars().any(|c| c.is_ascii_digit()))
 }
 
 pub fn labeled_txn_id(email: &ParsedEmail, labels: &[&str]) -> Option<String> {

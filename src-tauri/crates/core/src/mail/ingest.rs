@@ -27,19 +27,14 @@ pub struct StoredEmail {
 /// Parse raw RFC 5322 bytes. `fallback_id` is used when the message has no Message-ID.
 pub fn extract(raw: &[u8], fallback_id: &str, now: DateTime<Utc>) -> Option<StoredEmail> {
     let msg = MessageParser::default().parse(raw)?;
-    let from_addr = msg
-        .from()
-        .and_then(|f| f.first().and_then(|a| a.address().map(str::to_string)))
-        .unwrap_or_default();
+    let from_addr =
+        msg.from().and_then(|f| f.first().and_then(|a| a.address().map(str::to_string))).unwrap_or_default();
     let auth_results = msg
         .headers()
         .iter()
         .find(|h| h.raw_name().eq_ignore_ascii_case("Authentication-Results"))
         .map(|h| String::from_utf8_lossy(h.raw_value()).trim().to_string());
-    let received_at = msg
-        .date()
-        .and_then(|d| DateTime::<Utc>::from_timestamp(d.to_timestamp(), 0))
-        .unwrap_or(now);
+    let received_at = msg.date().and_then(|d| DateTime::<Utc>::from_timestamp(d.to_timestamp(), 0)).unwrap_or(now);
     // Only keep HTML that the message really has (mail-parser converts text to HTML otherwise).
     let has_html = msg.html_body().any(|p| matches!(p.kind(), mail_parser::PartKind::Html));
     let body_html = if has_html { msg.body_html(0).map(|c| c.into_owned()) } else { None };
@@ -75,7 +70,8 @@ pub fn evaluate(e: &StoredEmail) -> (&'static str, Option<String>, Option<&'stat
     if verdict != Verdict::Ok {
         return ("ignored", verdict.reason().map(str::to_string), None, None);
     }
-    let parsed = ParsedEmail::new(&e.subject, &e.from_addr, e.received_at, e.body_html.as_deref(), e.body_text.as_deref());
+    let parsed =
+        ParsedEmail::new(&e.subject, &e.from_addr, e.received_at, e.body_html.as_deref(), e.body_text.as_deref());
     match parse_email(&parsed) {
         Outcome::Parsed { parser, txn } => ("parsed", None, Some(parser), Some(txn)),
         Outcome::Ignored { reason } => ("ignored", Some(reason), None, None),
@@ -166,10 +162,7 @@ pub fn ingest(conn: &Connection, now: &str, mailbox_id: i64, uid: u32, e: &Store
             if insert_transaction(conn, now, mailbox_id, raw_id, &t)? {
                 Ingested::New
             } else {
-                conn.execute(
-                    "UPDATE raw_emails SET parse_reason = 'duplicate_txn' WHERE id = ?1",
-                    params![raw_id],
-                )?;
+                conn.execute("UPDATE raw_emails SET parse_reason = 'duplicate_txn' WHERE id = ?1", params![raw_id])?;
                 Ingested::Duplicate
             }
         }

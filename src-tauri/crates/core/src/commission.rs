@@ -95,11 +95,8 @@ pub fn compute(gross_minor: i64, fee_minor: i64, rule: Commission) -> AppResult<
                 return Err(AppError::invalid_amount("amountText"));
             }
             if amount > net {
-                return Err(AppError::new(
-                    ErrorCode::CommissionExceedsNet,
-                    "العمولة أكبر من الصافي بعد رسوم PayPal",
-                )
-                .with_field("amountText"));
+                return Err(AppError::new(ErrorCode::CommissionExceedsNet, "العمولة أكبر من الصافي بعد رسوم PayPal")
+                    .with_field("amountText"));
             }
             amount
         }

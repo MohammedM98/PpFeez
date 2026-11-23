@@ -251,10 +251,7 @@ impl Core {
                 }
                 let max_uid = *batch.iter().max().unwrap_or(&0) as i64;
                 let tx = conn.unchecked_transaction()?;
-                tx.execute(
-                    "UPDATE mailboxes SET last_uid = MAX(last_uid, ?1) WHERE id = ?2",
-                    params![max_uid, mb.id],
-                )?;
+                tx.execute("UPDATE mailboxes SET last_uid = MAX(last_uid, ?1) WHERE id = ?2", params![max_uid, mb.id])?;
                 tx.execute(
                     "UPDATE pull_runs SET fetched_count = ?1, new_transactions_count = ?2, duplicate_count = ?3,
                      ignored_count = ?4, failed_count = ?5 WHERE id = ?6",

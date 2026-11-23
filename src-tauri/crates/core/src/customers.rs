@@ -73,15 +73,15 @@ pub fn balance_in(conn: &Connection, customer_id: i64, currency: &str) -> AppRes
 
 fn from_row(r: &Row<'_>) -> rusqlite::Result<Customer> {
     Ok(Customer {
-            id: r.get("id")?,
-            name: r.get("name")?,
-            phone: r.get("phone")?,
-            default_commission_bps: r.get("default_commission_bps")?,
-            notes: r.get("notes")?,
-            is_active: r.get::<_, i64>("is_active")? != 0,
-            balances: vec![],
-            pending_count: r.get("pending_count")?,
-            created_at: r.get("created_at")?,
+        id: r.get("id")?,
+        name: r.get("name")?,
+        phone: r.get("phone")?,
+        default_commission_bps: r.get("default_commission_bps")?,
+        notes: r.get("notes")?,
+        is_active: r.get::<_, i64>("is_active")? != 0,
+        balances: vec![],
+        pending_count: r.get("pending_count")?,
+        created_at: r.get("created_at")?,
     })
 }
 
@@ -90,9 +90,7 @@ const SELECT: &str = "SELECT c.*, (SELECT COUNT(*) FROM paypal_transactions t
      FROM customers c";
 
 pub fn get(conn: &Connection, id: i64) -> AppResult<Customer> {
-    let row = conn
-        .query_row(&format!("{SELECT} WHERE c.id = ?1"), params![id], from_row)
-        .optional()?;
+    let row = conn.query_row(&format!("{SELECT} WHERE c.id = ?1"), params![id], from_row).optional()?;
     let mut c = row.ok_or_else(|| AppError::not_found("العميل"))?;
     c.balances = balances(conn, id)?;
     Ok(c)
@@ -162,7 +160,14 @@ impl Core {
         )
         .map_err(|e| if is_unique_violation(&e) { duplicate_name() } else { e.into() })?;
         let id = tx.last_insert_rowid();
-        audit::log(&tx, &now, "customer.create", "customer", Some(id), json!({ "name": name, "defaultCommissionBps": input.default_commission_bps }))?;
+        audit::log(
+            &tx,
+            &now,
+            "customer.create",
+            "customer",
+            Some(id),
+            json!({ "name": name, "defaultCommissionBps": input.default_commission_bps }),
+        )?;
         tx.commit()?;
         get(&conn, id)
     }
@@ -207,7 +212,10 @@ impl Core {
         let conn = self.conn();
         get(&conn, id)?;
         let tx = conn.unchecked_transaction()?;
-        tx.execute("UPDATE customers SET is_active = ?1, updated_at = ?2 WHERE id = ?3", params![active as i64, now, id])?;
+        tx.execute(
+            "UPDATE customers SET is_active = ?1, updated_at = ?2 WHERE id = ?3",
+            params![active as i64, now, id],
+        )?;
         audit::log(&tx, &now, "customer.set_active", "customer", Some(id), json!({ "active": active }))?;
         tx.commit()?;
         get(&conn, id)

@@ -41,12 +41,10 @@ impl PaypalParser for ReversalParser {
             (None, None, Some(orig)) => format!("REV-{orig}"),
             (None, None, None) => return Err(ParseError { field: "paypal_txn_id" }),
         };
-        let gross = labeled_money(email, AMOUNT)
-            .or_else(|| find_first(&email.subject))
-            .ok_or(ParseError { field: "gross" })?;
-        let occurred_at = labeled(email, DATE)
-            .and_then(|d| parse_paypal_date(&d, email.received_at))
-            .unwrap_or(email.received_at);
+        let gross =
+            labeled_money(email, AMOUNT).or_else(|| find_first(&email.subject)).ok_or(ParseError { field: "gross" })?;
+        let occurred_at =
+            labeled(email, DATE).and_then(|d| parse_paypal_date(&d, email.received_at)).unwrap_or(email.received_at);
         let payer_name = labeled(email, BUYER).filter(|n| !n.contains('@'));
         let note = labeled(email, &["Reason"]);
         Ok(ParsedTransaction {

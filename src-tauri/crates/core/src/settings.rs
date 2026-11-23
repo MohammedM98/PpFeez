@@ -80,9 +80,7 @@ pub struct SettingsPatch {
 }
 
 pub fn get_raw(conn: &Connection, key: &str) -> AppResult<Option<String>> {
-    Ok(conn
-        .query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| r.get(0))
-        .optional()?)
+    Ok(conn.query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| r.get(0)).optional()?)
 }
 
 pub fn set_raw(conn: &Connection, key: &str, value: &str) -> AppResult<()> {
@@ -181,7 +179,10 @@ impl Core {
             match m {
                 Some(m) if m > 0 => set_raw(&tx, K_AUTO_LOCK_MINUTES, &m.to_string())?,
                 Some(_) => {
-                    return Err(AppError::validation("autoLockMinutes", "مدة القفل التلقائي يجب أن تكون دقيقة على الأقل"))
+                    return Err(AppError::validation(
+                        "autoLockMinutes",
+                        "مدة القفل التلقائي يجب أن تكون دقيقة على الأقل",
+                    ))
                 }
                 None => delete_raw(&tx, K_AUTO_LOCK_MINUTES)?,
             }

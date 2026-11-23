@@ -110,13 +110,10 @@ pub fn parse_amount(text: &str, currency: &str) -> Option<i64> {
         return None;
     }
     let groups: Vec<&str> = int_part.split(group_sep).collect();
-    if groups.len() > 1 {
-        if groups[0].is_empty()
-            || groups[0].len() > 3
-            || groups[0] == "0"
-            || groups[1..].iter().any(|g| g.len() != 3) {
-            return None;
-        }
+    if groups.len() > 1
+        && (groups[0].is_empty() || groups[0].len() > 3 || groups[0] == "0" || groups[1..].iter().any(|g| g.len() != 3))
+    {
+        return None;
     }
     let int_digits: String = groups.concat();
     if int_digits.is_empty() && frac_part.is_empty() {
@@ -175,7 +172,7 @@ pub fn format_number(minor: i64, currency: &str) -> String {
     let int_s = int.to_string();
     let mut grouped = String::new();
     for (i, ch) in int_s.chars().enumerate() {
-        if i > 0 && (int_s.len() - i) % 3 == 0 {
+        if i > 0 && (int_s.len() - i).is_multiple_of(3) {
             grouped.push(',');
         }
         grouped.push(ch);
