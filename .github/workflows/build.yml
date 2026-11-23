@@ -16,7 +16,7 @@ jobs:
     name: Core tests (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -40,7 +40,7 @@ jobs:
     needs: core-tests
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Detect frontend
         id: fe
@@ -52,7 +52,7 @@ jobs:
             Write-Output "::notice title=Installer skipped::package.json is not on this branch yet (the UI session adds it). The installer is built once the frontend exists."
           }
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: steps.fe.outputs.present == 'true'
         with:
           node-version: 22
