@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { ThemeProvider } from '@/lib/theme';
 import { Shell } from '@/components/layout/Shell';
 import { TransactionsPage } from '@/pages/Transactions';
+import { CustomersPage } from '@/pages/Customers';
 import { PullProvider } from '@/lib/pull';
 import { Toasts } from '@/components/ui/Toast';
 import { TxnActionsHost } from '@/components/transactions/TxnActions';
@@ -24,7 +25,8 @@ const router = createHashRouter([
       { index: true, element: <Navigate to="/transactions" replace /> },
       { path: 'transactions', element: <TransactionsPage /> },
       { path: 'dashboard', element: <Placeholder title="لوحة التحكم" /> },
-      { path: 'customers', element: <Placeholder title="العملاء" /> },
+      { path: 'customers', element: <CustomersPage /> },
+      { path: 'customers/:id', element: <Placeholder title="دفتر العميل" /> },
       { path: 'emails', element: <Placeholder title="الرسائل" /> },
       { path: 'settings', element: <Placeholder title="الإعدادات" /> },
     ],
