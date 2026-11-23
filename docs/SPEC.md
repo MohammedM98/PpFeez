@@ -1,0 +1,462 @@
+# PpFeez — المواصفات التفصيلية الكاملة
+
+تطبيق سطح مكتب (ويندوز) لإدارة معاملات PayPal وتوزيعها على العملاء.
+
+---
+
+## 1. السياق والقرارات
+
+صاحب المشروع يستقبل على حساباته **الشخصية** في PayPal تحويلات تخصّ عملاء مختلفين (أحمد، علي...). يريد برنامجاً يستخدمه وحده:
+
+1. يتصل ببريد Gmail، وعند الضغط على "سحب" يقرأ رسائل PayPal ويجمع المعاملات في جدول واحد.
+2. يخصّص كل معاملة يدوياً لعميل، ثم يسجّل موافقة العميل (الموافقة تتم خارج البرنامج).
+3. يحفظ لكل معاملة: الأصلي، رسوم PayPal، الصافي.
+4. يطبّق عمولة لكل عميل (افتراضي 25%، قابلة للتعديل لكل معاملة) **على الصافي بعد رسوم PayPal**.
+5. دفتر حساب لكل عميل **برصيد منفصل لكل عملة**.
+
+| القرار | الاختيار | السبب |
+|---|---|---|
+| الشكل | تطبيق سطح مكتب، ويندوز | مستخدم واحد، البيانات على الجهاز، بلا استضافة |
+| التقنية | Tauri 2 + React | قلب Rust خفيف، واجهة React جميلة تدعم RTL |
+| مصدر المعاملات | Gmail عبر IMAP + كلمة مرور تطبيق | Google OAuth طلب فوترة؛ PayPal API غير متاح للحساب الشخصي |
+| السحب | يدوي بزر | طلب صاحب المشروع |
+| الموافقة | المدير يسجّلها | لا بوابة للعملاء |
+| العملات | رصيد منفصل لكل عملة | بلا تحويل |
+| المستودع | `MohammedM98/PpFeez` (فارغ)، الجذر، فرع `main` | |
+
+---
+
+## 2. التقنيات
+
+- **الواجهة**: React + TypeScript + Vite + Tailwind + shadcn/ui، React Router، TanStack Query، TanStack Table، react-hook-form + zod.
+- **القلب**: Rust. crate مستقل `ppfeez-core` بلا اعتماد على Tauri (كل المنطق والاختبارات فيه)، و`src-tauri` طبقة أوامر رقيقة فوقه.
+- **القاعدة**: SQLite عبر `rusqlite` (bundled)، وضع WAL، `foreign_keys=ON`، migrations مرقّمة تُطبَّق عند التشغيل.
+- **البريد**: IMAP على `imap.gmail.com:993` (TLS)، تحليل MIME بـ `mail-parser`، استخراج من HTML بـ `scraper`.
+- **الأسرار**: كلمة مرور تطبيق Gmail في Windows Credential Manager عبر `keyring`. كلمة قفل البرنامج hash بـ `argon2`.
+- **البناء**: GitHub Actions (`tauri-apps/tauri-action`، `windows-latest`) يُخرج مثبّت NSIS `.exe`.
+
+> على جلسة التنفيذ التحقق من الإصدارات الحالية لـ Tauri 2 ومكتبات Rust من وثائقها قبل الاعتماد عليها.
+
+### اصطلاحات عامة
+- **المبالغ**: `INTEGER` بأصغر وحدة للعملة (سنت). لا float في أي مكان، لا في Rust ولا في TypeScript (الواجهة تستقبل الأعداد الصحيحة وتنسّقها فقط).
+- **خانات العملة**: 2 افتراضياً؛ 0 لـ `JPY, HUF, TWD`. دالتان فقط للتحويل: `parse_amount(text, currency)` و`format_amount(minor, currency)`.
+- **التواريخ**: تُخزَّن UTC بصيغة ISO-8601 نصاً، وتُعرض بتوقيت الجهاز بصيغة `YYYY-MM-DD HH:mm`، تقويم ميلادي.
+- **الأرقام**: لاتينية (0-9) دائماً، والمبالغ تُعرض LTR داخل الواجهة RTL مثل `1,250.00 USD`.
+- **النسب**: basis points (`2500` = 25.00%)، تُعرض بخانتين عشريتين.
+- **اللغة**: عربية فقط، نصوص الواجهة في ملف واحد `src/lib/strings.ts`.
+
+---
+
+## 3. قاعدة البيانات (SQLite)
+
+```sql
+-- إعدادات عامة (مفتاح/قيمة)
+CREATE TABLE settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+-- المفاتيح: lock_enabled, lock_hash, backup_dir, backup_on_close, backup_keep,
+--           theme (dark|light|system), default_commission_bps,
+--           fee_estimate_bps, fee_estimate_fixed_minor, fee_estimate_enabled
+
+CREATE TABLE mailboxes (
+  id             INTEGER PRIMARY KEY,
+  label          TEXT NOT NULL,                 -- "حساب PayPal الأول"
+  email          TEXT NOT NULL UNIQUE,
+  host           TEXT NOT NULL DEFAULT 'imap.gmail.com',
+  port           INTEGER NOT NULL DEFAULT 993,
+  folder         TEXT NOT NULL DEFAULT '[Gmail]/All Mail',
+  uid_validity   INTEGER,
+  last_uid       INTEGER NOT NULL DEFAULT 0,
+  last_pulled_at TEXT,
+  is_active      INTEGER NOT NULL DEFAULT 1,
+  created_at     TEXT NOT NULL
+);  -- كلمة المرور في Credential Manager بمفتاح "ppfeez:mailbox:{id}"
+
+CREATE TABLE pull_runs (
+  id                     INTEGER PRIMARY KEY,
+  mailbox_id             INTEGER NOT NULL REFERENCES mailboxes(id),
+  status                 TEXT NOT NULL CHECK (status IN ('running','done','failed','cancelled')),
+  total_count            INTEGER NOT NULL DEFAULT 0,   -- رسائل مطابقة للبحث
+  fetched_count          INTEGER NOT NULL DEFAULT 0,
+  new_transactions_count INTEGER NOT NULL DEFAULT 0,
+  duplicate_count        INTEGER NOT NULL DEFAULT 0,
+  ignored_count          INTEGER NOT NULL DEFAULT 0,
+  failed_count           INTEGER NOT NULL DEFAULT 0,
+  error                  TEXT,
+  started_at             TEXT NOT NULL,
+  finished_at            TEXT
+);
+
+CREATE TABLE raw_emails (
+  id            INTEGER PRIMARY KEY,
+  mailbox_id    INTEGER NOT NULL REFERENCES mailboxes(id),
+  imap_uid      INTEGER NOT NULL,
+  message_id    TEXT NOT NULL UNIQUE,           -- ترويسة Message-ID
+  from_addr     TEXT NOT NULL,
+  subject       TEXT NOT NULL,
+  received_at   TEXT NOT NULL,
+  auth_results  TEXT,                           -- ترويسة Authentication-Results
+  body_html     TEXT,
+  body_text     TEXT,
+  parse_status  TEXT NOT NULL CHECK (parse_status IN ('parsed','failed','ignored')),
+  parse_reason  TEXT,   -- سبب الفشل/التجاهل: not_paypal_sender, dkim_fail, not_transactional, no_parser_matched, ...
+  parser_name   TEXT,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX idx_raw_emails_status ON raw_emails(parse_status, received_at);
+
+CREATE TABLE customers (
+  id                     INTEGER PRIMARY KEY,
+  name                   TEXT NOT NULL UNIQUE,
+  phone                  TEXT,
+  default_commission_bps INTEGER NOT NULL DEFAULT 2500 CHECK (default_commission_bps BETWEEN 0 AND 10000),
+  notes                  TEXT,
+  is_active              INTEGER NOT NULL DEFAULT 1,
+  created_at             TEXT NOT NULL,
+  updated_at             TEXT NOT NULL
+);
+
+CREATE TABLE paypal_transactions (
+  id                     INTEGER PRIMARY KEY,
+  mailbox_id             INTEGER REFERENCES mailboxes(id),
+  raw_email_id           INTEGER REFERENCES raw_emails(id),
+  source                 TEXT NOT NULL CHECK (source IN ('email','manual')),
+  paypal_txn_id          TEXT NOT NULL UNIQUE,   -- للإدخال اليدوي بلا رقم: "MANUAL-{uuid}"
+  related_txn_id         TEXT,                   -- للاسترداد/العكس: رقم المعاملة الأصلية
+  type                   TEXT NOT NULL CHECK (type IN ('payment','refund','reversal')),
+  payer_name             TEXT,
+  payer_email            TEXT,
+  payer_note             TEXT,                   -- الرسالة التي كتبها المرسل (تساعد في معرفة العميل)
+  currency               TEXT NOT NULL CHECK (length(currency) = 3),
+  gross_minor            INTEGER NOT NULL CHECK (gross_minor > 0),
+  fee_minor              INTEGER CHECK (fee_minor IS NULL OR fee_minor >= 0),
+  net_minor              INTEGER CHECK (net_minor IS NULL OR net_minor >= 0),
+  fee_is_estimated       INTEGER NOT NULL DEFAULT 0,
+  occurred_at            TEXT NOT NULL,
+  status                 TEXT NOT NULL DEFAULT 'unassigned'
+                         CHECK (status IN ('unassigned','pending_approval','approved','excluded')),
+  customer_id            INTEGER REFERENCES customers(id),
+  commission_mode        TEXT CHECK (commission_mode IN ('percent','fixed')),
+  commission_bps         INTEGER CHECK (commission_bps BETWEEN 0 AND 10000),
+  commission_minor       INTEGER,
+  customer_amount_minor  INTEGER,
+  assigned_at            TEXT,
+  approved_at            TEXT,
+  note                   TEXT,                   -- ملاحظة المدير
+  created_at             TEXT NOT NULL,
+  updated_at             TEXT NOT NULL,
+  CHECK (fee_minor IS NULL OR net_minor = gross_minor - fee_minor),
+  CHECK (status IN ('unassigned','excluded') OR customer_id IS NOT NULL)
+);
+CREATE INDEX idx_txn_status   ON paypal_transactions(status, occurred_at);
+CREATE INDEX idx_txn_customer ON paypal_transactions(customer_id, status);
+CREATE INDEX idx_txn_related  ON paypal_transactions(related_txn_id);
+
+CREATE TABLE ledger_entries (
+  id                     INTEGER PRIMARY KEY,
+  customer_id            INTEGER NOT NULL REFERENCES customers(id),
+  currency               TEXT NOT NULL CHECK (length(currency) = 3),
+  type                   TEXT NOT NULL CHECK (type IN ('credit','payout','adjustment','reversal')),
+  amount_minor           INTEGER NOT NULL CHECK (amount_minor <> 0),  -- موجب = له، سالب = دُفع له/خُصم
+  paypal_transaction_id  INTEGER REFERENCES paypal_transactions(id),
+  reverses_entry_id      INTEGER UNIQUE REFERENCES ledger_entries(id), -- القيد لا يُعكس إلا مرة
+  payout_method          TEXT,     -- cash | bank | usdt | paypal | other  (للدفعات فقط)
+  reference              TEXT,     -- رقم الحوالة/الإيصال
+  description            TEXT NOT NULL,
+  entry_date             TEXT NOT NULL,   -- تاريخ القيد كما يراه العميل
+  created_at             TEXT NOT NULL,
+  CHECK (type <> 'credit' OR (amount_minor > 0 AND paypal_transaction_id IS NOT NULL)),
+  CHECK (type <> 'payout' OR amount_minor < 0)
+);
+CREATE INDEX idx_ledger_customer ON ledger_entries(customer_id, currency, entry_date, id);
+
+-- الدفتر إلحاقي فقط
+CREATE TRIGGER ledger_no_update BEFORE UPDATE ON ledger_entries
+BEGIN SELECT RAISE(ABORT, 'ledger entries are immutable'); END;
+CREATE TRIGGER ledger_no_delete BEFORE DELETE ON ledger_entries
+BEGIN SELECT RAISE(ABORT, 'ledger entries are immutable'); END;
+
+-- سجل تدقيق لكل عملية تمسّ المال
+CREATE TABLE audit_log (
+  id         INTEGER PRIMARY KEY,
+  action     TEXT NOT NULL,   -- txn.assign, txn.approve, txn.unapprove, txn.fee_set, ledger.payout, ...
+  entity     TEXT NOT NULL,
+  entity_id  INTEGER,
+  details    TEXT NOT NULL,   -- JSON: القيم قبل/بعد
+  created_at TEXT NOT NULL
+);
+```
+
+**الرصيد** لا يُخزَّن: `SELECT currency, SUM(amount_minor) FROM ledger_entries WHERE customer_id=? GROUP BY currency`.
+
+---
+
+## 4. القواعد المحاسبية
+
+### 4.1 الحساب
+```
+net        = gross − fee
+commission = percent: round_half_up(net × bps / 10000)
+             fixed:   المبلغ المدخل (0 ≤ commission ≤ net)
+للعميل      = net − commission
+```
+مثال: 100.00 أصلي، رسوم 5.00، صافي 95.00، عمولة 25% = 23.75، للعميل 71.25.
+التقريب half-up بأعداد صحيحة: `(net × bps + 5000) / 10000`.
+
+### 4.2 دورة حياة المعاملة
+
+```
+                 تخصيص                اعتماد
+ unassigned ───────────► pending_approval ───────────► approved
+     ▲  ▲                     │                           │
+     │  └──── إلغاء التخصيص ───┘                           │
+     │                                                    │
+     └─────────── إلغاء الاعتماد (قيد عكسي) ◄───────────────┘
+     │
+     └──► excluded (ليست لأي عميل: مدفوعات تخصّني)  ◄──► unassigned
+```
+
+| الانتقال | الشرط | الأثر |
+|---|---|---|
+| تخصيص | الحالة `unassigned`، العميل نشط | ينسخ `default_commission_bps` من العميل، `commission_mode=percent`، يحسب المبالغ إن وُجدت الرسوم |
+| تعديل العمولة | الحالة `pending_approval` | يعيد الحساب |
+| تعديل الرسوم/الصافي | الحالة ≠ `approved` | يُدخل أحدهما ويُحسب الآخر؛ `fee_is_estimated=0`؛ يعيد حساب العمولة |
+| اعتماد | `pending_approval` **و** `fee_minor` غير فارغة **و** `customer_amount_minor > 0` | في transaction واحدة: الحالة `approved` + قيد `credit` واحد بتاريخ اليوم |
+| إلغاء التخصيص | `pending_approval` | يمسح العميل والعمولة |
+| إلغاء الاعتماد | `approved`، مع تأكيد وسبب إلزامي | قيد `reversal` بسالب مبلغ القيد الأصلي (`reverses_entry_id`)، الحالة ترجع `unassigned` |
+| استبعاد/إرجاع | `unassigned` ⇄ `excluded` | لا أثر مالي |
+
+- المعاملة المعتمدة **مقفلة**: لا تعديل للرسوم أو العمولة أو العميل إلا بإلغاء الاعتماد ثم إعادة الاعتماد.
+- كل انتقال يُكتب في `audit_log`.
+- التخصيص والاعتماد الجماعي: كل معاملة في transaction خاصة، والنتيجة تعرض "نجح N، فشل M" مع سبب كل فشل.
+
+### 4.3 الرسوم المفقودة
+- رسائل الحساب الشخصي غالباً لا تذكر الرسوم ⇒ `fee_minor = NULL` وشارة **"تحتاج رسوم"**.
+- المدير يُدخل الرسوم **أو** الصافي (كما في رصيد PayPal)، أو يضغط **"بلا رسوم"** (= 0).
+- **تقدير اختياري** (من الإعدادات، معطّل افتراضياً): نسبة + مبلغ ثابت (مثل 4.4% + 0.30). عند تفعيله يُقترح في حقل الرسوم بلون مختلف مع نص "تقديري"، ولا يُحفظ إلا بضغط المدير على "تأكيد".
+
+### 4.4 الاسترداد والعكس
+- رسالة استرداد/عكس تُنشئ صفاً `type = refund|reversal` بـ `related_txn_id` = رقم المعاملة الأصلية.
+- إن كانت الأصلية **غير معتمدة**: تنبيه على الأصلية "تم استردادها"؛ المدير يستبعدها أو يعدّل.
+- إن كانت الأصلية **معتمدة**: تظهر في "تنبيهات تحتاج إجراء" مع قيد `reversal` مقترح:
+  - استرداد كامل: سالب كامل حصة العميل.
+  - استرداد جزئي: `−(refund × customer_amount / gross)` مقرّباً، قابل للتعديل قبل التأكيد.
+  - لا يُنشأ القيد إلا بتأكيد المدير.
+- صفوف الاسترداد نفسها لا تُخصَّص لعميل مباشرة؛ حالتها `excluded` بعد المعالجة.
+
+### 4.5 الدفعات والتسويات
+- **دفعة (payout)**: مبلغ موجب يُدخله المدير ويُخزَّن سالباً، مع العملة، التاريخ، الطريقة (نقداً/تحويل بنكي/USDT/PayPal/أخرى)، مرجع، ملاحظة. إن تجاوزت الرصيد: تحذير وتأكيد صريح (يُسمح بالرصيد السالب ويظهر بالأحمر "عليه").
+- **تسوية (adjustment)**: موجبة أو سالبة مع وصف إلزامي (رصيد افتتاحي، خصم، تصحيح).
+- **عكس قيد**: لأي قيد غير معكوس؛ ينشئ قيداً معاكساً بوصف "عكس: {الوصف الأصلي}" وسبب إلزامي.
+
+### 4.6 العملاء
+- لا يُحذف عميل له معاملات أو قيود؛ يُعطَّل (`is_active=0`) فيختفي من قوائم التخصيص ويبقى دفتره.
+- تغيير العمولة الافتراضية لا يؤثر على معاملات مخصّصة سابقاً.
+
+---
+
+## 5. السحب من Gmail
+
+### 5.1 الخطوات
+1. قفل: لا سحب ثانٍ لنفس البريد وهو `running`. عند تشغيل البرنامج، أي `running` قديم يُعلَّم `failed` ("انقطع").
+2. اتصال IMAP، `SELECT` للمجلد، قراءة `UIDVALIDITY`.
+3. تحديد المدى:
+   - أول مرة أو تغيّر `UIDVALIDITY`: `UID SEARCH FROM "paypal.com"` (كل التاريخ).
+   - غير ذلك: نفس البحث مع `UID {last_uid+1}:*`.
+4. الجلب على دفعات من 50 رسالة (`BODY.PEEK[]` — لا يغيّر حالة "مقروءة").
+5. لكل رسالة، في transaction: تخطّي إن وُجد `message_id` ← التحقق من المصدر ← الحفظ في `raw_emails` ← التحليل ← إدراج المعاملة (تخطّي إن وُجد `paypal_txn_id` ⇒ `duplicate_count`).
+6. بعد كل دفعة: تحديث `last_uid` والعدّادات، وإرسال حدث `pull://progress` للواجهة. يمكن الإلغاء بين الدفعات.
+7. النهاية: `done` + `last_pulled_at`. عند خطأ: `failed` مع الرسالة، وما حُفظ يبقى (السحب التالي يكمل من `last_uid`).
+
+### 5.2 التحقق من المصدر (قبل أي تحليل)
+تُقبل الرسالة فقط إذا تحقق **الاثنان**:
+- عنوان `From` ينتهي بـ `@paypal.com` أو نطاق فرعي معتمد (`@intl.paypal.com`, `@mail.paypal.com`, `@e.paypal.com`)؛ المقارنة على العنوان الفعلي لا الاسم الظاهر.
+- ترويسة `Authentication-Results` التي أضافها `mx.google.com` (أول ترويسة من الأعلى فقط) تحتوي `dkim=pass` مع `header.i` أو `header.d` ينتهي بـ `paypal.com`.
+
+غير ذلك: `parse_status = ignored` مع السبب. هذا يمنع رسالة مزوّرة من إنشاء معاملة وهمية.
+
+### 5.3 المحلّلات
+```rust
+trait PaypalParser {
+    fn name(&self) -> &'static str;
+    fn matches(&self, email: &ParsedEmail) -> bool;
+    fn parse(&self, email: &ParsedEmail) -> Result<ParsedTransaction, ParseError>;
+}
+```
+- `PaymentReceivedParser` — "You've got money" / "You received a payment" / "Payment received from ...".
+- `RefundParser` — "You sent a refund" / "Refund to ...".
+- `ReversalParser` — نزاع/chargeback/"payment reversed".
+- رسائل PayPal غير المالية (تسجيل دخول، عروض، كشوف، "You sent a payment") ⇒ `ignored: not_transactional`.
+- رسالة مالية لم يطابقها محلّل أو فشل استخراج حقل إلزامي ⇒ `failed` مع اسم الحقل.
+
+الحقول: `paypal_txn_id` (إلزامي)، `gross` + `currency` (إلزامي)، `occurred_at` (من الرسالة، وإلا تاريخ الاستلام)، `payer_name`, `payer_email`, `payer_note`, `fee`, `related_txn_id` (اختيارية).
+تحليل المبالغ يدعم: `$1,234.56 USD`، `1.234,56 EUR`، `€50,00`، `100.00 USD`.
+
+> لا توجد رسائل حقيقية بعد. تُبنى المحلّلات على الشكل الإنجليزي المعروف بملفات `.eml` تجريبية، بحيث تُضاف صيغ جديدة (عربية/تركية) بإضافة محلّل وملف اختبار فقط. حين يرفق صاحب المشروع رسائله تُضاف إلى `tests/fixtures/emails/` بعد تنقيح الأسماء.
+
+### 5.4 إعادة التحليل
+زر "إعادة تحليل" على الرسائل `failed` (مفرد/جماعي) يشغّل المحلّلات الحالية على `raw_emails` المحفوظة دون اتصال بالبريد — مفيد بعد تحديث البرنامج بمحلّل جديد.
+
+---
+
+## 6. الشاشات
+
+**الهيكل العام**: شريط جانبي على اليمين (شعار، روابط الشاشات مع عدّادات، زر قفل، تبديل المظهر)، ومحتوى على اليسار. نافذة بحد أدنى 1100×700. إشعارات toast أسفل اليسار. كل عملية مالية تطلب تأكيداً.
+
+### 6.0 أول تشغيل (معالج من 3 خطوات، كلها قابلة للتخطّي)
+1. كلمة قفل البرنامج.
+2. إضافة بريد Gmail (مع شرح مصوّر مختصر لإنشاء كلمة مرور التطبيق ورابطها) + "اختبار الاتصال".
+3. مجلد النسخ الاحتياطي.
+
+### 6.1 شاشة القفل
+حقل كلمة المرور. 5 محاولات خاطئة ⇒ انتظار 30 ثانية. لا استرجاع لكلمة المرور (يُذكر ذلك عند إنشائها؛ البيانات نفسها غير مشفّرة والقفل لمنع الاستخدام العابر فقط — يُذكر في README).
+
+### 6.2 لوحة التحكم
+- **بطاقات**: غير مخصّصة · تحتاج رسوم · بانتظار الموافقة · تنبيهات استرداد. كل بطاقة تفتح المعاملات بالفلتر المناسب.
+- **جدول لكل عملة**: إجمالي الوارد (أصلي) · رسوم PayPal · عمولتي · مستحق للعملاء (مجموع الأرصدة) · مدفوع للعملاء. مع فلتر فترة (هذا الشهر/الشهر الماضي/هذه السنة/الكل/مخصّص).
+- **أعلى العملاء رصيداً** (لكل عملة).
+- **آخر سحب**: الوقت والنتيجة + زر "سحب الآن".
+
+### 6.3 المعاملات (الشاشة الرئيسية)
+- **تبويبات بعدّادات**: الكل · غير مخصّصة · بانتظار الموافقة · معتمدة · مستبعدة.
+- **فلاتر**: بحث (المرسل، الإيميل، رقم المعاملة، ملاحظة المرسل) · العملة · البريد · العميل · الفترة · "تحتاج رسوم فقط".
+- **أعمدة**: ☐ · التاريخ · المرسل (الاسم + الإيميل) · ملاحظة المرسل · الأصلي · الرسوم · الصافي · العميل · العمولة % · للعميل · الحالة · ⋯
+  - الرسوم الفارغة تظهر "—" مع شارة "تحتاج رسوم"؛ التقديرية بخط مائل.
+  - ترتيب بأي عمود، ترقيم 50/صفحة، صف إجماليات أسفل الجدول **لكل عملة** لما هو معروض.
+- **أعلى الشاشة**: زر **"سحب المعاملات"** (يتحول لشريط تقدّم: مقروءة/جديدة/مكررة/فاشلة + إلغاء) · "إضافة معاملة يدوياً".
+- **شريط إجراءات جماعية** عند التحديد: تخصيص لعميل · اعتماد · إلغاء التخصيص · استبعاد.
+- **إجراءات الصف** حسب الحالة: تخصيص · تعديل الرسوم · تعديل العمولة · اعتماد · إلغاء التخصيص · إلغاء الاعتماد · استبعاد/إرجاع · عرض التفاصيل.
+- **لوحة التفاصيل (جانبية)**: كل الحقول، تفصيل الحساب (أصلي − رسوم = صافي − عمولة = للعميل)، ملاحظة المدير، سجل التغييرات من `audit_log`، وزر "عرض الرسالة الأصلية" (HTML داخل iframe معزول: بلا سكربتات ولا تحميل صور خارجية).
+- **نافذة التخصيص**: قائمة عملاء قابلة للبحث · العمولة (نسبة أو مبلغ ثابت، مملوءة من العميل) · معاينة حية للحساب · خيار "اعتماد مباشرة" (إن كانت الرسوم موجودة).
+- **نافذة الرسوم**: حقلان مترابطان (الرسوم/الصافي) · زر "بلا رسوم" · اقتراح تقديري إن فُعّل.
+- **إضافة يدوية**: التاريخ · المرسل · الإيميل · العملة · الأصلي · الرسوم · رقم معاملة PayPal (اختياري) · ملاحظة.
+
+### 6.4 العملاء
+- **القائمة**: بحث · فلتر نشط/معطّل · أعمدة: الاسم · الهاتف · العمولة الافتراضية · الرصيد (شارة لكل عملة، الأحمر = عليه) · بانتظار الموافقة (عدد) · ⋯
+- **نافذة إضافة/تعديل**: الاسم (فريد، إلزامي) · الهاتف · العمولة الافتراضية % · ملاحظات · نشط.
+- الضغط على عميل يفتح دفتره.
+
+### 6.5 دفتر العميل
+- **رأس الصفحة**: الاسم والهاتف · بطاقة رصيد لكل عملة (مجموع ما له · مجموع ما دُفع · **المتبقي**).
+- **تبويب لكل عملة**؛ داخله جدول القيود (الأقدم أولاً): التاريخ · النوع · الوصف · له (+) · عليه (−) · **الرصيد الجاري** · المرجع · ⋯ (عكس القيد / فتح المعاملة).
+  - وصف قيد الاعتماد تلقائي: "دفعة من {المرسل} — أصلي {gross}، رسوم {fee}، عمولة {x%}".
+  - القيود المعكوسة تظهر مشطوبة مع رابط للقيد العكسي.
+- **فلتر فترة** مع سطر "رصيد سابق" في أعلى الجدول عند تحديد بداية.
+- **أزرار**: تسجيل دفعة · قيد تسوية · تصدير CSV · طباعة/PDF (كشف حساب عربي نظيف: الاسم، الفترة، الجدول، الرصيد الختامي).
+- **تبويب "معاملاته"**: معاملات العميل المخصّصة والمعتمدة (نفس جدول المعاملات مفلتراً).
+
+### 6.6 الرسائل
+- تبويبات: فاشلة · متجاهلة · محلَّلة.
+- أعمدة: التاريخ · من · الموضوع · السبب · البريد.
+- إجراءات: عرض الرسالة · إعادة تحليل (مفرد/جماعي) · "إنشاء معاملة يدوياً من هذه الرسالة" (تُربط بـ `raw_email_id`) · "تجاهل".
+
+### 6.7 الإعدادات
+- **البريد**: قائمة الحسابات (التسمية، العنوان، آخر سحب) · إضافة/تعديل · اختبار الاتصال · تغيير كلمة المرور · إيقاف · حذف (فقط إن لم تكن له معاملات).
+- **سجل السحب**: جدول `pull_runs`.
+- **العمولة والرسوم**: العمولة الافتراضية للعملاء الجدد · تقدير الرسوم (تفعيل، نسبة، ثابت).
+- **النسخ الاحتياطي**: المجلد · نسخ عند الإغلاق · عدد النسخ المحفوظة (30) · "نسخة الآن" · "استعادة من ملف" (تأخذ نسخة من الحالية أولاً ثم تعيد تشغيل البرنامج) · قائمة آخر النسخ.
+- **الأمان**: تفعيل/تغيير كلمة القفل · قفل تلقائي بعد N دقيقة خمول.
+- **المظهر**: داكن/فاتح/حسب النظام.
+- **حول**: الإصدار · مسار ملف البيانات · "فتح مجلد البيانات".
+
+---
+
+## 7. أوامر Tauri (الواجهة ⇄ Rust)
+
+كل أمر يعيد `Result<T, AppError>` حيث `AppError { code, message_ar }`.
+
+| المجموعة | الأوامر |
+|---|---|
+| app | `app_status`, `unlock`, `lock`, `set_lock_password`, `get_settings`, `update_settings` |
+| dashboard | `dashboard_summary(period)` |
+| customers | `customers_list(filter)`, `customer_get`, `customer_create`, `customer_update`, `customer_set_active` |
+| transactions | `txn_list(filter, sort, page)`, `txn_get`, `txn_counts`, `txn_create_manual`, `txn_assign`, `txn_unassign`, `txn_set_fee`, `txn_set_commission`, `txn_approve`, `txn_unapprove(reason)`, `txn_set_excluded`, `txn_set_note`, `txn_bulk(action, ids, params)`, `txn_history` |
+| ledger | `ledger_balances(customer_id)`, `ledger_entries(customer_id, currency, period)`, `ledger_add_payout`, `ledger_add_adjustment`, `ledger_reverse_entry(reason)`, `ledger_export_csv(path)`, `refund_alerts`, `refund_confirm_reversal` |
+| mail | `mailbox_list`, `mailbox_create`, `mailbox_update`, `mailbox_set_password`, `mailbox_test`, `mailbox_delete`, `pull_start(mailbox_id)`, `pull_cancel`, `pull_runs_list` |
+| emails | `emails_list(filter)`, `email_get`, `email_reparse(ids)`, `email_set_ignored` |
+| backup | `backup_now`, `backup_list`, `backup_restore(path)` |
+
+الأحداث: `pull://progress`, `pull://finished`.
+
+---
+
+## 8. هيكل الملفات
+
+```
+PpFeez/
+├─ src/                              # React
+│  ├─ main.tsx, App.tsx, routes.tsx
+│  ├─ pages/{Lock,Onboarding,Dashboard,Transactions,Customers,CustomerLedger,Emails,Settings}.tsx
+│  ├─ components/{layout,transactions,customers,ledger,settings,ui}/…
+│  ├─ lib/{api.ts,types.ts,money.ts,dates.ts,strings.ts}
+│  └─ styles/globals.css
+├─ src-tauri/
+│  ├─ src/{main.rs,state.rs,error.rs,commands/*.rs}
+│  ├─ crates/core/
+│  │  ├─ src/{lib.rs,error.rs,money.rs,commission.rs,audit.rs}
+│  │  ├─ src/db/{mod.rs,migrations/0001_init.sql}
+│  │  ├─ src/{customers.rs,transactions.rs,ledger.rs,refunds.rs,dashboard.rs,settings.rs,backup.rs,lock.rs}
+│  │  ├─ src/mail/{mod.rs,fetcher.rs,imap_fetcher.rs,verify.rs,pull.rs}
+│  │  ├─ src/paypal/{mod.rs,amount.rs,parser.rs,parsers/{payment.rs,refund.rs,reversal.rs}}
+│  │  └─ tests/{…, fixtures/emails/*.eml}
+│  └─ tauri.conf.json, capabilities/, icons/
+├─ e2e/                              # Playwright مع mockIPC
+├─ .github/workflows/build.yml
+└─ README.md                         # عربي
+```
+
+`fetcher.rs` يعرّف trait `MailFetcher`؛ `imap_fetcher.rs` التنفيذ الحقيقي، والاختبارات تستخدم جالباً وهمياً يعيد ملفات `.eml`.
+
+---
+
+## 9. مراحل التنفيذ (commit + push على `main` بعد كل مرحلة)
+
+1. **الهيكل**: Tauri 2 + React، RTL، المظهر، الشريط الجانبي، القاعدة والـ migrations، workflow بناء ويندوز.
+2. **القلب المحاسبي**: `money`, `commission`, `transactions`, `ledger`, `refunds`, `audit` مع اختباراتها.
+3. **العملاء والمعاملات**: الشاشتان كاملتين مع الإدخال اليدوي والتخصيص والاعتماد والجماعي.
+4. **الدفتر**: دفتر العميل، الدفعات، التسويات، العكس، التصدير والطباعة.
+5. **البريد**: الإعداد، السحب مع التقدّم، التحقق من المصدر، المحلّلات، شاشة الرسائل، تنبيهات الاسترداد.
+6. **الإتمام**: لوحة التحكم، القفل والمعالج، النسخ الاحتياطي، README، مراجعة نهائية.
+
+---
+
+## 10. التحقق (Verification)
+
+**`cargo test` (في `crates/core`)**
+- `money`: تحليل وتنسيق المبالغ بالصيغ الأربع، عملات بلا كسور.
+- `commission`: مثال 100/5/25% = 23.75/71.25، التقريب half-up عند .5، نسبة 0 و100%، مبلغ ثابت، رفض عمولة أكبر من الصافي.
+- دورة الحياة: كل انتقال مسموح، ورفض كل انتقال ممنوع (اعتماد بلا رسوم، تعديل معتمدة، تخصيص لعميل معطّل...).
+- الدفتر: قيد واحد عند الاعتماد، فشل UPDATE/DELETE، عدم عكس القيد مرتين، الرصيد لكل عملة، الرصيد الجاري، إلغاء الاعتماد يعيد الرصيد لما كان.
+- الاسترداد: كامل وجزئي، قبل وبعد الاعتماد.
+- المصدر: قبول PayPal مع `dkim=pass`، رفض اسم ظاهر مزوّر، رفض `dkim=fail`، تجاهل ترويسة Authentication-Results مزروعة أسفل ترويسة Google.
+- المحلّلات: كل ملف `.eml` يعطي الحقول المتوقعة؛ رسالة غير مالية ⇒ `ignored`؛ ناقصة ⇒ `failed`.
+- السحب بجالب وهمي: دفعات، تحديث `last_uid`، سحب ثانٍ بلا تكرار، تغيّر `UIDVALIDITY`، خطأ في المنتصف ثم استكمال.
+- النسخ والاستعادة.
+
+**الواجهة**
+- `npm run build` وفحص الأنواع و lint.
+- Playwright مع `mockIPC`: إنشاء عميل ← إضافة معاملة يدوياً ← إدخال الرسوم ← تخصيص ← اعتماد ← تسجيل دفعة ← التحقق من الرصيد المتبقي؛ والتأكد من اتجاه RTL والوضعين الداكن والفاتح بلقطات شاشة.
+
+**البناء**: نجاح workflow وإخراج `.exe`.
+
+**ما لا يمكن التحقق منه في بيئة البناء** (يُذكر صراحة في التقرير النهائي): تشغيل `.exe` على ويندوز فعلي، والاتصال الحقيقي بـ Gmail. يجرّبه صاحب المشروع: تثبيت ← إضافة البريد ← "اختبار الاتصال" ← "سحب".
+
+---
+
+## 11. خارج النطاق (النسخة الأولى)
+
+- تقسيم معاملة واحدة بين أكثر من عميل.
+- تحويل العملات وسعر الصرف.
+- بوابة أو حسابات للعملاء؛ إرسال الكشوف تلقائياً.
+- السحب المجدول التلقائي؛ التحديث التلقائي للبرنامج.
+- ماك/لينكس؛ نسخة الجوال؛ المزامنة بين جهازين.
+- تشفير ملف القاعدة.
+- ربط PayPal API (يُضاف لاحقاً إن تحوّل الحساب إلى Business).
+
+## 12. ملاحظات
+
+- استقبال أموال لصالح الغير عبر حساب شخصي قد يخالف شروط PayPal أو يتطلب ترخيصاً حسب البلد — يُنصح بالتأكد؛ البرنامج أداة محاسبة فقط.
+- كلمة مرور تطبيق Gmail تعطي وصولاً كاملاً للبريد؛ تُحفظ في خزنة ويندوز ويمكن إلغاؤها من حساب Google في أي وقت.
+- لا تُرفع إلى GitHub: ملف القاعدة، النسخ الاحتياطية، أي رسائل حقيقية غير منقّحة.
+- الملف غير موقّع رقمياً: تحذير SmartScreen عند أول تثبيت (More info ← Run anyway).
