@@ -174,6 +174,8 @@ fn preview_does_not_save_and_reports_errors() {
         )
         .unwrap();
     assert_eq!(p.customer_amount_minor, Some(8100));
+    let p = h.core.txn_preview(t.id, Some(FeeInput::Net { net_text: "96.20".into() }), None, None).unwrap();
+    assert_eq!((p.fee_minor, p.net_minor), (Some(380), Some(9620)));
     let saved = h.core.txn_get(t.id).unwrap();
     assert_eq!((saved.fee_minor, saved.customer.is_none()), (Some(500), true));
 }

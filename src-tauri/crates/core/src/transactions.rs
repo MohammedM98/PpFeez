@@ -285,6 +285,8 @@ pub enum CommissionInput {
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TxnPreview {
+    /// The fee the preview used (resolved from a net amount when `kind: 'net'`).
+    pub fee_minor: Option<i64>,
     pub net_minor: Option<i64>,
     pub commission_minor: Option<i64>,
     pub customer_amount_minor: Option<i64>,
@@ -1052,7 +1054,7 @@ impl Core {
         let conn = self.conn();
         let row = load_row(&conn, id)?;
         let estimate = if row.fee_minor.is_none() { fee_estimate(&conn, row.gross_minor)? } else { None };
-        let compute = || -> AppResult<Derived> {
+        let compute = || -> AppResult<(Option<i64>, Derived)> {
             let fee_minor = match &fee {
                 Some(f) => Some(resolve_fee(&conn, &row, f)?.0),
                 None => row.fee_minor,
@@ -1070,10 +1072,11 @@ impl Core {
                 }
                 (None, None) => row.rule(),
             };
-            derive(row.gross_minor, fee_minor, rule)
+            Ok((fee_minor, derive(row.gross_minor, fee_minor, rule)?))
         };
         Ok(match compute() {
-            Ok(d) => TxnPreview {
+            Ok((fee_minor, d)) => TxnPreview {
+                fee_minor,
                 net_minor: d.net_minor,
                 commission_minor: d.commission_minor,
                 customer_amount_minor: d.customer_amount_minor,

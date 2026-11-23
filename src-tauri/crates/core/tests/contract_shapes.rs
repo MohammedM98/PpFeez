@@ -211,9 +211,12 @@ fn transactions_group() {
     let fixed: CommissionInput = serde_json::from_value(json!({ "mode": "fixed", "amountText": "3.50" })).unwrap();
 
     let p = h.core.txn_preview(t.id, None, Some(fixed), Some(c.id)).unwrap();
-    assert_keys(&p, &["netMinor", "commissionMinor", "customerAmountMinor", "feeEstimateMinor"]);
+    assert_keys(&p, &["feeMinor", "netMinor", "commissionMinor", "customerAmountMinor", "feeEstimateMinor"]);
     let p = h.core.txn_preview(t.id, None, Some(CommissionInput::Fixed { amount_text: "999".into() }), None).unwrap();
-    let pv = assert_keys(&p, &["netMinor", "commissionMinor", "customerAmountMinor", "feeEstimateMinor", "error"]);
+    let pv = assert_keys(
+        &p,
+        &["feeMinor", "netMinor", "commissionMinor", "customerAmountMinor", "feeEstimateMinor", "error"],
+    );
     assert_eq!(pv["error"]["code"], json!("commission_exceeds_net"));
 
     let t = h.core.txn_assign(t.id, c.id, Some(pct), false).unwrap();
