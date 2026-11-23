@@ -7,3 +7,4 @@ e2e/.shots-tmp/
 .DS_Store
 # backend (owned by the backend session)
 src-tauri/target/
+.shots/

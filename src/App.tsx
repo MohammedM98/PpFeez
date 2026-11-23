@@ -5,6 +5,9 @@ import { api } from '@/lib/api';
 import { ThemeProvider } from '@/lib/theme';
 import { Shell } from '@/components/layout/Shell';
 import { TransactionsPage } from '@/pages/Transactions';
+import { PullProvider } from '@/lib/pull';
+import { Toasts } from '@/components/ui/Toast';
+import { TxnActionsHost } from '@/components/transactions/TxnActions';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: false, staleTime: 5_000 } },
@@ -33,7 +36,12 @@ function Themed() {
   if (!settings.data) return null;
   return (
     <ThemeProvider initial={settings.data.theme} onChange={(theme) => void api.updateSettings({ theme })}>
-      <RouterProvider router={router} />
+      <PullProvider>
+        <TxnActionsHost>
+          <RouterProvider router={router} />
+        </TxnActionsHost>
+      </PullProvider>
+      <Toasts />
     </ThemeProvider>
   );
 }
