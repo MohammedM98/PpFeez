@@ -14,7 +14,7 @@ use crate::clock::{parse_date, parse_iso};
 use crate::customers::Customer;
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::ledger::{LedgerType, PayoutMethod};
-use crate::money::decimals;
+use crate::money::{decimals, ltr};
 use crate::settings::{self, Settings, K_EXCEL_EXPORT_PATH, K_EXCEL_LAST_EXPORTED_AT};
 use crate::transactions::{Period, SortDir, Transaction, TxnFilter, TxnSort, TxnSortKey, TxnStatus, TxnType};
 use crate::Core;
@@ -550,7 +550,7 @@ impl Core {
             let table_end = s.row;
             s.row += 1;
             for t in &list.totals {
-                s.str(0, &format!("الإجمالي ({})", t.count), &st.bold)?;
+                s.str(0, &format!("الإجمالي ({})", ltr(&t.count.to_string())), &st.bold)?;
                 s.str(6, &t.currency, &st.bold)?;
                 s.money(&st, 7, Some(t.gross_minor), &t.currency, true)?;
                 s.money(&st, 8, Some(t.fee_minor), &t.currency, true)?;
@@ -582,8 +582,8 @@ impl Core {
         let period_label = match period {
             Some(p) if p.from.is_some() || p.to.is_some() => format!(
                 "الفترة: {} — {}",
-                p.from.clone().unwrap_or_else(|| "البداية".into()),
-                p.to.clone().unwrap_or_else(|| "اليوم".into())
+                p.from.as_deref().map(ltr).unwrap_or_else(|| "البداية".into()),
+                p.to.as_deref().map(ltr).unwrap_or_else(|| "اليوم".into())
             ),
             _ => "الفترة: كل الفترات".into(),
         };

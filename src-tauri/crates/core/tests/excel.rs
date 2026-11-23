@@ -218,7 +218,7 @@ fn transactions_export_respects_filter_and_sort_with_totals() {
     assert_eq!(gross, vec![100.0, 40.0, 10.0]);
     assert!(tx.iter().all(|r| s(&r[6]) != "JPY"));
     let total = tx.iter().find(|r| s(&r[0]).starts_with("الإجمالي")).unwrap();
-    assert_eq!(s(&total[0]), "الإجمالي (3)");
+    assert_eq!(s(&total[0]), "الإجمالي (\u{2066}3\u{2069})");
     assert_eq!((f(&total[7]), f(&total[8]), f(&total[9])), (150.0, 6.0, 134.0));
     assert!(all_sheets_rtl(&path));
 }
@@ -253,7 +253,11 @@ fn ledger_export_matches_running_balance() {
     h.core.excel_export_ledger(cid, Some("usd"), Some(&period), &path).unwrap();
     let sheet = rows(&path, "USD");
     assert_eq!(s(&sheet[0][0]), "كشف حساب: أحمد");
-    assert!(s(&sheet[1][0]).starts_with("الفترة: 2026-11-24"));
+    assert!(s(&sheet[1][0]).starts_with("الفترة: \u{2066}2026-11-24\u{2069}"));
+    // Generated descriptions keep their isolates in the Excel cells.
+    let ledger = rows(&all, "USD");
+    let credit = ledger.iter().find(|r| r.len() > 2 && s(&r[2]).starts_with("دفعة من")).unwrap();
+    assert!(s(&credit[2]).contains("عمولة \u{2066}25.00%\u{2069}"));
     let opening = sheet.iter().find(|r| s(&r[2]) == "رصيد سابق").unwrap();
     assert_eq!(f(&opening[5]), 71.25);
     let entry = sheet.iter().find(|r| r.len() > 6 && s(&r[6]) == "R-9").unwrap();

@@ -212,3 +212,10 @@ pub fn mul_div_half_up(value: i64, num: i64, den: i64) -> i64 {
 pub fn currency_from_symbol(text: &str) -> Option<&'static str> {
     text.chars().find_map(symbol_currency)
 }
+
+/// Wrap a left-to-right run (amount, percentage, id, date) in Unicode isolates
+/// (LRI U+2066 … PDI U+2069) so it keeps its order inside Arabic RTL text,
+/// e.g. "عمولة 20.00%" does not render as "%20.00".
+pub fn ltr(s: &str) -> String {
+    format!("\u{2066}{s}\u{2069}")
+}

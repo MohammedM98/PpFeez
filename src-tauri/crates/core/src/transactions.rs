@@ -5,7 +5,7 @@ use crate::clock::{iso, parse_date};
 use crate::commission::{self, validate_bps, Commission, CommissionMode};
 use crate::customers::CustomerRef;
 use crate::error::{is_unique_violation, AppError, AppResult, ErrorCode};
-use crate::money::{format_amount, format_bps, normalize_currency, parse_non_negative, parse_positive};
+use crate::money::{format_amount, format_bps, ltr, normalize_currency, parse_non_negative, parse_positive};
 use crate::settings;
 use crate::Core;
 use chrono::{Duration, NaiveDateTime};
@@ -621,10 +621,12 @@ pub fn credit_description(row: &TxnRow) -> String {
         Some(CommissionMode::Percent) => format_bps(row.commission_bps.unwrap_or(0)),
         _ => format_amount(row.commission_minor.unwrap_or(0), &row.currency),
     };
+    // Numbers are isolated so they keep their LTR order inside the Arabic sentence.
     format!(
-        "دفعة من {payer} — أصلي {}، رسوم {}، عمولة {commission}",
-        format_amount(row.gross_minor, &row.currency),
-        format_amount(row.fee_minor.unwrap_or(0), &row.currency),
+        "دفعة من {payer} — أصلي {}، رسوم {}، عمولة {}",
+        ltr(&format_amount(row.gross_minor, &row.currency)),
+        ltr(&format_amount(row.fee_minor.unwrap_or(0), &row.currency)),
+        ltr(&commission),
     )
 }
 

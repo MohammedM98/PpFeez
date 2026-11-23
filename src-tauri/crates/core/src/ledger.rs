@@ -5,7 +5,7 @@ use crate::audit;
 use crate::clock::{date_str, parse_date};
 use crate::customers::{self, balance_in, Customer};
 use crate::error::{is_unique_violation, AppError, AppResult, ErrorCode};
-use crate::money::{format_amount, format_plain, normalize_currency, parse_positive};
+use crate::money::{format_amount, format_plain, ltr, normalize_currency, parse_positive};
 use crate::transactions::{Period, TxnStatus, TxnType};
 use crate::Core;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -335,8 +335,8 @@ impl Core {
                 "overdraw",
                 format!(
                     "الدفعة ({}) أكبر من رصيد العميل ({}). أكّد للمتابعة وسيصبح الرصيد سالباً (عليه)",
-                    format_amount(amount, &currency),
-                    format_amount(balance, &currency)
+                    ltr(&format_amount(amount, &currency)),
+                    ltr(&format_amount(balance, &currency))
                 ),
             ));
         }

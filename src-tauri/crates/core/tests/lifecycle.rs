@@ -97,7 +97,13 @@ fn full_happy_path_assign_fee_approve() {
     assert_eq!(e.amount_minor, 7125);
     assert_eq!(e.entry_date, "2026-11-23");
     assert_eq!(e.transaction_id, Some(t.id));
-    assert_eq!(e.description, "دفعة من John Doe — أصلي 100.00 USD، رسوم 5.00 USD، عمولة 25.00%");
+    assert_eq!(
+        e.description,
+        "دفعة من John Doe — أصلي \u{2066}100.00 USD\u{2069}، رسوم \u{2066}5.00 USD\u{2069}، عمولة \u{2066}25.00%\u{2069}"
+    );
+    // Every number in the Arabic sentence is wrapped in LRI…PDI so "%" stays after the number in RTL.
+    assert_eq!(e.description.matches('\u{2066}').count(), 3);
+    assert_eq!(e.description.matches('\u{2069}').count(), 3);
 
     let history = h.core.txn_history(t.id).unwrap();
     let actions: Vec<_> = history.iter().map(|i| i.action.as_str()).collect();

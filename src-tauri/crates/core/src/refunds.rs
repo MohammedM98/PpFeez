@@ -9,7 +9,7 @@ use crate::clock::date_str;
 use crate::customers::{self, CustomerRef};
 use crate::error::{AppError, AppResult};
 use crate::ledger::{get_entry, LedgerEntry};
-use crate::money::{format_amount, mul_div_half_up, parse_positive};
+use crate::money::{format_amount, ltr, mul_div_half_up, parse_positive};
 use crate::transactions::{find_by_paypal_id, get_dto, load_row, Transaction, TxnRow, TxnStatus, TxnType};
 use crate::Core;
 use rusqlite::{params, Connection};
@@ -127,9 +127,9 @@ impl Core {
         let kind_ar = if refund.kind == TxnType::Refund { "استرداد" } else { "عكس/نزاع" };
         let description = format!(
             "{kind_ar} {} للمعاملة {} (المسترد {})",
-            refund.paypal_txn_id,
-            original.paypal_txn_id,
-            format_amount(refund.gross_minor, &refund.currency)
+            ltr(&refund.paypal_txn_id),
+            ltr(&original.paypal_txn_id),
+            ltr(&format_amount(refund.gross_minor, &refund.currency))
         );
         let tx = conn.unchecked_transaction()?;
         tx.execute(
