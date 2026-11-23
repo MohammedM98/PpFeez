@@ -49,7 +49,9 @@ export type ErrorCode =
   | 'customer_inactive' | 'duplicate'
   | 'already_reversed' | 'has_dependents'
   | 'imap_auth' | 'imap_connect' | 'imap_disabled' | 'pull_running'
-  | 'backup_failed' | 'restore_failed' | 'internal';
+  | 'backup_failed' | 'restore_failed'
+  | 'file_locked' | 'no_export_path' | 'export_failed'
+  | 'internal';
 export type AppError = { code: ErrorCode; messageAr: string; field?: string };
 
 // ===== التطبيق والإعدادات =====
@@ -73,6 +75,9 @@ export type Settings = {
   backupKeep: number;
   autoLockMinutes: number | null;
   onboardingDone: boolean;
+  excelExportPath: string | null;     // الملف الرئيسي (SPEC §6.8)
+  excelLastExportedAt: IsoDate | null;
+  excelUpdateOnClose: boolean;
 };
 
 // app_status(): AppStatus
@@ -302,13 +307,21 @@ export type BackupFile = { path: string; createdAt: IsoDate; sizeBytes: number }
 // backup_now(): BackupFile           throws backup_failed (مثلاً لا مجلد محدد)
 // backup_list(): BackupFile[]
 // backup_restore({ path }): void      // يأخذ نسخة من الحالية ثم يعيد تشغيل التطبيق
+
+// ===== Excel (SPEC §6.8) =====
+export type ExcelExportResult = { path: string; sheets: number; rows: number; exportedAt: IsoDate };
+// excel_set_path({ path }): Settings                    // المسار من نافذة الحفظ
+// excel_update(): ExcelExportResult                     // يعيد كتابة الملف الرئيسي   throws no_export_path | file_locked | export_failed
+// excel_export_transactions({ filter: TxnFilter, sort: TxnSort, path }): ExcelExportResult
+// excel_export_ledger({ customerId, currency?: Currency, period?: Period, path }): ExcelExportResult  // بلا currency => ورقة لكل عملة
+// open_path({ path }): void                             // فتح الملف في Excel
 ```
 
 ## 4. ما تحتاجه الواجهة من إضافات Tauri
 
 يضيفها القلب في `src-tauri` ويفعّل صلاحياتها في `capabilities/`:
-- `@tauri-apps/plugin-dialog` — اختيار مجلد النسخ، مسار حفظ CSV، ملف الاستعادة.
-- `@tauri-apps/plugin-opener` — فتح روابط Google لإنشاء كلمة مرور التطبيق، وفتح مجلد البيانات.
+- `@tauri-apps/plugin-dialog` — اختيار مجلد النسخ، مسار حفظ CSV و Excel (فلتر `.xlsx`)، ملف الاستعادة.
+- `@tauri-apps/plugin-opener` — فتح روابط Google لإنشاء كلمة مرور التطبيق، وفتح مجلد البيانات، وفتح ملف Excel.
 - الطباعة/PDF: الواجهة تعرض صفحة كشف الحساب وتستدعي `window.print()`.
 
 ## 5. متطلبات الواجهة الثابتة (غير قابلة للنقاش في جلسة التصميم)
