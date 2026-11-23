@@ -123,6 +123,9 @@ fn app_and_settings_group() {
             "backupKeep",
             "autoLockMinutes",
             "onboardingDone",
+            "excelExportPath",
+            "excelLastExportedAt",
+            "excelUpdateOnClose",
         ],
     );
     assert_eq!(s["theme"], json!("system"));
@@ -397,4 +400,34 @@ fn dashboard_and_backup_group() {
     let b = h.core.backup_now().unwrap();
     assert_keys(&b, &["path", "createdAt", "sizeBytes"]);
     assert_keys(&h.core.backup_list().unwrap()[0], &["path", "createdAt", "sizeBytes"]);
+}
+
+#[test]
+fn excel_group() {
+    let h = harness();
+    let path = h.dir.path().join("PpFeez.xlsx");
+    let st = serde_json::to_value(h.core.excel_set_path(&path.display().to_string()).unwrap()).unwrap();
+    assert_eq!(st["excelExportPath"], json!(path.display().to_string()));
+    assert_eq!(st["excelUpdateOnClose"], json!(true));
+    let r = h.core.excel_update().unwrap();
+    let v = assert_keys(&r, &["path", "sheets", "rows", "exportedAt"]);
+    assert_eq!(v["sheets"], json!(4));
+    let filter: TxnFilter = serde_json::from_value(json!({ "status": "all" })).unwrap();
+    let sort: TxnSort = serde_json::from_value(json!({ "key": "occurredAt", "dir": "desc" })).unwrap();
+    let q = h.dir.path().join("q.xlsx");
+    assert_keys(
+        &h.core.excel_export_transactions(&filter, sort, &q).unwrap(),
+        &["path", "sheets", "rows", "exportedAt"],
+    );
+    let patch: SettingsPatch =
+        serde_json::from_value(json!({ "excelExportPath": null, "excelUpdateOnClose": false })).unwrap();
+    h.core.update_settings(patch).unwrap();
+    let e = serde_json::to_value(h.core.excel_update().unwrap_err()).unwrap();
+    assert_eq!(e["code"], json!("no_export_path"));
+    let locked = serde_json::to_value(
+        ppfeez_core::excel::save_atomic_with(b"x", &path, |_, _| Err(std::io::Error::from_raw_os_error(32)))
+            .unwrap_err(),
+    )
+    .unwrap();
+    assert_eq!(locked["code"], json!("file_locked"));
 }

@@ -7,6 +7,7 @@ pub mod backup;
 pub mod customers;
 pub mod dashboard;
 pub mod emails;
+pub mod excel;
 pub mod ledger;
 pub mod mail;
 pub mod transactions;

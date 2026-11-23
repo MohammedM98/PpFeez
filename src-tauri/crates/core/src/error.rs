@@ -26,6 +26,9 @@ pub enum ErrorCode {
     PullRunning,
     BackupFailed,
     RestoreFailed,
+    FileLocked,
+    NoExportPath,
+    ExportFailed,
     Internal,
 }
 
@@ -51,6 +54,9 @@ impl ErrorCode {
             ErrorCode::PullRunning => "pull_running",
             ErrorCode::BackupFailed => "backup_failed",
             ErrorCode::RestoreFailed => "restore_failed",
+            ErrorCode::FileLocked => "file_locked",
+            ErrorCode::NoExportPath => "no_export_path",
+            ErrorCode::ExportFailed => "export_failed",
             ErrorCode::Internal => "internal",
         }
     }

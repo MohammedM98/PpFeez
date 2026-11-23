@@ -18,6 +18,9 @@ pub const K_FEE_ESTIMATE_FIXED_MINOR: &str = "fee_estimate_fixed_minor";
 pub const K_FEE_ESTIMATE_ENABLED: &str = "fee_estimate_enabled";
 pub const K_AUTO_LOCK_MINUTES: &str = "auto_lock_minutes";
 pub const K_ONBOARDING_DONE: &str = "onboarding_done";
+pub const K_EXCEL_EXPORT_PATH: &str = "excel_export_path";
+pub const K_EXCEL_LAST_EXPORTED_AT: &str = "excel_last_exported_at";
+pub const K_EXCEL_UPDATE_ON_CLOSE: &str = "excel_update_on_close";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,6 +53,9 @@ pub struct Settings {
     pub backup_keep: i64,
     pub auto_lock_minutes: Option<i64>,
     pub onboarding_done: bool,
+    pub excel_export_path: Option<String>,
+    pub excel_last_exported_at: Option<String>,
+    pub excel_update_on_close: bool,
 }
 
 /// Distinguish an absent field from an explicit `null` in a patch.
@@ -77,6 +83,9 @@ pub struct SettingsPatch {
     #[serde(default, deserialize_with = "double_option")]
     pub auto_lock_minutes: Option<Option<i64>>,
     pub onboarding_done: Option<bool>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub excel_export_path: Option<Option<String>>,
+    pub excel_update_on_close: Option<bool>,
 }
 
 pub fn get_raw(conn: &Connection, key: &str) -> AppResult<Option<String>> {
@@ -129,6 +138,9 @@ pub fn load(conn: &Connection) -> AppResult<Settings> {
         backup_keep: get_i64(conn, K_BACKUP_KEEP, 30)?,
         auto_lock_minutes: get_raw(conn, K_AUTO_LOCK_MINUTES)?.and_then(|v| v.parse().ok()),
         onboarding_done: get_bool(conn, K_ONBOARDING_DONE, false)?,
+        excel_export_path: get_raw(conn, K_EXCEL_EXPORT_PATH)?.filter(|s| !s.is_empty()),
+        excel_last_exported_at: get_raw(conn, K_EXCEL_LAST_EXPORTED_AT)?.filter(|s| !s.is_empty()),
+        excel_update_on_close: get_bool(conn, K_EXCEL_UPDATE_ON_CLOSE, true)?,
     })
 }
 
@@ -189,6 +201,15 @@ impl Core {
         }
         if let Some(d) = patch.onboarding_done {
             set_raw(&tx, K_ONBOARDING_DONE, bool_str(d))?;
+        }
+        if let Some(p) = patch.excel_export_path {
+            match p.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
+                Some(p) => set_raw(&tx, K_EXCEL_EXPORT_PATH, &crate::excel::validate_xlsx_path(&p)?)?,
+                None => delete_raw(&tx, K_EXCEL_EXPORT_PATH)?,
+            }
+        }
+        if let Some(b) = patch.excel_update_on_close {
+            set_raw(&tx, K_EXCEL_UPDATE_ON_CLOSE, bool_str(b))?;
         }
         let s = load(&tx)?;
         tx.commit()?;

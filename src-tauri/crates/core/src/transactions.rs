@@ -1090,6 +1090,15 @@ impl Core {
     pub fn txn_list(&self, filter: &TxnFilter, sort: TxnSort, page: i64, page_size: i64) -> AppResult<TxnListResult> {
         let page = page.max(1);
         let page_size = page_size.clamp(1, 500);
+        self.txn_query(filter, sort, Some((page, page_size)))
+    }
+
+    /// All rows matching the filter in the given order (every page), with per-currency totals.
+    pub fn txn_list_all(&self, filter: &TxnFilter, sort: TxnSort) -> AppResult<TxnListResult> {
+        self.txn_query(filter, sort, None)
+    }
+
+    fn txn_query(&self, filter: &TxnFilter, sort: TxnSort, paging: Option<(i64, i64)>) -> AppResult<TxnListResult> {
         let conn = self.conn();
         let (where_sql, args) = self.where_clause(filter, true)?;
         let total: i64 = conn.query_row(
@@ -1114,11 +1123,12 @@ impl Core {
                 "CASE t.status WHEN 'unassigned' THEN 0 WHEN 'pending_approval' THEN 1 WHEN 'approved' THEN 2 ELSE 3 END {dir}"
             ),
         };
-        let sql = format!(
-            "SELECT t.* FROM paypal_transactions t WHERE {where_sql} ORDER BY {order}, t.id {dir} LIMIT {} OFFSET {}",
-            page_size,
-            (page - 1) * page_size
-        );
+        let limit = match paging {
+            Some((page, page_size)) => format!("LIMIT {page_size} OFFSET {}", (page - 1) * page_size),
+            None => String::new(),
+        };
+        let sql =
+            format!("SELECT t.* FROM paypal_transactions t WHERE {where_sql} ORDER BY {order}, t.id {dir} {limit}");
         let rows: Vec<TxnRow> = {
             let mut stmt = conn.prepare(&sql)?;
             let it = stmt.query_map(rusqlite::params_from_iter(args.iter()), TxnRow::from_row)?;
@@ -1143,6 +1153,7 @@ impl Core {
             })?;
             it.collect::<Result<Vec<_>, _>>()?
         };
+        let (page, page_size) = paging.unwrap_or((1, total.max(1)));
         Ok(TxnListResult { items, total, page, page_size, totals })
     }
 

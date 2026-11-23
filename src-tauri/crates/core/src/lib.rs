@@ -12,6 +12,7 @@ pub mod dashboard;
 pub mod db;
 pub mod emails;
 pub mod error;
+pub mod excel;
 pub mod ledger;
 pub mod lock;
 pub mod mail;

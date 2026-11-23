@@ -86,19 +86,29 @@ pub fn run() {
             commands::backup::backup_now,
             commands::backup::backup_list,
             commands::backup::backup_restore,
+            // excel
+            commands::excel::excel_set_path,
+            commands::excel::excel_update,
+            commands::excel::excel_export_transactions,
+            commands::excel::excel_export_ledger,
+            commands::excel::open_path,
         ])
         .build(tauri::generate_context!())
         .expect("error while building PpFeez");
 
     let mut backed_up = false;
     app.run(move |handle, event| {
-        // Back up once when the app is about to close (if enabled in settings).
+        // Back up and refresh the Excel file once when the app is about to close (if enabled).
         if let RunEvent::ExitRequested { .. } = event {
             if !backed_up {
                 backed_up = true;
                 if let Some(state) = handle.try_state::<AppState>() {
+                    // Failures never block closing; they are logged.
                     if let Err(e) = state.core.backup_on_close() {
                         eprintln!("backup on close failed: {e}");
+                    }
+                    if let Err(e) = state.core.excel_on_close() {
+                        eprintln!("excel update on close failed: {e}");
                     }
                 }
             }
