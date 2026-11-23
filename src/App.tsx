@@ -6,6 +6,8 @@ import { ThemeProvider } from '@/lib/theme';
 import { Shell } from '@/components/layout/Shell';
 import { TransactionsPage } from '@/pages/Transactions';
 import { CustomersPage } from '@/pages/Customers';
+import { CustomerLedgerPage } from '@/pages/CustomerLedger';
+import { StatementPage } from '@/pages/Statement';
 import { PullProvider } from '@/lib/pull';
 import { Toasts } from '@/components/ui/Toast';
 import { TxnActionsHost } from '@/components/transactions/TxnActions';
@@ -19,6 +21,7 @@ function Placeholder({ title }: { title: string }) {
 }
 
 const router = createHashRouter([
+  { path: '/statement/:id', element: <StatementPage /> },
   {
     element: <Shell />,
     children: [
@@ -26,7 +29,7 @@ const router = createHashRouter([
       { path: 'transactions', element: <TransactionsPage /> },
       { path: 'dashboard', element: <Placeholder title="لوحة التحكم" /> },
       { path: 'customers', element: <CustomersPage /> },
-      { path: 'customers/:id', element: <Placeholder title="دفتر العميل" /> },
+      { path: 'customers/:id', element: <CustomerLedgerPage /> },
       { path: 'emails', element: <Placeholder title="الرسائل" /> },
       { path: 'settings', element: <Placeholder title="الإعدادات" /> },
     ],

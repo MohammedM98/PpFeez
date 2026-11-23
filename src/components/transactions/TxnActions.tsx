@@ -153,7 +153,7 @@ function AssignDialog({ txn, ids, onClose, onBulk }: { txn?: Transaction; ids?: 
       description={txn && <>دفعة من <bdi>{txn.payerName}</bdi> بقيمة <Amount minor={txn.grossMinor} currency={txn.currency} /></>}
       footer={<>
         <Button variant="secondary" onPress={onClose}>تراجع</Button>
-        <Button variant="primary" isDisabled={!customerId || pending || !!c.pctError || (!!p?.error && !!txn)} onPress={submit}>
+        <Button variant="primary" isDisabled={!customerId || !!c.pctError || (!!p?.error && !!txn)} isPending={pending} onPress={submit}>
           {approve && canApprove ? <>تخصيص واعتماد {p?.customerAmountMinor != null && <Amount minor={p.customerAmountMinor} currency={txn!.currency} className="[&_span]:text-accent-fg/75" />}</> : 'تخصيص'}
         </Button>
       </>}>
@@ -199,9 +199,9 @@ function FeeDialog({ txn, onClose }: { txn: Transaction; onClose: () => void }) 
     <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="md" title="رسوم PayPal"
       description={<>أدخل الرسوم أو الصافي كما يظهر في رصيد PayPal، والآخر يُحسب تلقائياً</>}
       footer={<>
-        <Button variant="quiet" className="me-auto" onPress={() => save({ kind: 'zero' }, 'سُجّلت بلا رسوم')} isDisabled={pending}>بلا رسوم</Button>
+        <Button variant="quiet" className="me-auto" onPress={() => save({ kind: 'zero' }, 'سُجّلت بلا رسوم')} isPending={pending}>بلا رسوم</Button>
         <Button variant="secondary" onPress={onClose}>تراجع</Button>
-        <Button variant="primary" isDisabled={!input || !!p?.error || pending} onPress={() => input && save(input, 'حُفظت الرسوم')}>حفظ</Button>
+        <Button variant="primary" isDisabled={!input || !!p?.error} isPending={pending} onPress={() => input && save(input, 'حُفظت الرسوم')}>حفظ</Button>
       </>}>
       <div className="flex flex-col gap-4">
         <div className="grid grid-cols-2 gap-3">
@@ -217,7 +217,7 @@ function FeeDialog({ txn, onClose }: { txn: Transaction; onClose: () => void }) 
         {estimate !== null && !input && (
           <div className="flex items-center justify-between gap-3 rounded-card border border-dashed border-line-strong px-4 py-3">
             <div className="text-sm text-fg-2">تقدير الرسوم <Amount minor={estimate} currency={txn.currency} estimated className="italic" /> <span className="text-[12.5px] text-fg-3">تقديري، لا يُحفظ إلا بالتأكيد</span></div>
-            <Button size="sm" variant="secondary" onPress={() => save({ kind: 'accept_estimate' }, 'اعتُمد التقدير')} isDisabled={pending}>تأكيد التقدير</Button>
+            <Button size="sm" variant="secondary" onPress={() => save({ kind: 'accept_estimate' }, 'اعتُمد التقدير')} isPending={pending}>تأكيد التقدير</Button>
           </div>
         )}
         <Breakdown title="معاينة" v={{
@@ -241,7 +241,7 @@ function CommissionDialog({ txn, onClose }: { txn: Transaction; onClose: () => v
       description={<>لـ {txn.customer?.name} على دفعة <bdi>{txn.payerName}</bdi></>}
       footer={<>
         <Button variant="secondary" onPress={onClose}>تراجع</Button>
-        <Button variant="primary" isDisabled={!c.input || !!p?.error || pending} onPress={async () => { const r = await run(() => api.txnSetCommission(txn.id, c.input!), 'عُدّلت العمولة'); if (r.ok) onClose(); }}>حفظ</Button>
+        <Button variant="primary" isDisabled={!c.input || !!p?.error} isPending={pending} onPress={async () => { const r = await run(() => api.txnSetCommission(txn.id, c.input!), 'عُدّلت العمولة'); if (r.ok) onClose(); }}>حفظ</Button>
       </>}>
       <div className="flex flex-col gap-4">
         <CommissionFields c={c} currency={txn.currency} />
@@ -288,7 +288,7 @@ function NoteDialog({ txn, onClose }: { txn: Transaction; onClose: () => void })
     <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="sm" title="ملاحظتي على المعاملة"
       footer={<>
         <Button variant="secondary" onPress={onClose}>تراجع</Button>
-        <Button variant="primary" isDisabled={pending} onPress={async () => { const r = await run(() => api.txnSetNote(txn.id, note.trim() || null), 'حُفظت الملاحظة'); if (r.ok) onClose(); }}>حفظ</Button>
+        <Button variant="primary" isPending={pending} onPress={async () => { const r = await run(() => api.txnSetNote(txn.id, note.trim() || null), 'حُفظت الملاحظة'); if (r.ok) onClose(); }}>حفظ</Button>
       </>}>
       <TextField label="الملاحظة" multiline value={note} onChange={setNote} autoFocus />
     </Dialog>
@@ -319,7 +319,7 @@ function ManualDialog({ rawEmailId, prefill, onClose }: { rawEmailId?: number; p
       description={rawEmailId ? 'تُربط المعاملة بالرسالة الأصلية' : undefined}
       footer={<>
         <Button variant="secondary" onPress={onClose}>تراجع</Button>
-        <Button variant="primary" onPress={submit} isDisabled={pending}>إضافة</Button>
+        <Button variant="primary" onPress={submit} isPending={pending}>إضافة</Button>
       </>}>
       <div className="grid grid-cols-2 gap-x-4 gap-y-4">
         <DatePicker label="التاريخ والوقت" withTime value={f.occurredAt} onChange={(v) => set('occurredAt')(v ?? '')} isRequired />
@@ -347,7 +347,7 @@ function BulkApproveDialog({ rows, onClose, onDone }: { rows: Transaction[]; onC
       description="يُضاف لكل عميل قيد بالمبلغ المقابل له"
       footer={<>
         <Button variant="secondary" onPress={onClose}>تراجع</Button>
-        <Button variant="primary" isDisabled={pending} onPress={async () => { const r = await run(() => api.txnBulk({ action: 'approve', ids: rows.map((x) => x.id) })); if (r.ok) onDone(r.value); }}>اعتماد الكل</Button>
+        <Button variant="primary" isPending={pending} onPress={async () => { const r = await run(() => api.txnBulk({ action: 'approve', ids: rows.map((x) => x.id) })); if (r.ok) onDone(r.value); }}>اعتماد الكل</Button>
       </>}>
       <ul className="divide-y divide-line rounded-card border border-line">
         {rows.map((t) => (

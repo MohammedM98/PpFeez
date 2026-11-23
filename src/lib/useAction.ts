@@ -10,7 +10,7 @@ import { toAppError, type ApiError } from './api';
 export function useAction() {
   const qc = useQueryClient();
   const [pending, setPending] = useState(false);
-  async function run<T>(fn: () => Promise<T>, okMessage?: string | ((r: T) => string)): Promise<{ ok: true; value: T } | { ok: false; error: ApiError }> {
+  async function run<T>(fn: () => Promise<T>, okMessage?: string | ((r: T) => string), opts?: { quiet?: (e: ApiError) => boolean }): Promise<{ ok: true; value: T } | { ok: false; error: ApiError }> {
     setPending(true);
     try {
       const value = await fn();
@@ -19,7 +19,7 @@ export function useAction() {
       return { ok: true, value };
     } catch (e) {
       const error = toAppError(e);
-      toast.error(error.messageAr);
+      if (!opts?.quiet?.(error)) toast.error(error.messageAr);
       return { ok: false, error };
     } finally {
       setPending(false);

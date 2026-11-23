@@ -139,3 +139,8 @@
     }
   }
 }
+
+@media print {
+  @page { size: A4; margin: 16mm; }
+  html, body { background: #fff !important; min-width: 0; }
+}

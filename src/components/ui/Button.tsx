@@ -6,7 +6,7 @@ export const button = tv({
     'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-ctl font-medium select-none',
     'transition-[background-color,border-color,color,transform] duration-150 ease-out',
     'outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-focus',
-    'data-[pressed]:scale-[0.98] data-[disabled]:opacity-45 data-[disabled]:cursor-not-allowed cursor-default',
+    'data-[pressed]:scale-[0.98] data-[disabled]:opacity-45 data-[disabled]:cursor-not-allowed data-[pending]:opacity-70 data-[pending]:cursor-wait cursor-default',
     '[&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:stroke-[1.75]',
   ],
   variants: {

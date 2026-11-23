@@ -2,6 +2,8 @@
 // Pages import `api` and never call `invoke` themselves.
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { openUrl, openPath } from '@tauri-apps/plugin-opener';
 import type {
   AdjustmentInput, AppError, AppStatus, BackupFile, BalanceCard, BulkResult, CommissionInput,
   Customer, CustomerInput, DashboardSummary, ErrorCode, FeeInput, HistoryItem, LedgerEntry,
@@ -132,4 +134,14 @@ export const api = {
 export const events = {
   onPullProgress: (fn: (run: PullRun) => void): Promise<UnlistenFn> => listen<PullRun>('pull://progress', (e) => fn(e.payload)),
   onPullFinished: (fn: (run: PullRun) => void): Promise<UnlistenFn> => listen<PullRun>('pull://finished', (e) => fn(e.payload)),
+};
+
+// Native dialogs and links (plugin-dialog / plugin-opener, contract §4).
+
+export const native = {
+  saveCsv: (defaultPath: string) => saveDialog({ defaultPath, filters: [{ name: 'CSV', extensions: ['csv'] }] }),
+  pickFolder: () => openDialog({ directory: true, multiple: false }) as Promise<string | null>,
+  pickBackupFile: () => openDialog({ multiple: false, filters: [{ name: 'PpFeez backup', extensions: ['db', 'sqlite', 'bak'] }] }) as Promise<string | null>,
+  openUrl: (url: string) => openUrl(url),
+  openPath: (path: string) => openPath(path),
 };

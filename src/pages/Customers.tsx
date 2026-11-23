@@ -154,7 +154,7 @@ export function CustomerDialog({ customer, onClose, onCreated }: { customer: Cus
     <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="md" title={customer ? `تعديل ${customer.name}` : 'إضافة عميل'}
       footer={<>
         <Button variant="secondary" onPress={onClose}>تراجع</Button>
-        <Button variant="primary" onPress={submit} isDisabled={pending}>{customer ? 'حفظ' : 'إضافة'}</Button>
+        <Button variant="primary" onPress={submit} isPending={pending}>{customer ? 'حفظ' : 'إضافة'}</Button>
       </>}>
       <div className="grid grid-cols-2 gap-4">
         <TextField label="الاسم" value={name} onChange={(v) => { setName(v); setErrors({ ...errors, name: '' }); }} isRequired autoFocus errorMessage={errors.name} description="فريد، يظهر في قوائم التخصيص" />
