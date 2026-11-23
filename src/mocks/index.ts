@@ -1,0 +1,29 @@
+// Browser-only mode (contract §1): when there is no Tauri runtime, answer every
+// command from the in-memory mock backend in ./handlers.ts.
+import { mockIPC } from '@tauri-apps/api/mocks';
+import { getDb, handle, resetDb } from './handlers';
+
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export function installMocks() {
+  const params = new URLSearchParams(location.search);
+  resetDb({
+    locked: params.get('locked') === '1',
+    onboardingDone: params.get('onboarding') !== '1',
+  });
+  if (params.get('onboarding') === '1') getDb().settings.onboardingDone = false;
+  if (params.get('theme')) getDb().settings.theme = params.get('theme') as 'dark' | 'light' | 'system';
+  const latency = Number(params.get('latency') ?? 60);
+
+  mockIPC(
+    async (cmd, args) => {
+      await delay(latency);
+      // Clone so the UI can never mutate mock state by reference.
+      const out = handle(cmd, (args ?? {}) as Record<string, unknown>);
+      return out === undefined ? null : structuredClone(out);
+    },
+    { shouldMockEvents: true },
+  );
+  Object.assign(window, { __ppfeezMock: { getDb, resetDb } });
+  console.info('[PpFeez] Running in browser mode with mock data');
+}

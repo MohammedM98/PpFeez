@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+test-results/
+playwright-report/
+e2e/.shots-tmp/
+.DS_Store
+# backend (owned by the backend session)
+src-tauri/target/
