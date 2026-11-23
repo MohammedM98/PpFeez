@@ -8,6 +8,7 @@ import { TransactionsPage } from '@/pages/Transactions';
 import { CustomersPage } from '@/pages/Customers';
 import { CustomerLedgerPage } from '@/pages/CustomerLedger';
 import { StatementPage } from '@/pages/Statement';
+import { DashboardPage } from '@/pages/Dashboard';
 import { PullProvider } from '@/lib/pull';
 import { Toasts } from '@/components/ui/Toast';
 import { TxnActionsHost } from '@/components/transactions/TxnActions';
@@ -27,7 +28,7 @@ const router = createHashRouter([
     children: [
       { index: true, element: <Navigate to="/transactions" replace /> },
       { path: 'transactions', element: <TransactionsPage /> },
-      { path: 'dashboard', element: <Placeholder title="لوحة التحكم" /> },
+      { path: 'dashboard', element: <DashboardPage /> },
       { path: 'customers', element: <CustomersPage /> },
       { path: 'customers/:id', element: <CustomerLedgerPage /> },
       { path: 'emails', element: <Placeholder title="الرسائل" /> },
