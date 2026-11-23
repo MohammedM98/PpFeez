@@ -3,20 +3,20 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { openUrl, openPath } from '@tauri-apps/plugin-opener';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import type {
   AdjustmentInput, AppError, AppStatus, BackupFile, BalanceCard, BulkResult, CommissionInput,
   Customer, CustomerInput, DashboardSummary, ErrorCode, FeeInput, HistoryItem, LedgerEntry,
   LedgerView, Mailbox, MailboxInput, ManualTxnInput, Page, PayoutInput, Period, PullRun,
   RawEmail, RawEmailSummary, ParseStatus, RefundAlert, Settings, Transaction, TxnCounts,
-  TxnFilter, TxnListResult, TxnPreview, TxnSort, Currency,
+  TxnFilter, TxnListResult, TxnPreview, TxnSort, Currency, ExcelExportResult,
 } from './contract';
 
 const KNOWN_CODES = new Set<ErrorCode>([
   'locked', 'wrong_password', 'too_many_attempts', 'not_found', 'validation', 'invalid_amount',
   'invalid_transition', 'fee_required', 'commission_exceeds_net', 'customer_inactive', 'duplicate',
   'already_reversed', 'has_dependents', 'imap_auth', 'imap_connect', 'imap_disabled', 'pull_running',
-  'backup_failed', 'restore_failed', 'internal',
+  'backup_failed', 'restore_failed', 'file_locked', 'no_export_path', 'export_failed', 'internal',
 ]);
 
 export class ApiError extends Error implements AppError {
@@ -112,6 +112,7 @@ export const api = {
   mailboxCreate: (input: MailboxInput) => call<Mailbox>('mailbox_create', { input }),
   mailboxUpdate: (id: number, input: MailboxInput) => call<Mailbox>('mailbox_update', { id, input }),
   mailboxSetPassword: (id: number, password: string) => call<void>('mailbox_set_password', { id, password }),
+  mailboxSetActive: (id: number, active: boolean) => call<Mailbox>('mailbox_set_active', { id, active }),
   mailboxTest: (q: { id: number } | { input: MailboxInput }) => call<{ ok: true; folderCount: number }>('mailbox_test', q),
   mailboxDelete: (id: number) => call<void>('mailbox_delete', { id }),
   pullStart: (mailboxId: number) => call<PullRun>('pull_start', { mailboxId }),
@@ -129,6 +130,14 @@ export const api = {
   backupNow: () => call<BackupFile>('backup_now'),
   backupList: () => call<BackupFile[]>('backup_list'),
   backupRestore: (path: string) => call<void>('backup_restore', { path }),
+
+  // excel (SPEC 6.8)
+  excelSetPath: (path: string) => call<Settings>('excel_set_path', { path }),
+  excelUpdate: () => call<ExcelExportResult>('excel_update'),
+  excelExportTransactions: (filter: TxnFilter, sort: TxnSort, path: string) => call<ExcelExportResult>('excel_export_transactions', { filter, sort, path }),
+  excelExportLedger: (customerId: number, path: string, currency?: Currency, period?: Period) =>
+    call<ExcelExportResult>('excel_export_ledger', { customerId, currency, period, path }),
+  openPath: (path: string) => call<void>('open_path', { path }),
 };
 
 export const events = {
@@ -140,8 +149,8 @@ export const events = {
 
 export const native = {
   saveCsv: (defaultPath: string) => saveDialog({ defaultPath, filters: [{ name: 'CSV', extensions: ['csv'] }] }),
+  saveXlsx: (defaultPath: string) => saveDialog({ defaultPath, filters: [{ name: 'Excel', extensions: ['xlsx'] }] }),
   pickFolder: () => openDialog({ directory: true, multiple: false }) as Promise<string | null>,
   pickBackupFile: () => openDialog({ multiple: false, filters: [{ name: 'PpFeez backup', extensions: ['db', 'sqlite', 'bak'] }] }) as Promise<string | null>,
   openUrl: (url: string) => openUrl(url),
-  openPath: (path: string) => openPath(path),
 };

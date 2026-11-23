@@ -17,7 +17,9 @@ export type ErrorCode =
   | 'customer_inactive' | 'duplicate'
   | 'already_reversed' | 'has_dependents'
   | 'imap_auth' | 'imap_connect' | 'imap_disabled' | 'pull_running'
-  | 'backup_failed' | 'restore_failed' | 'internal';
+  | 'backup_failed' | 'restore_failed'
+  | 'file_locked' | 'no_export_path' | 'export_failed'
+  | 'internal';
 export type AppError = { code: ErrorCode; messageAr: string; field?: string };
 
 // ===== التطبيق والإعدادات =====
@@ -41,6 +43,9 @@ export type Settings = {
   backupKeep: number;
   autoLockMinutes: number | null;
   onboardingDone: boolean;
+  excelExportPath: string | null;     // الملف الرئيسي (SPEC §6.8)
+  excelLastExportedAt: IsoDate | null;
+  excelUpdateOnClose: boolean;
 };
 
 // app_status(): AppStatus
@@ -242,6 +247,7 @@ export type PullRun = {
 // mailbox_create({ input: MailboxInput }): Mailbox
 // mailbox_update({ id, input: MailboxInput }): Mailbox
 // mailbox_set_password({ id, password }): void
+// mailbox_set_active({ id, active: boolean }): Mailbox   // "إيقاف"/تفعيل البريد (SPEC §6.7)؛ السحب يُرفض لبريد موقوف
 // mailbox_test({ id } | { input: MailboxInput }): { ok: true; folderCount: number }   throws imap_auth | imap_connect | imap_disabled
 // mailbox_delete({ id }): void                   throws has_dependents
 // pull_start({ mailboxId }): PullRun              throws pull_running
@@ -269,3 +275,11 @@ export type BackupFile = { path: string; createdAt: IsoDate; sizeBytes: number }
 // backup_now(): BackupFile           throws backup_failed (مثلاً لا مجلد محدد)
 // backup_list(): BackupFile[]
 // backup_restore({ path }): void      // يأخذ نسخة من الحالية ثم يعيد تشغيل التطبيق
+
+// ===== Excel (SPEC §6.8) =====
+export type ExcelExportResult = { path: string; sheets: number; rows: number; exportedAt: IsoDate };
+// excel_set_path({ path }): Settings                    // المسار من نافذة الحفظ
+// excel_update(): ExcelExportResult                     // يعيد كتابة الملف الرئيسي   throws no_export_path | file_locked | export_failed
+// excel_export_transactions({ filter: TxnFilter, sort: TxnSort, path }): ExcelExportResult
+// excel_export_ledger({ customerId, currency?: Currency, period?: Period, path }): ExcelExportResult  // بلا currency => ورقة لكل عملة
+// open_path({ path }): void                             // فتح الملف في Excel

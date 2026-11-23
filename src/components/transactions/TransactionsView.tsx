@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, MenuTrigger, Menu, MenuItem, Popover, type SortDescriptor, type Selection, type Key } from 'react-aria-components';
-import { ChevronLeft, ChevronRight, CornerDownLeft, MoreHorizontal, X } from 'lucide-react';
-import { api } from '@/lib/api';
+import { ChevronLeft, ChevronRight, CornerDownLeft, FileSpreadsheet, MoreHorizontal, X } from 'lucide-react';
+import { api, native } from '@/lib/api';
+import { useAction } from '@/lib/useAction';
+import { toast } from '@/components/ui/Toast';
 import type { Period, Transaction, TxnAction, TxnFilter, TxnSortKey, TxnStatus } from '@/lib/contract';
 import { txn as s, txnStatus, txnType } from '@/lib/strings';
 import { formatBps } from '@/lib/money';
@@ -50,6 +52,7 @@ export function TransactionsView({ customerId }: { customerId?: number }) {
   const [selected, setSelected] = useState<Selection>(new Set());
   const [detailId, setDetailId] = useState<number | null>(params.get('detail') ? Number(params.get('detail')) : null);
   const actions = useTxnActions();
+  const { run } = useAction();
 
   // Follow links that change the query while this page stays mounted (dashboard cards, deep links).
   const pDetail = params.get('detail'), pTab = params.get('tab'), pNeedsFee = params.get('needsFee');
@@ -86,6 +89,13 @@ export function TransactionsView({ customerId }: { customerId?: number }) {
   const items = list.data?.items ?? [];
   const selectedRows: Transaction[] = selected === 'all' ? items : items.filter((t) => selected.has(t.id));
   const pages = Math.max(1, Math.ceil((list.data?.total ?? 0) / PAGE_SIZE));
+
+  const exportExcel = async () => {
+    const path = await native.saveXlsx(`PpFeez-معاملات-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    if (!path) return;
+    const r = await run(() => api.excelExportTransactions({ ...filter, status: tab }, { key: sort.column as TxnSortKey, dir: sort.direction === 'ascending' ? 'asc' : 'desc' }, path));
+    if (r.ok) toast.ok('صُدّرت المعاملات إلى Excel', `${r.value.rows} صف، كل الصفحات بالفلتر الحالي`);
+  };
 
   const openDetail = (id: number | null) => {
     setDetailId(id);
@@ -128,6 +138,7 @@ export function TransactionsView({ customerId }: { customerId?: number }) {
           options={(Object.keys(periodLabels) as PeriodPreset[]).map((k) => ({ id: k, label: periodLabels[k] }))} />
         {preset === 'custom' && <DateRangePicker label="الفترة المخصّصة" value={custom} onChange={setCustom} className="w-[250px]" />}
         <div className="ms-1"><Checkbox isSelected={needsFeeOnly} onChange={setNeedsFeeOnly}>{s.needsFeeOnly}<span className="num text-fg-3">{counts.data?.needsFee}</span></Checkbox></div>
+        <Button variant="quiet" size="sm" className="ms-auto" onPress={exportExcel} isDisabled={!list.data?.total}><FileSpreadsheet />تصدير Excel</Button>
       </div>
 
       {selectedRows.length > 0 && (

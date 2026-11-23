@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, TabPanel, MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
-import { ArrowRight, Download, HandCoins, MoreHorizontal, Pencil, Printer, Scale } from 'lucide-react';
+import { ArrowRight, Download, FileSpreadsheet, HandCoins, MoreHorizontal, Pencil, Printer, Scale } from 'lucide-react';
+import { toast } from '@/components/ui/Toast';
 import { api, native } from '@/lib/api';
 import type { BalanceCard, Customer, LedgerEntry, PayoutMethod, Period } from '@/lib/contract';
 import { ledgerType, payoutMethod } from '@/lib/strings';
@@ -73,6 +74,12 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
     const path = await native.saveCsv(`${customer.name}-${currency}.csv`);
     if (path) await run(() => api.ledgerExportCsv(customer.id, currency, path, period.from || period.to ? period : undefined), 'صُدّر الكشف');
   };
+  const exportExcel = async () => {
+    const path = await native.saveXlsx(`${customer.name}-${currency}.xlsx`);
+    if (!path) return;
+    const r = await run(() => api.excelExportLedger(customer.id, path, currency, period.from || period.to ? period : undefined));
+    if (r.ok) toast.ok('صُدّر كشف الحساب إلى Excel', r.value.path);
+  };
   const print = () => {
     const p = new URLSearchParams({ currency, ...(period.from ? { from: period.from } : {}), ...(period.to ? { to: period.to } : {}) });
     navigate(`/statement/${customer.id}?${p}`);
@@ -86,7 +93,8 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
           options={(Object.keys(periodLabels) as PeriodPreset[]).map((k) => ({ id: k, label: periodLabels[k] }))} />
         {preset === 'custom' && <DateRangePicker label="الفترة المخصّصة" value={custom} onChange={setCustom} className="w-[250px]" />}
         <div className="ms-auto flex gap-2">
-          <Button variant="secondary" size="sm" onPress={exportCsv}><Download />تصدير CSV</Button>
+          <Button variant="secondary" size="sm" onPress={exportExcel}><FileSpreadsheet />Excel</Button>
+          <Button variant="secondary" size="sm" onPress={exportCsv}><Download />CSV</Button>
           <Button variant="secondary" size="sm" onPress={print}><Printer />طباعة كشف</Button>
         </div>
       </div>

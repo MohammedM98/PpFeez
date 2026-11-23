@@ -55,3 +55,12 @@ export function percentTextToBps(text: string): number | null {
   const bps = Number(m[1]) * 100 + Number((m[2] ?? '').padEnd(2, '0'));
   return bps <= 10000 ? bps : null;
 }
+
+/**
+ * "0.30" -> 30 for a 2-decimal setting (fee estimate fixed part). Pure string handling,
+ * no arithmetic on amounts; returns null when the text is not a plain amount.
+ */
+export function amountTextToMinor2(text: string): number | null {
+  const m = /^\s*(\d{1,7})(?:\.(\d{1,2}))?\s*$/.exec(text);
+  return m ? Number(m[1] + (m[2] ?? '').padEnd(2, '0')) : null;
+}

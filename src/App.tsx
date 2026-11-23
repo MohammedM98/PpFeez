@@ -10,6 +10,7 @@ import { CustomerLedgerPage } from '@/pages/CustomerLedger';
 import { StatementPage } from '@/pages/Statement';
 import { DashboardPage } from '@/pages/Dashboard';
 import { EmailsPage } from '@/pages/Emails';
+import { SettingsPage } from '@/pages/Settings';
 import { PullProvider } from '@/lib/pull';
 import { Toasts } from '@/components/ui/Toast';
 import { TxnActionsHost } from '@/components/transactions/TxnActions';
@@ -18,9 +19,6 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: false, staleTime: 5_000 } },
 });
 
-function Placeholder({ title }: { title: string }) {
-  return <div className="px-7 pt-6"><h1 className="font-display text-[26px] font-medium text-fg">{title}</h1><p className="mt-2 text-fg-3">تُبنى بعد اعتماد شاشة المعاملات</p></div>;
-}
 
 const router = createHashRouter([
   { path: '/statement/:id', element: <StatementPage /> },
@@ -33,7 +31,7 @@ const router = createHashRouter([
       { path: 'customers', element: <CustomersPage /> },
       { path: 'customers/:id', element: <CustomerLedgerPage /> },
       { path: 'emails', element: <EmailsPage /> },
-      { path: 'settings', element: <Placeholder title="الإعدادات" /> },
+      { path: 'settings', element: <SettingsPage /> },
     ],
   },
 ]);

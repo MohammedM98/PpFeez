@@ -585,6 +585,12 @@ export function handle(cmd: string, a: Args = {}): unknown {
       const { password: _p, ...rest } = m;
       return { ...rest, running: false };
     }
+    case 'mailbox_set_active': {
+      const m = db.mailboxes.find((x) => x.id === a.id) ?? fail('not_found', 'البريد غير موجود');
+      m.isActive = a.active;
+      const { password: _p, ...rest } = m;
+      return { ...rest, running: false };
+    }
     case 'mailbox_set_password': { const m = db.mailboxes.find((x) => x.id === a.id)!; m.password = a.password; m.hasPassword = true; return null; }
     case 'mailbox_test': {
       const pw = a.input ? a.input.password : db.mailboxes.find((x) => x.id === a.id)?.password;
@@ -638,9 +644,24 @@ export function handle(cmd: string, a: Args = {}): unknown {
     case 'backup_list': return db.backups;
     case 'backup_restore': return null;
 
+    // excel
+    case 'excel_set_path': db.settings.excelExportPath = a.path; return { ...db.settings };
+    case 'excel_update': {
+      if (!db.settings.excelExportPath) fail('no_export_path', 'اختر مسار ملف Excel أولاً');
+      if (a.__locked) fail('file_locked', 'أغلق الملف في Excel ثم أعد المحاولة');
+      db.settings.excelLastExportedAt = nowIso();
+      return { path: db.settings.excelExportPath, sheets: 4, rows: db.txns.length + db.ledger.length + db.customers.length + 8, exportedAt: db.settings.excelLastExportedAt };
+    }
+    case 'excel_export_transactions': return { path: a.path, sheets: 1, rows: txnList(a.filter ?? {}, a.sort, 1, 100000).total + 1, exportedAt: nowIso() };
+    case 'excel_export_ledger': return { path: a.path, sheets: a.currency ? 1 : balances(a.customerId).length, rows: db.ledger.filter((e) => e.customerId === a.customerId).length, exportedAt: nowIso() };
+    case 'open_path': return null;
+
     // plugins
     case 'plugin:dialog|open': return a.options?.directory ? 'D:\\Backups\\PpFeez' : 'D:\\Backups\\PpFeez\\ppfeez-2026-11-22-2310.db';
-    case 'plugin:dialog|save': return 'C:\\Users\\Mohammed\\Documents\\statement.csv';
+    case 'plugin:dialog|save': {
+      const name = String(a.options?.defaultPath ?? 'export.csv');
+      return `C:\\Users\\Mohammed\\Documents\\${name}`;
+    }
     case 'plugin:opener|open_url': case 'plugin:opener|open_path': return null;
   }
   console.warn('[mock] unhandled command', cmd, a);
