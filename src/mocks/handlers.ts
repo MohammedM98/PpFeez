@@ -648,7 +648,7 @@ export function handle(cmd: string, a: Args = {}): unknown {
     case 'excel_set_path': db.settings.excelExportPath = a.path; return { ...db.settings };
     case 'excel_update': {
       if (!db.settings.excelExportPath) fail('no_export_path', 'اختر مسار ملف Excel أولاً');
-      if (a.__locked) fail('file_locked', 'أغلق الملف في Excel ثم أعد المحاولة');
+      if (new URLSearchParams(location.search).get('excelLocked') === '1') fail('file_locked', 'أغلق الملف في Excel ثم أعد المحاولة');
       db.settings.excelLastExportedAt = nowIso();
       return { path: db.settings.excelExportPath, sheets: 4, rows: db.txns.length + db.ledger.length + db.customers.length + 8, exportedAt: db.settings.excelLastExportedAt };
     }

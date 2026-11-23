@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, MenuTrigger, Menu, MenuItem, Popover, type SortDescriptor, type Selection, type Key } from 'react-aria-components';
@@ -36,7 +37,7 @@ function useDebounced<T>(v: T, ms = 250) {
  * Tabs + filters + table + totals + detail panel. Used by the transactions page and,
  * with `customerId`, by the customer ledger ("معاملاته").
  */
-export function TransactionsView({ customerId }: { customerId?: number }) {
+export function TransactionsView({ customerId, exportSlot }: { customerId?: number; exportSlot?: HTMLElement | null }) {
   const [params, setParams] = useSearchParams();
   const embedded = customerId !== undefined;
   const [tab, setTab] = useState<TxnStatus | 'all'>((params.get('tab') as TxnStatus) || 'all');
@@ -138,7 +139,8 @@ export function TransactionsView({ customerId }: { customerId?: number }) {
           options={(Object.keys(periodLabels) as PeriodPreset[]).map((k) => ({ id: k, label: periodLabels[k] }))} />
         {preset === 'custom' && <DateRangePicker label="الفترة المخصّصة" value={custom} onChange={setCustom} className="w-[250px]" />}
         <div className="ms-1"><Checkbox isSelected={needsFeeOnly} onChange={setNeedsFeeOnly}>{s.needsFeeOnly}<span className="num text-fg-3">{counts.data?.needsFee}</span></Checkbox></div>
-        <Button variant="quiet" size="sm" className="ms-auto" onPress={exportExcel} isDisabled={!list.data?.total}><FileSpreadsheet />تصدير Excel</Button>
+        {exportSlot && createPortal(
+          <Button variant="secondary" onPress={exportExcel} isDisabled={!list.data?.total}><FileSpreadsheet />تصدير إلى Excel</Button>, exportSlot)}
       </div>
 
       {selectedRows.length > 0 && (

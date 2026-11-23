@@ -93,8 +93,8 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
           options={(Object.keys(periodLabels) as PeriodPreset[]).map((k) => ({ id: k, label: periodLabels[k] }))} />
         {preset === 'custom' && <DateRangePicker label="الفترة المخصّصة" value={custom} onChange={setCustom} className="w-[250px]" />}
         <div className="ms-auto flex gap-2">
-          <Button variant="secondary" size="sm" onPress={exportExcel}><FileSpreadsheet />Excel</Button>
-          <Button variant="secondary" size="sm" onPress={exportCsv}><Download />CSV</Button>
+          <Button variant="secondary" size="sm" onPress={exportExcel}><FileSpreadsheet />تصدير Excel</Button>
+          <Button variant="secondary" size="sm" onPress={exportCsv}><Download />تصدير CSV</Button>
           <Button variant="secondary" size="sm" onPress={print}><Printer />طباعة كشف</Button>
         </div>
       </div>

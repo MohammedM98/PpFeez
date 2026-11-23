@@ -20,6 +20,7 @@ import { Trunc } from '@/components/ui/Trunc';
 import { cx } from '@/components/ui/cx';
 import { MailboxDialog } from '@/components/settings/MailboxForm';
 import { LockPasswordDialog } from '@/components/settings/LockPasswordDialog';
+import { useExcelUpdate } from '@/components/settings/useExcelUpdate';
 
 const SECTIONS = [
   ['mail', 'البريد'], ['pulls', 'سجل السحب'], ['fees', 'العمولة والرسوم'], ['excel', 'ملف Excel'],
@@ -180,7 +181,8 @@ function FeesSection({ s }: { s: SettingsT }) {
 
 // ------------------------------------------------------------------ excel
 function ExcelSection({ s }: { s: SettingsT }) {
-  const { run, pending } = useAction();
+  const { run } = useAction();
+  const excel = useExcelUpdate();
   const choose = async () => {
     const path = await native.saveXlsx('PpFeez.xlsx');
     if (path) await run(() => api.excelSetPath(path), 'حُفظ مسار الملف');
@@ -189,11 +191,11 @@ function ExcelSection({ s }: { s: SettingsT }) {
     <Section id="excel" title="ملف Excel" description="ملف واحد يُعاد كتابته بأحدث البيانات: الملخص، المعاملات، العملاء، الدفتر. للقراءة فقط، لا يُستورد منه شيء"
       actions={s.excelExportPath && <>
         <Button size="sm" variant="secondary" onPress={() => void run(() => api.openPath(s.excelExportPath!))}><FileSpreadsheet />فتح الملف</Button>
-        <Button size="sm" variant="primary" isPending={pending} onPress={() => void run(() => api.excelUpdate(), (r) => `حُدّث الملف: ${r.sheets} أوراق، ${r.rows} صفاً`)}><RefreshCw />تحديث ملف Excel</Button>
+        <Button size="sm" variant="primary" isPending={excel.pending} onPress={() => void excel.update()}><RefreshCw />تحديث ملف Excel</Button>
       </>}>
       <Row label="مسار الملف" hint={s.excelLastExportedAt ? <>آخر تحديث <DateTime iso={s.excelLastExportedAt} /></> : 'لم يُصدَّر بعد'}>
         {s.excelExportPath ? <Trunc className="max-w-[360px] text-[13px] text-fg-2">{s.excelExportPath}</Trunc> : <span className="text-[13px] text-fg-3">لم يُختر</span>}
-        <Button size="sm" variant="secondary" onPress={choose}>{s.excelExportPath ? 'تغيير' : 'اختيار المسار'}</Button>
+        <Button size="sm" variant="secondary" onPress={choose}>{s.excelExportPath ? 'تغيير' : 'اختيار ملف'}</Button>
       </Row>
       <Row label="تحديث الملف عند إغلاق البرنامج" hint="مع النسخة الاحتياطية، وفشله لا يمنع الإغلاق">
         <Switch isSelected={s.excelUpdateOnClose} isDisabled={!s.excelExportPath} onChange={(v) => void run(() => api.updateSettings({ excelUpdateOnClose: v }), 'حُفظ')} aria-label="تحديث عند الإغلاق" />

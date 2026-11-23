@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { TriangleAlert } from 'lucide-react';
+import { FileSpreadsheet, RefreshCw, TriangleAlert } from 'lucide-react';
+import { useExcelUpdate } from '@/components/settings/useExcelUpdate';
 import { api } from '@/lib/api';
 import type { Period, RefundAlert } from '@/lib/contract';
 import { formatMinor } from '@/lib/money';
@@ -78,6 +79,30 @@ function RefundAlerts({ alerts }: { alerts: RefundAlert[] }) {
         </ConfirmMoney>
       )}
     </section>
+  );
+}
+
+function ExcelCard() {
+  const settings = useQuery({ queryKey: ['settings'], queryFn: api.getSettings });
+  const excel = useExcelUpdate();
+  const { run } = useAction();
+  const s = settings.data;
+  if (!s) return null;
+  return (
+    <div className="rounded-card border border-line bg-surface p-4">
+      <div className="flex items-center gap-2 text-sm text-fg"><FileSpreadsheet className="size-4 text-fg-3" strokeWidth={1.6} />ملف Excel</div>
+      {s.excelExportPath ? (
+        <>
+          <p className="mt-1 text-[12.5px] text-fg-3">{s.excelLastExportedAt ? <>آخر تحديث <DateTime iso={s.excelLastExportedAt} /></> : 'لم يُحدَّث بعد'}</p>
+          <div className="mt-3 flex gap-2">
+            <Button size="sm" variant="secondary" isPending={excel.pending} onPress={() => void excel.update()}><RefreshCw />تحديث ملف Excel</Button>
+            <Button size="sm" variant="quiet" onPress={() => void run(() => api.openPath(s.excelExportPath!))}>فتح الملف</Button>
+          </div>
+        </>
+      ) : (
+        <p className="mt-1 text-[12.5px] text-fg-3">لم يُختر ملف بعد. <Link to="/settings" className="text-accent-ink hover:underline">اختره من الإعدادات</Link></p>
+      )}
+    </div>
   );
 }
 
@@ -173,6 +198,7 @@ export function DashboardPage() {
               </div>
             ))}
             {topByCurrency.size === 0 && <p className="text-sm text-fg-3">لا أرصدة بعد</p>}
+            <ExcelCard />
           </div>
         </section>
       </div>
