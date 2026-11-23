@@ -160,6 +160,7 @@ export type CommissionInput =
   | { mode: 'percent'; bps: number }
   | { mode: 'fixed'; amountText: string };
 export type TxnPreview = {        // معاينة بلا حفظ
+  feeMinor: Minor | null;         // الرسوم الناتجة (مهمة حين يُدخل الصافي: kind 'net')
   netMinor: Minor | null; commissionMinor: Minor | null; customerAmountMinor: Minor | null;
   feeEstimateMinor: Minor | null; // إن كان التقدير مفعّلاً والرسوم فارغة
   error?: AppError;

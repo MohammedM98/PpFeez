@@ -456,10 +456,10 @@ export function handle(cmd: string, a: Args = {}): unknown {
         if (a.fee) applyFee(t, a.fee);
         if (a.commission) applyCommission(t, a.commission);
         else recompute(t);
-        const out: TxnPreview = { netMinor: t.netMinor, commissionMinor: t.commissionMinor, customerAmountMinor: t.customerAmountMinor, feeEstimateMinor: t.feeMinor === null ? estimate(t) : null };
+        const out: TxnPreview = { feeMinor: t.feeMinor, netMinor: t.netMinor, commissionMinor: t.commissionMinor, customerAmountMinor: t.customerAmountMinor, feeEstimateMinor: t.feeMinor === null ? estimate(t) : null };
         return out;
       } catch (e) {
-        return { netMinor: null, commissionMinor: null, customerAmountMinor: null, feeEstimateMinor: null, error: e as AppError } satisfies TxnPreview;
+        return { feeMinor: null, netMinor: null, commissionMinor: null, customerAmountMinor: null, feeEstimateMinor: null, error: e as AppError } satisfies TxnPreview;
       }
     }
     case 'txn_create_manual': {
