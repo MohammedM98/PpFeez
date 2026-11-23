@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeftRight, Inbox, LayoutGrid, Lock, Moon, Settings, Sun, Users, Monitor } from 'lucide-react';
 import { api } from '@/lib/api';
 import { nav } from '@/lib/strings';
@@ -77,6 +77,8 @@ export function Logo() {
 }
 
 export function Shell() {
+  const qc = useQueryClient();
+  const status = useQuery({ queryKey: ['app_status'], queryFn: api.appStatus });
   const counts = useQuery({ queryKey: ['txn_counts', {}], queryFn: () => api.txnCounts({}) });
   const alerts = useQuery({ queryKey: ['refund_alerts'], queryFn: api.refundAlerts });
   const failedEmails = useQuery({ queryKey: ['emails', 'failed', 'count'], queryFn: () => api.emailsList({ status: 'failed', page: 1, pageSize: 1 }) });
@@ -93,13 +95,13 @@ export function Shell() {
         </nav>
         <div className="mt-auto flex flex-col gap-2">
           <ThemeSwitch />
-          <button
-            onClick={() => void api.lock()}
+          {status.data?.lockEnabled && <button
+            onClick={() => void api.lock().then(() => qc.invalidateQueries({ queryKey: ['app_status'] }))}
             className="flex h-9 items-center gap-2.5 rounded-ctl px-2.5 text-[14.5px] text-fg-2 outline-none transition-colors hover:bg-raised/60 hover:text-fg focus-visible:outline-2 focus-visible:outline-focus [&_svg]:size-[18px] [&_svg]:stroke-[1.6]"
           >
             <span className="grid size-5 place-items-center text-fg-3"><Lock /></span>
             {nav.lock}
-          </button>
+          </button>}
         </div>
       </aside>
       <main className="min-w-0 flex-1 overflow-auto">

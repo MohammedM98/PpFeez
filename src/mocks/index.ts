@@ -11,7 +11,14 @@ export function installMocks() {
     locked: params.get('locked') === '1',
     onboardingDone: params.get('onboarding') !== '1',
   });
-  if (params.get('onboarding') === '1') getDb().settings.onboardingDone = false;
+  if (params.get('onboarding') === '1') {
+    const db = getDb();
+    db.settings.onboardingDone = false;
+    db.lockPassword = null;
+    db.status.lockEnabled = false;
+    db.mailboxes = [];
+    db.settings.backupDir = null;
+  }
   if (params.get('theme')) getDb().settings.theme = params.get('theme') as 'dark' | 'light' | 'system';
   const latency = Number(params.get('latency') ?? 60);
 

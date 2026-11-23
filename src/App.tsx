@@ -1,5 +1,10 @@
 import { createHashRouter, Navigate, RouterProvider } from 'react-router';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { QueryCache, QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import type { Theme } from '@/lib/contract';
+import { toAppError } from '@/lib/api';
+import { LockPage } from '@/pages/Lock';
+import { OnboardingPage } from '@/pages/Onboarding';
 import { I18nProvider } from 'react-aria-components';
 import { api } from '@/lib/api';
 import { ThemeProvider } from '@/lib/theme';
@@ -15,9 +20,35 @@ import { PullProvider } from '@/lib/pull';
 import { Toasts } from '@/components/ui/Toast';
 import { TxnActionsHost } from '@/components/transactions/TxnActions';
 
-const queryClient = new QueryClient({
+const queryClient: QueryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: false, staleTime: 5_000 } },
+  // Any command refused with `locked` means the backend locked itself: show the lock screen.
+  queryCache: new QueryCache({
+    onError: (e) => { if (toAppError(e).code === 'locked') void queryClient.invalidateQueries({ queryKey: ['app_status'] }); },
+  }),
 });
+
+// Per-viewer convenience so the lock screen keeps the last theme (settings may be refused while locked).
+const THEME_KEY = 'ppfeez.theme';
+const lastTheme = (): Theme => { try { return (localStorage.getItem(THEME_KEY) as Theme) || 'dark'; } catch { return 'dark'; } };
+const rememberTheme = (t: Theme) => { try { localStorage.setItem(THEME_KEY, t); } catch { /* ignore */ } };
+
+/** Locks the app after N idle minutes when the lock is enabled (Settings.autoLockMinutes). */
+function useAutoLock(minutes: number | null | undefined, enabled: boolean) {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!enabled || !minutes) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { void api.lock().then(() => qc.invalidateQueries({ queryKey: ['app_status'] })); }, minutes * 60_000);
+    };
+    const evs = ['pointermove', 'keydown', 'pointerdown', 'wheel'] as const;
+    evs.forEach((e) => window.addEventListener(e, reset, { passive: true }));
+    reset();
+    return () => { clearTimeout(timer); evs.forEach((e) => window.removeEventListener(e, reset)); };
+  }, [minutes, enabled, qc]);
+}
 
 
 const router = createHashRouter([
@@ -36,16 +67,28 @@ const router = createHashRouter([
   },
 ]);
 
-function Themed() {
-  const settings = useQuery({ queryKey: ['settings'], queryFn: api.getSettings });
-  if (!settings.data) return null;
+function Gate() {
+  const status = useQuery({ queryKey: ['app_status'], queryFn: api.appStatus });
+  const open = !!status.data && !status.data.locked;
+  const settings = useQuery({ queryKey: ['settings'], queryFn: api.getSettings, enabled: open });
+  useAutoLock(settings.data?.autoLockMinutes, open && !!status.data?.lockEnabled && !!status.data?.onboardingDone);
+  useEffect(() => { if (settings.data) rememberTheme(settings.data.theme); }, [settings.data]);
+  if (!status.data) return null;
+  const theme = settings.data?.theme ?? lastTheme();
+  let body;
+  if (status.data.locked) body = <LockPage status={status.data} />;
+  else if (!status.data.onboardingDone) body = <OnboardingPage />;
+  else if (!settings.data) return null;
+  else body = (
+    <PullProvider>
+      <TxnActionsHost>
+        <RouterProvider router={router} />
+      </TxnActionsHost>
+    </PullProvider>
+  );
   return (
-    <ThemeProvider initial={settings.data.theme} onChange={(theme) => void api.updateSettings({ theme })}>
-      <PullProvider>
-        <TxnActionsHost>
-          <RouterProvider router={router} />
-        </TxnActionsHost>
-      </PullProvider>
+    <ThemeProvider initial={theme} onChange={(t) => { rememberTheme(t); void api.updateSettings({ theme: t }); }}>
+      {body}
       <Toasts />
     </ThemeProvider>
   );
@@ -56,7 +99,7 @@ export function App() {
     // Arabic with Latin digits and the Gregorian calendar (SPEC §2).
     <I18nProvider locale="ar-u-nu-latn-ca-gregory">
       <QueryClientProvider client={queryClient}>
-        <Themed />
+        <Gate />
       </QueryClientProvider>
     </I18nProvider>
   );
