@@ -79,6 +79,8 @@ export type Settings = {
   excelLastExportedAt: IsoDate | null;
   excelUpdateOnClose: boolean;
   autoCheckUpdates: boolean;          // SPEC §6.9، افتراضي true
+  extraPaypalDomains: string[];       // SPEC §5.6، نطاقات يضيفها المدير
+  builtinPaypalDomains: string[];     // للقراءة فقط (update_settings يتجاهله)
 };
 
 // app_status(): AppStatus
