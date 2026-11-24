@@ -19,6 +19,8 @@ import { DangerConfirm } from '@/components/ui/DangerConfirm';
 import { Checkbox } from '@/components/ui/Field';
 import { DateTime } from '@/components/ui/DateTime';
 import { Trunc } from '@/components/ui/Trunc';
+import { HeadLabel, sumWidths } from '@/components/ui/Table';
+import { DateCell } from '@/components/transactions/bits';
 import { cx } from '@/components/ui/cx';
 import { pullRangeLabel } from '@/lib/strings';
 import { UpdateSettingsRows } from '@/components/update/Updates';
@@ -176,29 +178,46 @@ function MailSection({ s }: { s: SettingsT }) {
   );
 }
 
+const PULL_COUNTS = ['مقروءة', 'جديدة', 'مكررة', 'متجاهلة', 'فاشلة'];
+const PULL_MIN = sumWidths(['104px', '130px', '72px', '270px']);
+
 function PullsSection() {
   const runs = useQuery({ queryKey: ['pull_runs', 20], queryFn: () => api.pullRunsList(20) });
   const tone = { done: 'pos', failed: 'neg', cancelled: 'outline', running: 'accent' } as const;
   const label = { done: 'تم', failed: 'فشل', cancelled: 'أُلغي', running: 'يعمل' };
   return (
     <Section id="pulls" title="سجل السحب" description="آخر 20 عملية سحب">
-      <table className="w-full text-sm">
-        <thead><tr className="text-[12.5px] text-fg-3 [&>th]:pb-2 [&>th]:font-medium">
-          <th className="text-start">البدء</th><th className="text-start">البريد</th><th className="text-start">النطاق</th><th className="text-start">النتيجة</th>
-          <th className="text-end">مقروءة</th><th className="text-end">جديدة</th><th className="text-end">مكررة</th><th className="text-end">متجاهلة</th><th className="text-end">فاشلة</th>
-        </tr></thead>
-        <tbody className="[&>tr>td]:border-t [&>tr>td]:border-line [&>tr>td]:py-2.5">
-          {runs.data?.map((r) => (
-            <tr key={r.id}>
-              <td><DateTime iso={r.startedAt} className="text-fg-2" /></td>
-              <td>{r.mailboxLabel}</td>
-              <td className="text-fg-2">{pullRangeLabel(r.range)}</td>
-              <td><Badge tone={tone[r.status]}>{label[r.status]}</Badge>{r.error && <span className="ms-2 text-[12.5px] text-neg">{r.error}</span>}</td>
-              {[r.fetchedCount, r.newTransactionsCount, r.duplicateCount, r.ignoredCount, r.failedCount].map((n, i) => <td key={i} className="num text-end text-fg-2">{n}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="-mx-5 -my-5 overflow-x-auto" data-table-scroll="">
+        <table className="w-full table-fixed border-separate border-spacing-0 text-sm" style={{ minWidth: PULL_MIN }} aria-label="سجل السحب">
+          <colgroup>
+            <col style={{ width: '104px' }} /><col /><col style={{ width: '72px' }} />
+            {PULL_COUNTS.map((c, i) => <col key={c} style={{ width: i === PULL_COUNTS.length - 1 ? '62px' : '52px' }} />)}
+          </colgroup>
+          <thead><tr className="[&>th]:h-10 [&>th]:border-b [&>th]:border-line [&>th]:bg-surface [&>th]:px-2.5 [&>th]:font-normal [&>th]:whitespace-nowrap">
+            <th className="sticky z-[1] !ps-4 text-start" data-sticky="start" style={{ insetInlineStart: 0 }}><HeadLabel>البدء</HeadLabel></th>
+            <th className="text-start"><HeadLabel>البريد والنطاق</HeadLabel></th><th className="text-start"><HeadLabel>النتيجة</HeadLabel></th>
+            {PULL_COUNTS.map((c, i) => <th key={c} className={cx('!px-1.5 text-end', i === PULL_COUNTS.length - 1 && '!pe-4')}><HeadLabel>{c}</HeadLabel></th>)}
+          </tr></thead>
+          <tbody className="[&>tr>td]:h-12 [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:bg-surface [&>tr>td]:px-2.5 [&>tr>td]:leading-tight [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
+            {runs.data?.map((r) => (
+              <tr key={r.id}>
+                <td className="sticky z-[1] !ps-4" data-sticky="start" style={{ insetInlineStart: 0 }}><DateCell iso={r.startedAt} /></td>
+                <td>
+                  <Trunc>{r.mailboxLabel}</Trunc>
+                  <Trunc className="text-[12px] text-fg-3">{pullRangeLabel(r.range)}</Trunc>
+                </td>
+                <td>
+                  <Badge tone={tone[r.status]}>{label[r.status]}</Badge>
+                  {r.error && <Trunc className="mt-0.5 text-[12px] text-neg">{r.error}</Trunc>}
+                </td>
+                {[r.fetchedCount, r.newTransactionsCount, r.duplicateCount, r.ignoredCount, r.failedCount].map((n, i) => (
+                  <td key={i} className={cx('num !px-1.5 text-end text-fg-2', i === 4 && '!pe-4')}>{n}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Section>
   );
 }

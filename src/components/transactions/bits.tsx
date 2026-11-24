@@ -1,5 +1,7 @@
 import type { Currency, Minor, Transaction, TxnStatus } from '@/lib/contract';
-import { holdHint, holdStatus, txn as s, txnStatus } from '@/lib/strings';
+import { holdHint, holdStatus, txn as s, txnStatus, txnType } from '@/lib/strings';
+import { formatDateTime } from '@/lib/dates';
+import { Trunc } from '@/components/ui/Trunc';
 import { Amount } from '@/components/ui/Amount';
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/components/ui/cx';
@@ -9,16 +11,52 @@ export function StatusBadge({ status, dot = true }: { status: TxnStatus; dot?: b
   return <Badge tone={tone[status]} dot={dot && status !== 'excluded'}>{txnStatus[status]}</Badge>;
 }
 
-export function FeeCell({ t }: { t: Transaction }) {
+/** Fee column: "تحتاج رسوم" when missing, italic when estimated (SPEC 6.3). */
+export function FeeCell({ t, fit }: { t: Transaction; fit?: number }) {
   if (t.feeMinor === null) return <Badge tone="warn">{s.needsFee}</Badge>;
   if (t.feeIsEstimated)
     return (
-      <span className="inline-flex flex-col items-end leading-tight">
-        <Amount minor={t.feeMinor} currency={t.currency} showCurrency={false} estimated className="italic" />
-        <span className="text-[11.5px] text-fg-3">{s.estimated}</span>
+      <span title={s.estimated}>
+        <Amount fit={fit} minor={t.feeMinor} currency={t.currency} showCurrency={false} estimated className="italic" />
       </span>
     );
-  return <Amount minor={t.feeMinor} currency={t.currency} showCurrency={false} className="text-fg-2" />;
+  return <Amount fit={fit} minor={t.feeMinor} currency={t.currency} showCurrency={false} className="text-fg-2" />;
+}
+
+/** Date over time, the same two lines in every row. */
+export function DateCell({ iso }: { iso: string }) {
+  const v = formatDateTime(iso);
+  return (
+    <div className="num whitespace-nowrap">
+      <div>{v.slice(0, 10)}</div>
+      <div className="text-[12px] text-fg-3">{v.slice(11)}</div>
+    </div>
+  );
+}
+
+/**
+ * Payer: name (or e-mail, or "—") over the PayPal transaction id. Markers sit in a fixed slot at
+ * the end of the cell, so they never move the text or widen the column.
+ */
+export function PayerCell({ t }: { t: Transaction }) {
+  const who = t.payerName || t.payerEmail || '—';
+  const title = [t.payerName, t.payerEmail, t.paypalTxnId].filter(Boolean).join('\n');
+  const flags = [
+    t.type !== 'payment' && <Badge key="type" tone="neg">{txnType[t.type]}</Badge>,
+    t.refundedBy.length > 0 && <Badge key="refunded" tone="neg">{s.refunded}</Badge>,
+    t.source === 'manual' && <Badge key="manual" tone="outline">يدوية</Badge>,
+    t.needsReview && <span key="review" title={t.reviewReasonAr ?? undefined}><Badge tone="warn">تحتاج مراجعة</Badge></span>,
+    t.holdStatus && <span key="hold" title={holdHint[t.holdStatus]}><Badge tone="outline">{holdStatus[t.holdStatus]}</Badge></span>,
+  ].filter(Boolean);
+  return (
+    <div className="flex items-center gap-2" title={title}>
+      <div className="min-w-0 flex-1">
+        <Trunc>{who}</Trunc>
+        <div dir="ltr" className="num truncate text-right text-[12px] text-fg-3">{t.paypalTxnId}</div>
+      </div>
+      {flags.length > 0 && <div className="flex max-w-[62%] shrink-0 gap-1 overflow-hidden">{flags}</div>}
+    </div>
+  );
 }
 
 export type BreakdownValues = {

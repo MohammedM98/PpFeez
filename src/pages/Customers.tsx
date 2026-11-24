@@ -5,13 +5,13 @@ import { MenuTrigger, Menu, MenuItem, Popover, type Key } from 'react-aria-compo
 import { MoreHorizontal, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Customer, CustomerInput } from '@/lib/contract';
-import { bpsToPercentText, formatBps, percentTextToBps } from '@/lib/money';
+import { bpsToPercentText, formatAmount, formatBps, percentTextToBps } from '@/lib/money';
 import { useAction } from '@/lib/useAction';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { SearchField, Checkbox } from '@/components/ui/Field';
 import { Segmented } from '@/components/ui/Segmented';
-import { Table, TableHeader, Column, TableBody, Row, Cell } from '@/components/ui/Table';
+import { Table, TableFrame, TableHeader, Column, TableBody, Row, Cell, sumWidths } from '@/components/ui/Table';
 import { Amount } from '@/components/ui/Amount';
 import { Badge } from '@/components/ui/Badge';
 import { Dialog } from '@/components/ui/Dialog';
@@ -22,13 +22,24 @@ import { DangerConfirm, deletedToast } from '@/components/ui/DangerConfirm';
 
 type ActiveFilter = 'active' | 'inactive' | 'all';
 
-/** One chip per currency; red when the customer owes (negative balance). */
-export function BalanceChips({ c }: { c: Pick<Customer, 'balances'> }) {
+/** Customers table: the name keeps its place, the balance column takes the remaining width. */
+const W = { name: '190px', phone: '150px', commission: '112px', pending: '136px', menu: '48px' };
+const CW = { ...W, min: sumWidths([...Object.values(W), '180px']) };
+
+/**
+ * One chip per currency; red when the customer owes (negative balance). `oneLine` (tables)
+ * shows two chips and "+N" for the rest, with every balance in the tooltip, so a row never grows.
+ */
+export function BalanceChips({ c, oneLine }: { c: Pick<Customer, 'balances'>; oneLine?: boolean }) {
   const nonZero = c.balances.filter((b) => b.minor !== 0);
   if (nonZero.length === 0) return <span className="text-fg-3">لا رصيد</span>;
+  const shown = oneLine && nonZero.length > 2 ? nonZero.slice(0, 2) : nonZero;
+  const rest = nonZero.length - shown.length;
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {nonZero.map((b) => (
+    <div className={cx('gap-1.5', oneLine ? 'inline-flex flex-nowrap' : 'flex flex-wrap')}
+      title={oneLine ? nonZero.map((b) => formatAmount(b.minor, b.currency)).join('\n') : undefined}>
+      {rest > 0 && <span className="num inline-flex h-7 items-center rounded-[6px] bg-raised px-2 text-[13px] text-fg-2">+{rest}</span>}
+      {shown.map((b) => (
         <span key={b.currency} className={cx('inline-flex h-7 items-center rounded-[6px] px-2 text-[13.5px]', b.minor < 0 ? 'bg-neg-soft text-neg' : 'bg-raised text-fg')}>
           <Amount minor={b.minor} currency={b.currency} className={b.minor < 0 ? '[&_span]:text-neg/80' : ''} />
           {b.minor < 0 && <span className="ms-1.5 text-[12px]">عليه</span>}
@@ -71,15 +82,15 @@ export function CustomersPage() {
           options={[{ id: 'active', label: 'النشطون' }, { id: 'inactive', label: 'المعطّلون' }, { id: 'all', label: 'الكل' }]} />
       </div>
 
-      <div className="overflow-hidden rounded-card border border-line bg-surface">
-        <Table aria-label="العملاء" onRowAction={(k) => navigate(`/customers/${k}`)}>
+      <TableFrame>
+        <Table aria-label="العملاء" onRowAction={(k) => navigate(`/customers/${k}`)} minWidth={CW.min}>
           <TableHeader>
-            <Column isRowHeader>الاسم</Column>
-            <Column>الهاتف</Column>
-            <Column align="end">العمولة الافتراضية</Column>
-            <Column>الرصيد</Column>
-            <Column align="end">بانتظار الموافقة</Column>
-            <Column><span className="sr-only">إجراءات</span></Column>
+            <Column isRowHeader width={CW.name} sticky="start">الاسم</Column>
+            <Column width={CW.phone}>الهاتف</Column>
+            <Column align="end" width={CW.commission}>العمولة الافتراضية</Column>
+            <Column align="end">الرصيد</Column>
+            <Column align="end" width={CW.pending}>بانتظار الموافقة</Column>
+            <Column width={CW.menu} sticky="end"><span className="sr-only">إجراءات</span></Column>
           </TableHeader>
           <TableBody items={list.data ?? []} renderEmptyState={() => (
             <div className="py-16 text-center">
@@ -89,18 +100,20 @@ export function CustomersPage() {
           )}>
             {(c) => (
               <Row id={c.id} className="cursor-default">
-                <Cell className="min-w-[180px]">
+                <Cell sticky="start">
                   <div className="flex items-center gap-2">
-                    <span className={c.isActive ? 'text-fg' : 'text-fg-3'}>{c.name}</span>
-                    {!c.isActive && <Badge tone="outline">معطّل</Badge>}
+                    <div className="min-w-0 flex-1">
+                      <Trunc className={c.isActive ? 'text-fg' : 'text-fg-3'}>{c.name}</Trunc>
+                      {c.notes && <Trunc className="text-[12px] text-fg-3">{c.notes}</Trunc>}
+                    </div>
+                    {!c.isActive && <Badge tone="outline" className="shrink-0">معطّل</Badge>}
                   </div>
-                  {c.notes && <Trunc className="max-w-[260px] text-[12px] leading-tight text-fg-3">{c.notes}</Trunc>}
                 </Cell>
-                <Cell>{c.phone ? <bdi dir="ltr" className="num text-fg-2">{c.phone}</bdi> : <span className="text-fg-3">—</span>}</Cell>
+                <Cell>{c.phone ? <div dir="ltr" className="num truncate text-right text-fg-2" title={c.phone}>{c.phone}</div> : <span className="text-fg-3">—</span>}</Cell>
                 <Cell align="end"><bdi dir="ltr" className="num text-fg-2">{formatBps(c.defaultCommissionBps)}</bdi></Cell>
-                <Cell><BalanceChips c={c} /></Cell>
+                <Cell align="end"><BalanceChips c={c} oneLine /></Cell>
                 <Cell align="end">{c.pendingCount > 0 ? <Badge tone="accent"><span className="num">{c.pendingCount}</span></Badge> : <span className="text-fg-3">—</span>}</Cell>
-                <Cell className="w-12 pe-2">
+                <Cell sticky="end" className="pe-2">
                   <MenuTrigger>
                     <Button variant="quiet" size="icon" aria-label="إجراءات"><MoreHorizontal /></Button>
                     <Popover placement="bottom end" className="min-w-44 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
@@ -117,8 +130,8 @@ export function CustomersPage() {
             )}
           </TableBody>
         </Table>
-      </div>
-      <p className="mt-3 text-[12.5px] text-fg-3">لا يُحذف عميل له معاملات أو قيود؛ يُعطَّل فيختفي من قوائم التخصيص ويبقى دفتره</p>
+      </TableFrame>
+      <p className="mt-3 text-[12.5px] text-fg-3">تعطيل العميل يخفيه من قوائم التخصيص ويُبقي دفتره وأرصدته</p>
 
       {editing && <CustomerDialog customer={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
       {deleting && <DeleteCustomerDialog customer={deleting} onClose={() => setDeleting(null)} />}

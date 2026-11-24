@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, MenuTrigger, Menu, MenuItem, Popover, type Selection, type Key } from 'react-aria-components';
@@ -11,7 +11,8 @@ import { useAction } from '@/lib/useAction';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { SearchField } from '@/components/ui/Field';
-import { Table, TableHeader, Column, TableBody, Row, Cell } from '@/components/ui/Table';
+import { Table, TableFrame, TableHeader, Column, TableBody, Row, Cell, SELECT_W, sumWidths } from '@/components/ui/Table';
+import { DateCell } from '@/components/transactions/bits';
 import { Trunc } from '@/components/ui/Trunc';
 import { Dialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
@@ -54,6 +55,11 @@ export function EmailsPage() {
     queryFn: async () => Object.fromEntries(await Promise.all(TABS.map(async (s) => [s, (await api.emailsList({ status: s, page: 1, pageSize: 1 })).total]))) as Record<ParseStatus, number>,
   });
   const items = list.data?.items ?? [];
+  const selectable = tab !== 'parsed';
+  const EW = useMemo(() => {
+    const w = { date: '100px', from: '160px', reason: tab === 'parsed' ? '130px' : '220px', mailbox: '104px', menu: '48px' };
+    return { ...w, min: sumWidths([...(selectable ? [SELECT_W] : []), ...Object.values(w), '140px']) };
+  }, [tab, selectable]);
   const ids = selected === 'all' ? items.map((e) => e.id) : [...selected].map(Number);
   const pages = Math.max(1, Math.ceil((list.data?.total ?? 0) / PAGE_SIZE));
 
@@ -126,39 +132,39 @@ export function EmailsPage() {
         )}
       </div>
 
-      <div className="overflow-hidden rounded-card border border-line bg-surface">
-        <Table aria-label="الرسائل" selectionMode={tab !== 'parsed' ? 'multiple' : 'none'} selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
-          onRowAction={(k) => { const e = items.find((x) => x.id === Number(k)); if (e) setViewing(e); }}>
+      <TableFrame>
+        <Table aria-label="الرسائل" selectionMode={selectable ? 'multiple' : 'none'} selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
+          onRowAction={(k) => { const e = items.find((x) => x.id === Number(k)); if (e) setViewing(e); }} minWidth={EW.min}>
           <TableHeader>
-            <Column isRowHeader>التاريخ</Column>
-            <Column>من</Column>
+            <Column isRowHeader width={EW.date} sticky="start" stickyOffset={selectable ? SELECT_W : '0px'}>التاريخ</Column>
+            <Column width={EW.from}>من</Column>
             <Column>الموضوع</Column>
-            <Column>{tab === 'parsed' ? 'المحلّل' : 'السبب'}</Column>
-            <Column>البريد</Column>
-            <Column><span className="sr-only">إجراءات</span></Column>
+            <Column width={EW.reason}>{tab === 'parsed' ? 'النتيجة' : 'السبب'}</Column>
+            <Column width={EW.mailbox}>البريد</Column>
+            <Column width={EW.menu} sticky="end"><span className="sr-only">إجراءات</span></Column>
           </TableHeader>
           <TableBody items={items} renderEmptyState={() => (
             <div className="py-16 text-center text-fg-2">{tab === 'failed' ? 'لا رسائل فاشلة. كل ما سُحب قُرئ' : 'لا رسائل هنا'}</div>
           )}>
             {(e) => (
               <Row id={e.id}>
-                <Cell><bdi dir="ltr" className="num whitespace-nowrap text-fg-2">{formatDateTime(e.receivedAt)}</bdi></Cell>
-                <Cell className="max-w-[220px]"><Trunc className="text-fg-2">{e.fromAddr}</Trunc></Cell>
-                <Cell className="max-w-[340px]"><Trunc>{e.subject}</Trunc></Cell>
-                <Cell className="max-w-[260px]">
+                <Cell sticky="start" stickyOffset={selectable ? SELECT_W : '0px'}><DateCell iso={e.receivedAt} /></Cell>
+                <Cell><Trunc className="text-fg-2">{e.fromAddr}</Trunc></Cell>
+                <Cell><Trunc>{e.subject}</Trunc></Cell>
+                <Cell>
                   {tab === 'parsed'
                     ? <span className="text-[13px] text-fg-3">{e.transactionId ? 'أنشأت معاملة' : '—'}</span>
                     : e.parseReason === 'unknown_paypal_domain'
                       ? <span className="flex items-center gap-2 text-[13px] text-warn">
-                          <span className="whitespace-nowrap">{e.parseReasonAr ?? 'نطاق PayPal غير معروف'}</span>
-                          <Button size="sm" variant="secondary" className="h-7" onPress={() => setTrusting(domainFor(e))}>الوثوق بهذا النطاق</Button>
+                          <Trunc className="min-w-0 flex-1">{e.parseReasonAr ?? 'نطاق PayPal غير معروف'}</Trunc>
+                          <Button size="sm" variant="secondary" className="h-7 shrink-0" onPress={() => setTrusting(domainFor(e))}>الوثوق بهذا النطاق</Button>
                         </span>
                       : e.parseReason === 'deleted_by_user'
-                        ? <span className="text-[13px] text-fg-2" title="إعادة التحليل تعيدها معاملة غير مخصّصة">حُذفت يدوياً <span className="text-fg-3">(إعادة التحليل تعيدها)</span></span>
-                        : <span className={cx('text-[13px]', tab === 'failed' ? 'text-warn' : 'text-fg-2')}>{e.parseReasonAr ?? e.parseReason ?? '—'}</span>}
+                        ? <Trunc className="text-[13px] text-fg-2" title="حُذفت يدوياً. إعادة التحليل تعيدها معاملة غير مخصّصة">حُذفت يدوياً <span className="text-fg-3">(إعادة التحليل تعيدها)</span></Trunc>
+                        : <Trunc className={cx('text-[13px]', tab === 'failed' ? 'text-warn' : 'text-fg-2')}>{e.parseReasonAr ?? e.parseReason ?? '—'}</Trunc>}
                 </Cell>
-                <Cell className="whitespace-nowrap text-[13px] text-fg-3">{e.mailboxLabel}</Cell>
-                <Cell className="w-12 pe-2">
+                <Cell><Trunc className="text-[13px] text-fg-3">{e.mailboxLabel}</Trunc></Cell>
+                <Cell sticky="end" className="pe-2">
                   <MenuTrigger>
                     <Button variant="quiet" size="icon" aria-label="إجراءات"><MoreHorizontal /></Button>
                     <Popover placement="bottom end" className="min-w-56 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
@@ -177,7 +183,7 @@ export function EmailsPage() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableFrame>
 
       {pages > 1 && (
         <nav className="mt-3 flex items-center justify-end gap-1 text-[13px] text-fg-3" aria-label="الصفحات">

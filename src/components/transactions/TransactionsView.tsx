@@ -8,24 +8,24 @@ import { api, native } from '@/lib/api';
 import { useAction } from '@/lib/useAction';
 import { toast } from '@/components/ui/Toast';
 import type { Period, Transaction, TxnAction, TxnFilter, TxnSortKey, TxnStatus } from '@/lib/contract';
-import { txn as s, txnStatus, txnType } from '@/lib/strings';
+import { txn as s, txnStatus } from '@/lib/strings';
 import { formatBps } from '@/lib/money';
-import { formatDateTime } from '@/lib/dates';
 import { periodLabels, presetPeriod, type PeriodPreset } from '@/lib/period';
-import { Amount } from '@/components/ui/Amount';
-import { Badge } from '@/components/ui/Badge';
+import { Amount, amountFit, amountWidth } from '@/components/ui/Amount';
 import { Button } from '@/components/ui/Button';
 import { Checkbox, SearchField, Select } from '@/components/ui/Field';
 import { DateRangePicker } from '@/components/ui/DateFields';
-import { Table, TableHeader, Column, TableBody, Row, Cell } from '@/components/ui/Table';
+import { Table, TableFrame, TableHeader, Column, TableBody, Row, Cell, SELECT_W, TotalsCell, TotalsTable, sumWidths } from '@/components/ui/Table';
 import { cx } from '@/components/ui/cx';
 import { Trunc } from '@/components/ui/Trunc';
-import { FeeCell, StatusBadge, TxnFlags } from './bits';
+import { DateCell, FeeCell, PayerCell, StatusBadge } from './bits';
 import { DetailPanel } from './DetailPanel';
 import { actionLabel, useTxnActions } from './TxnActions';
 
 const TABS: (TxnStatus | 'all')[] = ['all', 'unassigned', 'pending_approval', 'approved', 'excluded'];
 const PAGE_SIZE = 50;
+/** the payer column takes the remaining width, never less than this */
+const PAYER_MIN = '200px';
 
 function useDebounced<T>(v: T, ms = 250) {
   const [d, setD] = useState(v);
@@ -90,9 +90,28 @@ export function TransactionsView({ customerId, exportSlot }: { customerId?: numb
     return [...set];
   }, [list.data]);
 
-  const items = list.data?.items ?? [];
+  const items = useMemo(() => list.data?.items ?? [], [list.data]);
   const selectedRows: Transaction[] = selected === 'all' ? items : items.filter((t) => selected.has(t.id));
   const pages = Math.max(1, Math.ceil((list.data?.total ?? 0) / PAGE_SIZE));
+  const totals = list.data?.totals;
+  const fit = useMemo(() => {
+    const col = (row: (t: Transaction) => number | null, tot: (x: NonNullable<typeof totals>[number]) => number) =>
+      amountFit([...items.map((t) => ({ minor: row(t), currency: t.currency })), ...(totals ?? []).map((x) => ({ minor: tot(x), currency: x.currency }))]);
+    return {
+      gross: col((t) => t.grossMinor, (x) => x.grossMinor),
+      fee: col((t) => t.feeMinor, (x) => x.feeMinor),
+      net: col((t) => t.netMinor, (x) => x.netMinor),
+      toCustomer: col((t) => t.customerAmountMinor, (x) => x.customerAmountMinor),
+    };
+  }, [items, totals]);
+  const W = useMemo(() => {
+    const w = {
+      date: '100px', note: '150px', customer: '140px', status: '128px', menu: '52px',
+      gross: amountWidth(fit.gross, true, 72), fee: amountWidth(fit.fee, false, 100), net: amountWidth(fit.net, false, 64),
+      toCustomer: amountWidth(fit.toCustomer, false, 64),
+    };
+    return { ...w, min: sumWidths([SELECT_W, ...Object.values(w), PAYER_MIN]) };
+  }, [fit]);
 
   const exportExcel = async () => {
     const path = await native.saveXlsx(`PpFeez-معاملات-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -163,93 +182,84 @@ export function TransactionsView({ customerId, exportSlot }: { customerId?: numb
         </div>
       )}
 
-      <div className="overflow-hidden rounded-card border border-line bg-surface">
-        <div className="overflow-x-auto">
-          <Table aria-label={s.title} selectionMode="multiple" selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
-            sortDescriptor={sort} onSortChange={setSort} onRowAction={(k: Key) => openDetail(Number(k))}>
-            <TableHeader>
-              <Column id="occurredAt" allowsSorting isRowHeader>{s.cols.date}</Column>
-              <Column id="payerName" allowsSorting>{s.cols.payer}</Column>
-              <Column id="payerNote">{s.cols.payerNote}</Column>
-              <Column id="grossMinor" allowsSorting align="end">{s.cols.gross}</Column>
-              <Column id="feeMinor" allowsSorting align="end">{s.cols.fee}</Column>
-              <Column id="netMinor" allowsSorting align="end">{s.cols.net}</Column>
-              <Column id="customer">{s.cols.customer}</Column>
-              <Column id="customerAmountMinor" allowsSorting align="end">{s.cols.toCustomer}</Column>
-              <Column id="status" allowsSorting>{s.cols.status}</Column>
-              <Column id="menu"><span className="sr-only">إجراءات</span></Column>
-            </TableHeader>
-            <TableBody items={items} renderEmptyState={() => (
-              <div className="py-16 text-center">
-                <p className="text-fg-2">لا معاملات بهذا الفلتر</p>
-                <p className="mt-1 text-[13px] text-fg-3">غيّر التبويب أو امسح البحث</p>
-              </div>
-            )}>
-              {(t) => (
-                <Row id={t.id} className={cx(detailId === t.id && 'bg-raised')}>
-                  <Cell>
-                    <div className="num whitespace-nowrap leading-tight">{formatDateTime(t.occurredAt).slice(0, 10)}</div>
-                    <div className="num text-[12px] leading-tight text-fg-3">{formatDateTime(t.occurredAt).slice(11)}</div>
-                  </Cell>
-                  <Cell className="max-w-[160px]">
-                    <div className="flex items-center gap-1.5 leading-tight">
-                      <Trunc className="min-w-0">{t.payerName ?? '—'}</Trunc>
-                      {t.type !== 'payment' && <Badge tone="neg">{txnType[t.type]}</Badge>}
-                      {t.source === 'manual' && <Badge tone="outline">يدوية</Badge>}
-                      <TxnFlags t={t} />
-                    </div>
-                    {t.refundedBy.length
-                      ? <div className="text-[12px] leading-tight text-neg">{s.refunded}</div>
-                      : <Trunc className="text-[12px] leading-tight text-fg-3">{t.payerEmail || t.paypalTxnId}</Trunc>}
-                  </Cell>
-                  <Cell className="max-w-[104px]"><Trunc className="text-fg-2" title={t.payerNote ?? ''}>{t.payerNote ?? ''}</Trunc></Cell>
-                  <Cell align="end"><Amount minor={t.grossMinor} currency={t.currency} className={t.grossMinor < 0 ? 'text-neg' : ''} /></Cell>
-                  <Cell align="end"><FeeCell t={t} /></Cell>
-                  <Cell align="end"><Amount minor={t.netMinor} currency={t.currency} showCurrency={false} /></Cell>
-                  <Cell>
-                    {t.customer ? (
-                      <>
-                        <div className="whitespace-nowrap leading-tight">{t.customer.name}</div>
-                        <div className="whitespace-nowrap text-[12px] leading-tight text-fg-3">
-                          عمولة {t.commissionMode === 'percent' && t.commissionBps !== null ? <bdi dir="ltr" className="num">{formatBps(t.commissionBps)}</bdi> : 'ثابتة'}
-                        </div>
-                      </>
-                    ) : <span className="text-fg-3">—</span>}
-                  </Cell>
-                  <Cell align="end"><Amount minor={t.customerAmountMinor} currency={t.currency} showCurrency={false} className="font-medium" /></Cell>
-                  <Cell><StatusBadge status={t.status} dot={false} /></Cell>
-                  <Cell className="pe-2">
-                    <MenuTrigger>
-                      <Button variant="quiet" size="icon" aria-label="إجراءات"><MoreHorizontal /></Button>
-                      <Popover placement="bottom end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                        <Menu className="outline-none" onAction={(k) => (k === 'detail' ? openDetail(t.id) : actions.act(k as TxnAction, t))}>
-                          {t.allowedActions.map((a) => (
-                            <MenuItem key={a} id={a} className={cx('flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised', (a === 'unapprove' || a === 'delete') && 'text-neg')}>{actionLabel[a]}</MenuItem>
-                          ))}
-                          <MenuItem id="detail" className="flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm text-fg-2 outline-none data-[focused]:bg-raised">عرض التفاصيل <CornerDownLeft className="ms-auto size-3.5" /></MenuItem>
-                        </Menu>
-                      </Popover>
-                    </MenuTrigger>
-                  </Cell>
-                </Row>
-              )}
-            </TableBody>
-          </Table>
-        </div>
+      <TableFrame>
+        <Table aria-label={s.title} selectionMode="multiple" selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
+          sortDescriptor={sort} onSortChange={setSort} onRowAction={(k: Key) => openDetail(Number(k))} minWidth={W.min}>
+          <TableHeader>
+            <Column id="occurredAt" allowsSorting isRowHeader width={W.date} sticky="start" stickyOffset={SELECT_W}>{s.cols.date}</Column>
+            <Column id="payerName" allowsSorting>{s.cols.payer}</Column>
+            <Column id="payerNote" width={W.note}>{s.cols.payerNote}</Column>
+            <Column id="grossMinor" allowsSorting align="end" width={W.gross}>{s.cols.gross}</Column>
+            <Column id="feeMinor" allowsSorting align="end" width={W.fee}>{s.cols.fee}</Column>
+            <Column id="netMinor" allowsSorting align="end" width={W.net}>{s.cols.net}</Column>
+            <Column id="customer" width={W.customer}>{s.cols.customer}</Column>
+            <Column id="customerAmountMinor" allowsSorting align="end" width={W.toCustomer}>{s.cols.toCustomer}</Column>
+            <Column id="status" allowsSorting width={W.status}>{s.cols.status}</Column>
+            <Column id="menu" width={W.menu} sticky="end"><span className="sr-only">إجراءات</span></Column>
+          </TableHeader>
+          <TableBody items={items} renderEmptyState={() => (
+            <div className="py-16 text-center">
+              <p className="text-fg-2">لا معاملات بهذا الفلتر</p>
+              <p className="mt-1 text-[13px] text-fg-3">غيّر التبويب أو امسح البحث</p>
+            </div>
+          )}>
+            {(t) => (
+              <Row id={t.id} className={cx(detailId === t.id && '[--row-tint:var(--raised)]')}>
+                <Cell sticky="start" stickyOffset={SELECT_W}><DateCell iso={t.occurredAt} /></Cell>
+                <Cell><PayerCell t={t} /></Cell>
+                <Cell><Trunc className="text-fg-2" title={t.payerNote ?? ''}>{t.payerNote ?? ''}</Trunc></Cell>
+                <Cell align="end"><Amount fit={fit.gross} minor={t.grossMinor} currency={t.currency} className={t.grossMinor < 0 ? 'text-neg' : ''} /></Cell>
+                <Cell align="end"><FeeCell t={t} fit={fit.fee} /></Cell>
+                <Cell align="end"><Amount fit={fit.net} minor={t.netMinor} currency={t.currency} showCurrency={false} /></Cell>
+                <Cell>
+                  {t.customer ? (
+                    <>
+                      <Trunc title={t.customer.name}>{t.customer.name}</Trunc>
+                      <div className="truncate text-[12px] text-fg-3">
+                        عمولة {t.commissionMode === 'percent' && t.commissionBps !== null ? <bdi dir="ltr" className="num">{formatBps(t.commissionBps)}</bdi> : 'ثابتة'}
+                      </div>
+                    </>
+                  ) : <span className="text-fg-3">—</span>}
+                </Cell>
+                <Cell align="end"><Amount fit={fit.toCustomer} minor={t.customerAmountMinor} currency={t.currency} showCurrency={false} className="font-medium" /></Cell>
+                <Cell><StatusBadge status={t.status} dot={false} /></Cell>
+                <Cell sticky="end" className="pe-2">
+                  <MenuTrigger>
+                    <Button variant="quiet" size="icon" aria-label="إجراءات"><MoreHorizontal /></Button>
+                    <Popover placement="bottom end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
+                      <Menu className="outline-none" onAction={(k) => (k === 'detail' ? openDetail(t.id) : actions.act(k as TxnAction, t))}>
+                        {t.allowedActions.map((a) => (
+                          <MenuItem key={a} id={a} className={cx('flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised', (a === 'unapprove' || a === 'delete') && 'text-neg')}>{actionLabel[a]}</MenuItem>
+                        ))}
+                        <MenuItem id="detail" className="flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm text-fg-2 outline-none data-[focused]:bg-raised">عرض التفاصيل <CornerDownLeft className="ms-auto size-3.5" /></MenuItem>
+                      </Menu>
+                    </Popover>
+                  </MenuTrigger>
+                </Cell>
+              </Row>
+            )}
+          </TableBody>
+        </Table>
         {!!list.data?.totals.length && (
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-2 border-t border-line bg-raised/40 px-4 py-3 text-[13px]">
-            <span className="text-fg-3">{s.totals}</span>
-            {list.data.totals.map((x) => (
-              <span key={x.currency} className="flex items-center gap-3">
-                <span className="text-fg-2"><Amount minor={x.grossMinor} currency={x.currency} /></span>
-                <span className="text-fg-3">رسوم <Amount minor={x.feeMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></span>
-                <span className="text-fg-3">للعملاء <Amount minor={x.customerAmountMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></span>
-                <span className="num text-fg-3">{x.count} معاملة</span>
-              </span>
+          <TotalsTable label={s.totals} minWidth={W.min} widths={[SELECT_W, W.date, undefined, W.note, W.gross, W.fee, W.net, W.customer, W.toCustomer, W.status, W.menu]}>
+            {list.data.totals.map((x, i) => (
+              <tr key={x.currency}>
+                <TotalsCell sticky="start" />
+                <TotalsCell sticky="start" stickyOffset={SELECT_W} className="text-[13px] text-fg-3">{i === 0 ? s.totals : ''}</TotalsCell>
+                <TotalsCell className="num text-[13px] text-fg-3">{x.count} معاملة</TotalsCell>
+                <TotalsCell />
+                <TotalsCell align="end"><Amount fit={fit.gross} minor={x.grossMinor} currency={x.currency} className="text-fg-2" /></TotalsCell>
+                <TotalsCell align="end"><Amount fit={fit.fee} minor={x.feeMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>
+                <TotalsCell align="end"><Amount fit={fit.net} minor={x.netMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>
+                <TotalsCell />
+                <TotalsCell align="end"><Amount fit={fit.toCustomer} minor={x.customerAmountMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>
+                <TotalsCell />
+                <TotalsCell sticky="end" />
+              </tr>
             ))}
-          </div>
+          </TotalsTable>
         )}
-      </div>
+      </TableFrame>
 
       {pages > 1 && (
         <nav className="mt-3 flex items-center justify-between text-[13px] text-fg-3" aria-label="الصفحات">

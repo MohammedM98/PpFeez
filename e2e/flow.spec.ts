@@ -85,7 +85,7 @@ for (const theme of ['dark', 'light'] as const) {
     // 7. remaining balance
     const card = page.locator('div').filter({ hasText: /^المتبقي له/ }).first();
     await expect(card).toContainText('288.00');
-    await expect(page.locator('tfoot')).toContainText('288.00 USD');
+    await expect(page.getByRole('table', { name: 'الرصيد الختامي' })).toContainText(/الرصيد الختامي USD.*288\.00/);
     // numbers in the generated description are isolated so "20.00%" keeps its order in RTL
     await expect(page.getByRole('cell', { name: /Samer Ali/ })).toContainText('\u206620.00%\u2069');
     await shot(page, theme, '7-balance');
@@ -289,7 +289,7 @@ for (const theme of ['dark', 'light'] as const) {
     await shot('17-delete-entry');
     await entry.getByRole('button', { name: 'حذف نهائياً' }).click();
     await expect(page.getByText('حُذف القيد')).toBeVisible();
-    await expect(page.locator('tfoot')).toContainText('72.01');
+    await expect(page.getByRole('table', { name: 'الرصيد الختامي' })).toContainText('72.01');
 
     // 4. customer: disabled until the exact name is typed; transactions go back to unassigned
     await page.getByRole('button', { name: 'حذف العميل' }).click();

@@ -258,3 +258,41 @@ ${t.payerNote ? `<tr><td style="padding:6px 0;color:#666">Note</td><td>${t.payer
 }
 
 export type { TxnAction, PayoutMethod, LedgerType };
+
+/**
+ * `?stress=1`: long names and large amounts in several currencies, for the table alignment
+ * checks (SPEC 6, "محاذاة الجداول"; SPEC 10).
+ */
+export function addStressData(db: Db) {
+  db.customers.push(mkCustomer(7, 'عبد الرحمن بن عبد العزيز الشمري للتجارة العامة والمقاولات', '+971 50 118 2299 4471', 1750, 'عميل بأسماء طويلة ومبالغ كبيرة'));
+  const T: Seed[] = [
+    { id: 101, d: 0, h: 7, payer: 'Maximilian Alexander von Hohenzollern-Sigmaringen', email: 'maximilian.alexander.hohenzollern@company-international.example', note: 'Annual enterprise licence renewal for the whole group, invoice INV-2026-000184', cur: 'USD', gross: 123456789, fee: 4320987, pp: '9XX11111AA1111111' },
+    { id: 102, d: 0, h: 6, payer: 'Charlotte Montgomery-Fairweather', email: 'c.montgomery@example.co.uk', note: 'Quarterly retainer', cur: 'AUD', gross: 98765432, fee: null, pp: '9XX22222BB2222222' },
+    { id: 103, d: 1, h: 7, payer: '', email: 'no-name-sender-with-a-very-long-address@example.com', note: null, cur: 'EUR', gross: 4599, fee: 186, pp: '9XX33333CC3333333' },
+    { id: 104, d: 1, h: 6, payer: 'Satoshi Nakamura', email: 'satoshi@example.jp', note: '本番', cur: 'JPY', gross: 1500000, fee: 54000, pp: '9XX44444DD4444444' },
+    { id: 105, d: 2, h: 7, payer: 'Maximilian Alexander von Hohenzollern-Sigmaringen', email: 'maximilian.alexander.hohenzollern@company-international.example', note: 'Second instalment', cur: 'USD', gross: 87654321, fee: 3068401, status: 'pending_approval', cust: 7, bps: 1750, pp: '9XX55555EE5555555' },
+    { id: 106, d: 3, h: 7, payer: 'Charlotte Montgomery-Fairweather', email: 'c.montgomery@example.co.uk', note: 'Project Phoenix — milestone 3 of 5', cur: 'AUD', gross: 54321098, fee: 1901238, status: 'approved', cust: 7, bps: 1750, pp: '9XX66666FF6666666' },
+    { id: 107, d: 4, h: 7, payer: 'Ayşegül Karadeniz-Yıldırım', email: 'aysegul.karadeniz@example.com.tr', note: 'Toplu ödeme', cur: 'TRY', gross: 123456789, fee: 5185185, status: 'approved', cust: 7, bps: 1750, pp: '9XX77777GG7777777' },
+  ];
+  const txns = T.map(mkTxn);
+  db.txns.push(...txns);
+  for (const t of txns) {
+    db.history.push({ txnId: t.id, id: ++db.seq, action: 'created', labelAr: 'سُحبت من البريد', details: {}, createdAt: t.occurredAt });
+    db.emails.push({
+      id: t.rawEmailId!, mailboxLabel: 'Gmail الرئيسي', fromAddr: 'service@paypal.com', subject: `You've got money from ${t.payerName || t.payerEmail} — payment notification with a long subject line`,
+      receivedAt: t.occurredAt, parseStatus: 'parsed', parseReason: null, parseReasonAr: null, transactionId: t.id, parserName: 'payment_v2', bodyHtml: paypalHtml(t), bodyText: null,
+    });
+    if (t.status === 'approved') {
+      db.ledger.push({
+        id: ++db.seq, customerId: 7, currency: t.currency, type: 'credit', amountMinor: t.customerAmountMinor!, transactionId: t.id, reversesEntryId: null,
+        payoutMethod: null, reference: t.paypalTxnId, description: creditDescription(t), entryDate: t.approvedAt!.slice(0, 10), createdAt: t.approvedAt!,
+        runningBalanceMinor: 0, reversedByEntryId: null,
+      });
+    }
+  }
+  db.ledger.push({
+    id: ++db.seq, customerId: 7, currency: 'TRY', type: 'payout', amountMinor: -98765432, transactionId: null, reversesEntryId: null, payoutMethod: 'bank',
+    reference: 'Ziraat Bankası TR33 0006 1005 1978 6457 8413 26', description: 'تحويل بنكي إلى حساب الشركة في إسطنبول بعد مطابقة الكشف الشهري مع المحاسب', entryDate: dayStr(1), createdAt: daysAgo(1),
+    runningBalanceMinor: 0, reversedByEntryId: null,
+  });
+}

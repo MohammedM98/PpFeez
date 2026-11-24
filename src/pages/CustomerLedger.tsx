@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, TabPanel, MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
@@ -13,7 +13,9 @@ import { periodLabels, presetPeriod, type PeriodPreset } from '@/lib/period';
 import { useAction } from '@/lib/useAction';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
-import { Amount } from '@/components/ui/Amount';
+import { Amount, amountFit, amountWidth } from '@/components/ui/Amount';
+import { HeadLabel, TableFrame, TotalsCell, TotalsTable, sumWidths } from '@/components/ui/Table';
+import { Trunc } from '@/components/ui/Trunc';
 import { Badge } from '@/components/ui/Badge';
 import { Select } from '@/components/ui/Field';
 import { DatePicker, DateRangePicker } from '@/components/ui/DateFields';
@@ -88,6 +90,22 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
   };
 
   const v = view.data;
+  const fit = useMemo(() => {
+    const es = v?.entries ?? [];
+    const of = (xs: (number | null)[]) => amountFit(xs.map((minor) => ({ minor, currency })));
+    return {
+      credit: of(es.map((e) => (e.amountMinor > 0 ? e.amountMinor : null))),
+      debit: of(es.map((e) => (e.amountMinor < 0 ? -e.amountMinor : null))),
+      running: of([...es.map((e) => e.runningBalanceMinor), v?.openingBalanceMinor ?? null, v?.closingBalanceMinor ?? null]),
+    };
+  }, [v, currency]);
+  const LW = useMemo(() => {
+    const w = {
+      date: '96px', type: '80px', ref: '100px', menu: '48px',
+      credit: amountWidth(fit.credit, false, 76), debit: amountWidth(fit.debit, false, 76), running: amountWidth(fit.running, false, 96),
+    };
+    return { ...w, min: sumWidths([...Object.values(w), '170px']) };
+  }, [fit]);
   return (
     <div>
       <div className="mb-3 flex items-center gap-2">
@@ -100,42 +118,52 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
           <Button variant="secondary" size="sm" onPress={print}><Printer />طباعة كشف</Button>
         </div>
       </div>
-      <div className="overflow-hidden rounded-card border border-line bg-surface">
-        <table className="w-full border-separate border-spacing-0 text-sm">
-          <thead>
-            <tr className="text-[12.5px] text-fg-3 [&>th]:h-10 [&>th]:border-b [&>th]:border-line [&>th]:px-3 [&>th]:font-medium">
-              <th className="text-start">التاريخ</th><th className="text-start">النوع</th><th className="text-start">الوصف</th>
-              <th className="text-end">له (+)</th><th className="text-end">عليه (−)</th><th className="text-end">الرصيد الجاري</th>
-              <th className="text-start">المرجع</th><th className="w-12"><span className="sr-only">إجراءات</span></th>
+      <TableFrame>
+        <table className="w-full table-fixed border-separate border-spacing-0 text-sm" style={{ minWidth: LW.min }} aria-label={`دفتر ${currency}`}>
+          <colgroup>
+            <col style={{ width: LW.date }} /><col style={{ width: LW.type }} /><col />
+            <col style={{ width: LW.credit }} /><col style={{ width: LW.debit }} /><col style={{ width: LW.running }} />
+            <col style={{ width: LW.ref }} /><col style={{ width: LW.menu }} />
+          </colgroup>
+          <thead className="sticky top-0 z-10">
+            <tr className="[&>th]:bg-surface [&>th]:h-10 [&>th]:overflow-hidden [&>th]:border-b [&>th]:border-line [&>th]:px-2.5 [&>th]:font-normal [&>th]:whitespace-nowrap">
+              <th className="sticky z-[2] text-start" data-sticky="start" style={{ insetInlineStart: 0 }}><HeadLabel>التاريخ</HeadLabel></th>
+              <th className="text-start"><HeadLabel>النوع</HeadLabel></th>
+              <th className="text-start"><HeadLabel>الوصف</HeadLabel></th>
+              <th className="text-end"><HeadLabel>له (+)</HeadLabel></th>
+              <th className="text-end"><HeadLabel>عليه (−)</HeadLabel></th>
+              <th className="text-end"><HeadLabel>الرصيد الجاري</HeadLabel></th>
+              <th className="text-start"><HeadLabel>المرجع</HeadLabel></th>
+              <th className="sticky z-[2]" data-sticky="end" style={{ insetInlineEnd: 0 }}><span className="sr-only">إجراءات</span></th>
             </tr>
           </thead>
-          <tbody className="[&>tr>td]:h-12 [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:px-3 [&>tr:last-child>td]:border-b-0">
+          <tbody className="[&>tr>td]:h-12 [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:px-2.5 [&>tr>td]:leading-tight [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
             {v && period.from && (
-              <tr className="bg-raised/40 text-fg-2">
+              <tr className="t-row [--row-tint:color-mix(in_oklab,var(--raised)_40%,transparent)] text-fg-2">
                 <td colSpan={5}>رصيد سابق حتى <bdi dir="ltr" className="num">{period.from}</bdi></td>
-                <td className="text-end"><Amount minor={v.openingBalanceMinor} currency={currency} showCurrency={false} tone="signed" /></td>
+                <td className="text-end"><Amount fit={fit.running} minor={v.openingBalanceMinor} currency={currency} showCurrency={false} tone="signed" /></td>
                 <td colSpan={2} />
               </tr>
             )}
             {v?.entries.map((e) => {
               const reversed = e.reversedByEntryId !== null;
               return (
-                <tr key={e.id} id={`entry-${e.id}`} className={cx('transition-colors duration-500', flash === e.id && 'bg-accent-soft')}>
-                  <td className="num whitespace-nowrap text-fg-2"><bdi dir="ltr">{e.entryDate}</bdi></td>
+                <tr key={e.id} id={`entry-${e.id}`} className={cx('t-row hover:[--row-tint:color-mix(in_oklab,var(--raised)_55%,transparent)]', flash === e.id && '[--row-tint:var(--accent-soft)]')}>
+                  <td className="num sticky z-[1] text-fg-2" data-sticky="start" style={{ insetInlineStart: 0 }}><bdi dir="ltr">{e.entryDate}</bdi></td>
                   <td><Badge tone={e.type === 'credit' ? 'pos' : e.type === 'payout' ? 'neutral' : e.type === 'reversal' ? 'neg' : 'outline'}>{ledgerType[e.type]}</Badge></td>
-                  <td className="max-w-[380px]">
-                    <div className={cx('leading-snug', reversed && 'text-fg-3 line-through decoration-fg-3/60')}>{e.description}</div>
-                    <div className="flex gap-2 text-[12px] text-fg-3">
+                  <td>
+                    <Trunc className={cx(reversed && 'text-fg-3 line-through decoration-fg-3/60')}>{e.description}</Trunc>
+                    <div className="flex gap-2 overflow-hidden text-[12px] text-fg-3">
                       {e.payoutMethod && payoutMethod[e.payoutMethod]}
                       {reversed && <button className="text-accent-ink hover:underline" onClick={() => jump(e.reversedByEntryId!)}>عُكس بقيد لاحق</button>}
                       {e.reversesEntryId !== null && <button className="text-accent-ink hover:underline" onClick={() => jump(e.reversesEntryId!)}>يعكس قيداً سابقاً</button>}
                     </div>
                   </td>
-                  <td className="text-end">{e.amountMinor > 0 ? <Amount minor={e.amountMinor} currency={currency} showCurrency={false} className={reversed ? 'text-fg-3 line-through' : 'text-pos'} /> : ''}</td>
-                  <td className="text-end">{e.amountMinor < 0 ? <Amount minor={-e.amountMinor} currency={currency} showCurrency={false} className={reversed ? 'text-fg-3 line-through' : ''} /> : ''}</td>
-                  <td className="text-end font-medium"><Amount minor={e.runningBalanceMinor} currency={currency} showCurrency={false} className={e.runningBalanceMinor < 0 ? 'text-neg' : ''} /></td>
-                  <td className="max-w-[160px] truncate text-[13px] text-fg-3">{e.reference ? <bdi dir="ltr">{e.reference}</bdi> : ''}</td>
-                  <td className="pe-2">
+                  <td className="text-end">{e.amountMinor > 0 ? <Amount fit={fit.credit} minor={e.amountMinor} currency={currency} showCurrency={false} className={reversed ? 'text-fg-3 line-through' : 'text-pos'} /> : ''}</td>
+                  <td className="text-end">{e.amountMinor < 0 ? <Amount fit={fit.debit} minor={-e.amountMinor} currency={currency} showCurrency={false} className={reversed ? 'text-fg-3 line-through' : ''} /> : ''}</td>
+                  <td className="text-end font-medium"><Amount fit={fit.running} minor={e.runningBalanceMinor} currency={currency} showCurrency={false} className={e.runningBalanceMinor < 0 ? 'text-neg' : ''} /></td>
+                  <td className="text-[13px] text-fg-3">{e.reference ? <div dir="ltr" className="truncate text-right" title={e.reference}>{e.reference}</div> : ''}</td>
+                  <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                     <MenuTrigger>
                       <Button variant="quiet" size="icon" aria-label="إجراءات القيد"><MoreHorizontal /></Button>
                       <Popover placement="bottom end" className="w-60 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
@@ -157,17 +185,19 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
             })}
             {v && v.entries.length === 0 && <tr><td colSpan={8} className="py-10 text-center text-fg-3">لا قيود في هذه الفترة</td></tr>}
           </tbody>
-          {v && (
-            <tfoot>
-              <tr className="bg-raised/40 [&>td]:h-11 [&>td]:border-t [&>td]:border-line [&>td]:px-3">
-                <td colSpan={5} className="text-fg-2">الرصيد الختامي</td>
-                <td className="text-end text-[15px] font-medium"><Amount minor={v.closingBalanceMinor} currency={currency} className={v.closingBalanceMinor < 0 ? 'text-neg' : 'text-accent-ink'} /></td>
-                <td colSpan={2} />
-              </tr>
-            </tfoot>
-          )}
         </table>
-      </div>
+        {v && (
+          <TotalsTable label="الرصيد الختامي" minWidth={LW.min} widths={[LW.date, LW.type, undefined, LW.credit, LW.debit, LW.running, LW.ref, LW.menu]}>
+            <tr>
+              <TotalsCell sticky="start" colSpan={2} className="text-fg-2">الرصيد الختامي <span className="text-fg-3">{currency}</span></TotalsCell>
+              <TotalsCell colSpan={3} />
+              <TotalsCell align="end" className="text-sm font-medium"><Amount fit={fit.running} minor={v.closingBalanceMinor} currency={currency} showCurrency={false} className={v.closingBalanceMinor < 0 ? 'text-neg' : 'text-accent-ink'} /></TotalsCell>
+              <TotalsCell />
+              <TotalsCell sticky="end" />
+            </tr>
+          </TotalsTable>
+        )}
+      </TableFrame>
       {reversing && <ReverseDialog entry={reversing} onClose={() => setReversing(null)} />}
       {deleting && <DeleteEntryDialog entry={deleting} onClose={() => setDeleting(null)} />}
     </div>

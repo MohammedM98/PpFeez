@@ -52,6 +52,7 @@
   --r-card: 12px;
   --r-panel: 16px;
   --row-rule: transparent;
+  --digit: 0.62em; /* replaced at start-up by measureDigits() */
 }
 [data-theme='dark'] {
   --sunken: #0f0f10;
@@ -93,6 +94,7 @@
   --warn-soft: color-mix(in oklab, #e9a23b 14%, transparent);
   --focus: var(--accent-ink);
   --shadow-float: 0 16px 40px rgb(0 0 0 / 0.45);
+  --sticky-shadow: rgb(0 0 0 / 0.6);
 }
 [data-theme='light'] {
   color-scheme: light;
@@ -106,6 +108,21 @@
   --warn-soft: color-mix(in oklab, #d97706 12%, transparent);
   --focus: var(--accent);
   --shadow-float: 0 12px 32px rgb(0 0 0 / 0.1);
+  --sticky-shadow: rgb(0 0 0 / 0.16);
+}
+
+/* Table rows and cells (components/ui/Table.tsx). Cells paint the row's tint over an opaque
+   surface, so columns that stay in place while the table scrolls sideways hide what passes under them. */
+@layer components {
+  .t-row { --row-tint: transparent; }
+  .t-row[data-hovered] { --row-tint: color-mix(in oklab, var(--raised) 55%, transparent); }
+  .t-row[data-selected] { --row-tint: var(--accent-soft); }
+  .t-head { background: var(--surface); }
+  .t-cell, .t-row > td { background: linear-gradient(var(--row-tint), var(--row-tint)), var(--surface); transition: background-color 100ms; }
+  /* columns that stay in place get a soft edge while there is more to scroll to (RTL: start = right) */
+  [data-more-start] [data-sticky='start'] { box-shadow: -10px 0 10px -10px var(--sticky-shadow); }
+  [data-more-end] [data-sticky='end'] { box-shadow: 10px 0 10px -10px var(--sticky-shadow); }
+  .t-foot { background: linear-gradient(color-mix(in oklab, var(--raised) 40%, transparent), color-mix(in oklab, var(--raised) 40%, transparent)), var(--surface); }
 }
 
 @layer base {

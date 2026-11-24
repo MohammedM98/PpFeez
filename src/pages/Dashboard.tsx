@@ -11,7 +11,8 @@ import { useAction } from '@/lib/useAction';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { PullControl, PullProgress } from '@/components/transactions/PullControl';
 import { LastPullLine } from '@/components/transactions/LastPullLine';
-import { Amount } from '@/components/ui/Amount';
+import { Amount, amountFit, amountWidth } from '@/components/ui/Amount';
+import { HeadLabel, TableFrame, sumWidths } from '@/components/ui/Table';
 import { Button, button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Field';
 import { DateRangePicker } from '@/components/ui/DateFields';
@@ -19,7 +20,11 @@ import { DateTime } from '@/components/ui/DateTime';
 import { ConfirmMoney } from '@/components/ui/ConfirmMoney';
 import { TextField } from '@/components/ui/TextField';
 import { cx } from '@/components/ui/cx';
+import { Trunc } from '@/components/ui/Trunc';
 
+
+const DASH_COLS = ['grossMinor', 'feeMinor', 'commissionMinor', 'paidOutMinor', 'owedToCustomersMinor'] as const;
+type DashCol = (typeof DASH_COLS)[number];
 function CountCard({ label, value, to, hint, tone, scrollTo }: { label: string; value: number | undefined; to: string; hint: string; tone?: 'warn'; scrollTo?: string }) {
   const hot = (value ?? 0) > 0;
   return (
@@ -125,6 +130,7 @@ export function DashboardPage() {
   const alerts = useQuery({ queryKey: ['refund_alerts'], queryFn: api.refundAlerts });
   const unknownDomains = useQuery({ queryKey: ['unknown_paypal_domains'], queryFn: api.unknownPaypalDomains });
   const s = summary.data;
+  const fit = Object.fromEntries(DASH_COLS.map((k) => [k, amountFit((s?.byCurrency ?? []).map((c) => ({ minor: c[k], currency: c.currency })))])) as Record<DashCol, number>;
   const run = s?.lastPull;
   const topByCurrency = new Map<string, NonNullable<typeof s>['topCustomers']>();
   s?.topCustomers.forEach((t) => topByCurrency.set(t.balance.currency, [...(topByCurrency.get(t.balance.currency) ?? []), t]));
@@ -148,7 +154,7 @@ export function DashboardPage() {
 
       <RefundAlerts alerts={alerts.data ?? []} domains={unknownDomains.data ?? []} />
 
-      <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-6">
+      <div className="grid grid-cols-1 gap-6 min-[1440px]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section>
           <div className="mb-2 flex items-center justify-between gap-3">
             <h2 className="text-[15px] font-medium text-fg">حسب العملة</h2>
@@ -158,48 +164,49 @@ export function DashboardPage() {
                 options={(Object.keys(periodLabels) as PeriodPreset[]).map((k) => ({ id: k, label: periodLabels[k] }))} />
             </div>
           </div>
-          <div className="overflow-hidden rounded-card border border-line bg-surface">
-            <table className="w-full border-separate border-spacing-0 text-sm">
+          <TableFrame>
+            <table className="w-full table-fixed border-separate border-spacing-0 text-sm" style={{ minWidth: sumWidths(['72px', ...DASH_COLS.map((k) => amountWidth(fit[k], false, 92))]) }} aria-label="الأرقام لكل عملة">
+              <colgroup><col style={{ width: '72px' }} />{DASH_COLS.map((k) => <col key={k} />)}</colgroup>
               <thead>
-                <tr className="text-[12.5px] text-fg-3 [&>th]:h-10 [&>th]:border-b [&>th]:border-line [&>th]:px-4 [&>th]:font-medium">
-                  <th className="text-start">العملة</th>
-                  <th className="text-end">إجمالي الوارد</th>
-                  <th className="text-end">رسوم PayPal</th>
-                  <th className="text-end">عمولتي</th>
-                  <th className="text-end">مدفوع للعملاء</th>
-                  <th className="text-end">مستحق للعملاء الآن</th>
+                <tr className="[&>th]:h-10 [&>th]:border-b [&>th]:border-line [&>th]:bg-surface [&>th]:px-2.5 [&>th]:font-normal [&>th]:whitespace-nowrap">
+                  <th className="sticky z-[1] !ps-4 text-start" data-sticky="start" style={{ insetInlineStart: 0 }}><HeadLabel>العملة</HeadLabel></th>
+                  <th className="text-end"><HeadLabel>إجمالي الوارد</HeadLabel></th>
+                  <th className="text-end"><HeadLabel>رسوم PayPal</HeadLabel></th>
+                  <th className="text-end"><HeadLabel>عمولتي</HeadLabel></th>
+                  <th className="text-end"><HeadLabel>مدفوع للعملاء</HeadLabel></th>
+                  <th className="!pe-4 text-end"><HeadLabel>مستحق للعملاء الآن</HeadLabel></th>
                 </tr>
               </thead>
-              <tbody className="[&>tr>td]:h-14 [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:px-4 [&>tr:last-child>td]:border-b-0">
+              <tbody className="[&>tr>td]:h-12 [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:bg-surface [&>tr>td]:px-2.5 [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
                 {s?.byCurrency.map((c) => (
                   <tr key={c.currency}>
-                    <td className="font-medium">{c.currency}</td>
-                    <td className="text-end"><Amount minor={c.grossMinor} currency={c.currency} showCurrency={false} /></td>
-                    <td className="text-end"><Amount minor={c.feeMinor} currency={c.currency} showCurrency={false} className="text-fg-2" /></td>
-                    <td className="text-end"><Amount minor={c.commissionMinor} currency={c.currency} showCurrency={false} className="font-medium text-accent-ink" /></td>
-                    <td className="text-end"><Amount minor={c.paidOutMinor} currency={c.currency} showCurrency={false} className="text-fg-2" /></td>
-                    <td className="text-end"><Amount minor={c.owedToCustomersMinor} currency={c.currency} showCurrency={false} className={cx('font-medium', c.owedToCustomersMinor < 0 && 'text-neg')} /></td>
+                    <td className="sticky z-[1] !ps-4 font-medium" data-sticky="start" style={{ insetInlineStart: 0 }}>{c.currency}</td>
+                    <td className="text-end"><Amount fit={fit.grossMinor} minor={c.grossMinor} currency={c.currency} showCurrency={false} /></td>
+                    <td className="text-end"><Amount fit={fit.feeMinor} minor={c.feeMinor} currency={c.currency} showCurrency={false} className="text-fg-2" /></td>
+                    <td className="text-end"><Amount fit={fit.commissionMinor} minor={c.commissionMinor} currency={c.currency} showCurrency={false} className="font-medium text-accent-ink" /></td>
+                    <td className="text-end"><Amount fit={fit.paidOutMinor} minor={c.paidOutMinor} currency={c.currency} showCurrency={false} className="text-fg-2" /></td>
+                    <td className="!pe-4 text-end"><Amount fit={fit.owedToCustomersMinor} minor={c.owedToCustomersMinor} currency={c.currency} showCurrency={false} className={cx('font-medium', c.owedToCustomersMinor < 0 && 'text-neg')} /></td>
                   </tr>
                 ))}
                 {s && s.byCurrency.length === 0 && <tr><td colSpan={6} className="py-10 text-center text-fg-3">لا معاملات بعد</td></tr>}
               </tbody>
             </table>
-          </div>
+          </TableFrame>
           <p className="mt-2 text-[12.5px] text-fg-3">«مستحق للعملاء الآن» مجموع أرصدتهم الحالية ولا يتأثر بالفترة</p>
         </section>
 
         <section>
           <h2 className="mb-2 flex h-9 items-center text-[15px] font-medium text-fg">أعلى العملاء رصيداً</h2>
-          <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-3 min-[1440px]:grid-cols-1">
             {[...topByCurrency.entries()].map(([cur, list]) => (
               <div key={cur} className="overflow-hidden rounded-card border border-line bg-surface">
                 <div className="border-b border-line px-4 py-2 text-[12.5px] text-fg-3">{cur}</div>
                 <ol>
                   {list.map((t) => (
                     <li key={t.customerId}>
-                      <Link to={`/customers/${t.customerId}`} className="flex h-10 items-center justify-between px-4 text-sm outline-none hover:bg-raised/50 focus-visible:bg-raised">
-                        <span>{t.name}</span>
-                        <Amount minor={t.balance.minor} currency={cur} showCurrency={false} className={t.balance.minor < 0 ? 'text-neg' : 'text-fg'} />
+                      <Link to={`/customers/${t.customerId}`} className="flex h-10 items-center justify-between gap-3 px-4 text-sm outline-none hover:bg-raised/50 focus-visible:bg-raised">
+                        <Trunc className="min-w-0 flex-1">{t.name}</Trunc>
+                        <Amount fit={amountFit(list.map((x) => ({ minor: x.balance.minor, currency: cur })))} minor={t.balance.minor} currency={cur} showCurrency={false} className={t.balance.minor < 0 ? 'text-neg' : 'text-fg'} />
                       </Link>
                     </li>
                   ))}

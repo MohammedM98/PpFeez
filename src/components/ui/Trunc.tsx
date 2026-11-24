@@ -6,5 +6,5 @@ import { cx } from './cx';
  * note keeps its beginning inside the RTL table ("Logo design…", not "…final payment").
  */
 export function Trunc({ children, className, title }: { children: ReactNode; className?: string; title?: string }) {
-  return <div dir="auto" title={title} className={cx('truncate text-right', className)}>{children}</div>;
+  return <div dir="auto" title={title ?? (typeof children === 'string' ? children : undefined)} className={cx('truncate text-right', className)}>{children}</div>;
 }
