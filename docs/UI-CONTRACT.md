@@ -443,6 +443,7 @@ export type ExcelStart = { kind: 'carry_balance' } | { kind: 'all' } | { kind: '
 // customer_excel_new_file({ customerId, path, start: ExcelStart, makeCurrent: boolean, label?: string }): { file: CustomerExcelFile; added: number; sheets: string[] }
 // customer_excel_set_current({ customerId, fileId }): CustomerExcel
 // customer_excel_remove_file({ customerId, fileId }): void          // من القائمة فقط؛ لا يحذف الملف؛ لا يُزال الحالي
+// customer_excel_item_files({ customerId, item: CustomerExcelItemRef }): { fileId: number; label: string | null; path: string; exportedAt: IsoDate }[]   // للتلميح عند الطلب (لا حقل في كل صف)
 //   customer_excel_add / customer_excel_preview / customer_excel_send_unexported تقبل fileId?: number (الافتراضي: الملف الحالي)
 // customer_excel_add({ customerId, items: CustomerExcelItemRef[] }): { path: string; added: number; skippedDuplicates: number; sheets: string[] }
 //   throws no_export_path (لا ملف مرتبط) | file_locked | excel_layout | export_failed
