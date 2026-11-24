@@ -78,6 +78,7 @@ export type Settings = {
   excelExportPath: string | null;     // الملف الرئيسي (SPEC §6.8)
   excelLastExportedAt: IsoDate | null;
   excelUpdateOnClose: boolean;
+  autoCheckUpdates: boolean;          // SPEC §6.9، افتراضي true
 };
 
 // app_status(): AppStatus
@@ -328,6 +329,8 @@ export type ExcelExportResult = { path: string; sheets: number; rows: number; ex
 يضيفها القلب في `src-tauri` ويفعّل صلاحياتها في `capabilities/`:
 - `@tauri-apps/plugin-dialog` — اختيار مجلد النسخ، مسار حفظ CSV و Excel (فلتر `.xlsx`)، ملف الاستعادة.
 - `@tauri-apps/plugin-opener` — فتح روابط Google لإنشاء كلمة مرور التطبيق، وفتح مجلد البيانات، وفتح ملف Excel.
+- `@tauri-apps/plugin-updater` — `check()` ثم `downloadAndInstall(onEvent)` (SPEC §6.9). الواجهة تستدعيه مباشرة (لا أمر في القلب)، بعد `backup_now`. في وضع المتصفح يُحاكى بـ mock في `src/mocks/`.
+- `@tauri-apps/plugin-process` — `relaunch()` بعد التثبيت.
 - الطباعة/PDF: الواجهة تعرض صفحة كشف الحساب وتستدعي `window.print()`.
 
 ## 5. متطلبات الواجهة الثابتة (غير قابلة للنقاش في جلسة التصميم)
