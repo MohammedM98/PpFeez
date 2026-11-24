@@ -26,7 +26,7 @@ export const CURRENCIES = ['USD', 'EUR', 'TRY', 'GBP', 'SAR', 'AED', 'CAD', 'AUD
 export const actionLabel: Record<TxnAction, string> = {
   assign: 'تخصيص لعميل', unassign: 'إلغاء التخصيص', set_fee: 'تعديل الرسوم', set_commission: 'تعديل العمولة',
   approve: 'اعتماد', unapprove: 'إلغاء الاعتماد', exclude: 'استبعاد', include: 'إرجاع', edit_note: 'تعديل الملاحظة',
-  confirm_review: 'تأكيد البيانات', edit_details: 'تعديل البيانات', delete: 'حذف',
+  confirm_review: 'تأكيد البيانات', edit_details: 'تعديل البيانات', delete: 'حذف', set_matched: 'مطابقة',
 };
 
 type Open =

@@ -23,7 +23,7 @@ export const txnType: Record<TxnType, string> = { payment: 'دفعة', refund: '
 export const ledgerType: Record<LedgerType, string> = { credit: 'اعتماد', payout: 'دفعة', adjustment: 'تسوية', reversal: 'عكس' };
 
 export const payoutMethod: Record<PayoutMethod, string> = {
-  cash: 'نقداً', bank: 'تحويل بنكي', usdt: 'USDT', paypal: 'PayPal', other: 'أخرى',
+  usdt: 'USDT', bank: 'تحويل بنكي', cash: 'نقداً', paypal: 'PayPal', wise: 'Wise', western_union: 'ويسترن يونيون', other: 'أخرى',
 };
 
 export const parseStatus: Record<ParseStatus, string> = { failed: 'فاشلة', ignored: 'متجاهلة', parsed: 'محلَّلة' };

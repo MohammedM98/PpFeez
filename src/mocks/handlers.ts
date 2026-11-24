@@ -76,12 +76,14 @@ function view(t: TxnRow): Transaction {
     mailbox: mb ? { id: mb.id, label: mb.label } : null,
     refundedBy: db.txns.filter((r) => r.type !== 'payment' && r.relatedTxnId === t.paypalTxnId).map((r) => ({ id: r.id, type: r.type, grossMinor: r.grossMinor })),
     allowedActions: allowedActions(t),
+    // SPEC 4.8 (transfer numbers, matched, payouts) is not mocked yet
+    customerSeq: null, matched: false, payout: null,
     inCustomerExcel: !!t.customerId && inExcel(t.customerId, 'txn', t.id),
     changedAfterExcel: t.status !== 'approved' && Object.values(db.customerExcel).some((x) => x.items.some((i) => i.kind === 'txn' && i.id === t.id)),
   };
 }
 
-const inExcel = (customerId: number, kind: 'txn' | 'ledger', id: number) =>
+const inExcel = (customerId: number, kind: 'txn' | 'ledger' | 'payout', id: number) =>
   !!db.customerExcel[customerId]?.items.some((i) => i.kind === kind && i.id === id);
 
 function getTxn(id: number) {
@@ -353,19 +355,21 @@ function excelView(customerId: number): CustomerExcel | null {
 }
 
 type ExcelLine = CustomerExcelPreview['toAdd'][number];
-function excelLine(customerId: number, ref: CustomerExcelItemRef): ExcelLine | { kind: 'txn' | 'ledger'; id: number; reasonAr: string } {
+function excelLine(customerId: number, ref: CustomerExcelItemRef): ExcelLine | CustomerExcelPreview['notAllowed'][number] {
+  if (ref.kind === 'payout') return { kind: 'ledger', id: ref.id, reasonAr: 'الدفعات المرتبطة غير متاحة في الوضع التجريبي بعد' };
+  const r = { kind: ref.kind as 'txn' | 'ledger', id: ref.id };
   if (ref.kind === 'txn') {
     const t = db.txns.find((x) => x.id === ref.id);
-    if (!t) return { ...ref, reasonAr: 'المعاملة غير موجودة' };
-    if (t.customerId !== customerId) return { ...ref, reasonAr: 'معاملة عميل آخر' };
-    if (t.status !== 'approved') return { ...ref, reasonAr: 'غير معتمدة؛ يُضاف للكشف ما اعتُمد فقط' };
-    return { ...ref, date: t.occurredAt.slice(0, 10), labelAr: `حوالة PayPal من ${t.payerName || t.payerEmail}`, currency: t.currency, amountMinor: t.customerAmountMinor ?? 0 };
+    if (!t) return { ...r, reasonAr: 'المعاملة غير موجودة' };
+    if (t.customerId !== customerId) return { ...r, reasonAr: 'معاملة عميل آخر' };
+    if (t.status !== 'approved') return { ...r, reasonAr: 'غير معتمدة؛ يُضاف للكشف ما اعتُمد فقط' };
+    return { ...r, date: t.occurredAt.slice(0, 10), labelAr: `حوالة PayPal من ${t.payerName || t.payerEmail}`, currency: t.currency, amountMinor: t.customerAmountMinor ?? 0 };
   }
   const e = db.ledger.find((x) => x.id === ref.id);
-  if (!e) return { ...ref, reasonAr: 'القيد غير موجود' };
-  if (e.customerId !== customerId) return { ...ref, reasonAr: 'قيد عميل آخر' };
-  if (e.type === 'credit') return { ...ref, reasonAr: 'قيد اعتماد؛ أضف الحوالة نفسها من «معتمدة»' };
-  return { ...ref, date: e.entryDate, labelAr: e.description, currency: e.currency, amountMinor: e.amountMinor };
+  if (!e) return { ...r, reasonAr: 'القيد غير موجود' };
+  if (e.customerId !== customerId) return { ...r, reasonAr: 'قيد عميل آخر' };
+  if (e.type === 'credit') return { ...r, reasonAr: 'قيد اعتماد؛ أضف الحوالة نفسها من «معتمدة»' };
+  return { ...r, date: e.entryDate, labelAr: e.description, currency: e.currency, amountMinor: e.amountMinor };
 }
 
 function excelPreview(customerId: number, items: CustomerExcelItemRef[]): CustomerExcelPreview {

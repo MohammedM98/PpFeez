@@ -32,9 +32,15 @@ export type AppStatus = {
   dataDir: string;
   lockedUntil?: IsoDate;    // بعد 5 محاولات خاطئة
 };
-export type Theme = 'dark' | 'light' | 'system';
+export type Theme = 'dark' | 'light' | 'system' | 'high_contrast';
+export type Accent = 'blue' | 'emerald' | 'violet' | 'amber' | 'rose' | 'slate';   // SPEC §6.10
+export type Density = 'comfortable' | 'regular' | 'compact';
 export type Settings = {
   theme: Theme;
+  accent: Accent;                     // SPEC §6.10، افتراضي 'blue'
+  density: Density;                   // افتراضي 'regular'
+  uiScale: number;                    // 90..150، افتراضي 100
+  uiPrefs: string;                    // JSON تملكه الواجهة وحدها (أعمدة الجداول، طرق العرض المحفوظة، الشريط الجانبي...)؛ القلب يخزنه كما هو (حد 256KB)
   defaultCommissionBps: number;
   feeEstimateEnabled: boolean;
   feeEstimateBps: number;
@@ -139,10 +145,13 @@ export type Transaction = {
   holdStatus: 'pending_echeck' | 'on_hold' | null;
   inCustomerExcel: boolean;      // SPEC §6.8.2
   changedAfterExcel: boolean;    // أُضيفت ثم أُلغي اعتمادها
+  customerSeq: number | null;    // SPEC §4.8: رقم الحوالة # لدى العميل (للمعتمدة)
+  matched: boolean;              // المطابقة
+  payout: { id: number; seq: number; status: 'draft' | 'sent' } | null;  // تم الإرسال؟
 };
 export type TxnAction =
   | 'assign' | 'unassign' | 'set_fee' | 'set_commission' | 'approve'
-  | 'unapprove' | 'exclude' | 'include' | 'edit_note' | 'confirm_review' | 'edit_details' | 'delete';
+  | 'unapprove' | 'exclude' | 'include' | 'edit_note' | 'confirm_review' | 'edit_details' | 'delete' | 'set_matched';
 export type TxnFilter = {
   status?: TxnStatus | 'all';
   search?: string;               // المرسل، الإيميل، رقم المعاملة، ملاحظة المرسل
@@ -187,7 +196,7 @@ export type TxnPreview = {        // معاينة بلا حفظ
 };
 export type HistoryItem = { id: number; action: string; labelAr: string; details: Record<string, unknown>; createdAt: IsoDate };
 
-// txn_list({ filter: TxnFilter, sort: TxnSort, page: number, pageSize: number }): TxnListResult
+// txn_list({ filter: TxnFilter, sort: TxnSort, page: number, pageSize: number }): TxnListResult   // pageSize حتى 500 (للتمرير الافتراضي)
 //   الوارد (SPEC §6.3): filter.status = 'unassigned' | 'excluded' بلا customerId. صفحة العميل: customerId + status = 'pending_approval' | 'approved'.
 export type TxnLocation =
   | { kind: 'inbox' } | { kind: 'excluded' }
@@ -216,7 +225,8 @@ export type DeleteEffect = { customerId: number; customerName: string; currency:
 
 // ===== الدفتر =====
 export type LedgerType = 'credit' | 'payout' | 'adjustment' | 'reversal';
-export type PayoutMethod = 'cash' | 'bank' | 'usdt' | 'paypal' | 'other';
+export type PayoutMethod = 'usdt' | 'bank' | 'cash' | 'paypal' | 'wise' | 'western_union' | 'other';
+export type PayoutDetails = { method: PayoutMethod; platform?: string | null; network?: string | null; destination?: string | null; reference?: string | null; note?: string | null };  // SPEC §4.8
 export type LedgerEntry = {
   id: number;
   customerId: number;
@@ -238,7 +248,7 @@ export type LedgerEntry = {
 };
 export type BalanceCard = { currency: Currency; creditsMinor: Minor; debitsMinor: Minor; balanceMinor: Minor };
 export type LedgerView = { openingBalanceMinor: Minor; entries: LedgerEntry[]; closingBalanceMinor: Minor };
-export type PayoutInput = { currency: Currency; amountText: string; entryDate: string; method: PayoutMethod; reference?: string; description?: string; confirmOverdraw?: boolean };
+export type PayoutInput = { currency: Currency; amountText: string; entryDate: string; method: PayoutMethod; platform?: string; network?: string; destination?: string; reference?: string; description?: string; confirmOverdraw?: boolean };  // دفعة غير مرتبطة بحوالات
 export type AdjustmentInput = { currency: Currency; amountText: string; direction: 'credit' | 'debit'; entryDate: string; description: string };
 export type RefundAlert = {
   refundTxn: Transaction;
@@ -250,6 +260,47 @@ export type RefundAlert = {
 // ledger_balances({ customerId }): BalanceCard[]
 // ledger_entries({ customerId, currency, period?: Period }): LedgerView
 // ledger_add_payout({ customerId, input: PayoutInput }): LedgerEntry   throws validation (code 'validation', field 'overdraw') إن تجاوزت الرصيد بلا confirmOverdraw
+
+// ===== الدفعات المرتبطة وكشف الحساب (SPEC §4.8، §6.5) =====
+export type PayoutStatus = 'draft' | 'sent' | 'cancelled';
+export type Payout = {
+  id: number; customerId: number; currency: Currency; seq: number; status: PayoutStatus;
+  amountMinor: Minor; dueMinor: Minor; date: string; rangeLabel: string;
+  details: PayoutDetails; txnCount: number; cumulativePaidMinor: Minor;   // التراكمي حتى هذه الدفعة (المرسلة فقط)
+  ledgerEntryId: number | null; itemIds: { txns: number[]; ledger: number[] }; inCustomerExcel: boolean; createdAt: IsoDate;
+};
+export type PayoutSelection = { kind: 'unpaid' } | { kind: 'range'; from: number; to: number } | { kind: 'ids'; txnIds: number[] };
+export type PayoutPreparation = {
+  included: Transaction[]; returned: LedgerEntry[];             // المرتجعات السالبة غير المسوّاة
+  alreadyPaid: { txn: Transaction; payoutSeq: number }[];       // تنبيه التداخل (مستبعدة)
+  excludedHeld: Transaction[];                                  // معلّقة/محجوزة (مستبعدة)
+  missingSeqs: number[];                                        // أرقام غير موجودة في النطاق
+  foundCount: number; countedCount: number; returnedCount: number;
+  grossMinor: Minor; netPaypalMinor: Minor; commissionMinor: Minor; dueMinor: Minor;
+  rangeLabel: string;                                           // "(13-40)" / "(99-119) بدون 113"
+};
+export type CustomerSummary = {           // الأرقام الثمانية (SPEC §4.8)
+  currency: Currency; netCompletedMinor: Minor; sentMinor: Minor; remainingMinor: Minor; notPaidCount: number;
+  grossBeforeCommissionMinor: Minor; commissionMinor: Minor; txnCount: number; paidCount: number;
+};
+export type StatementRow =
+  | { kind: 'txn'; txn: Transaction; runningBalanceMinor: Minor }
+  | { kind: 'payout'; payout: Payout; runningBalanceMinor: Minor }
+  | { kind: 'entry'; entry: LedgerEntry; runningBalanceMinor: Minor };   // تسوية / عكس / دفعة غير مرتبطة
+export type StatementFilter = { show?: 'all' | 'unpaid' | 'paid' | 'payouts'; period?: Period };
+// customer_summary({ customerId, currency }): CustomerSummary
+// customer_statement({ customerId, currency, filter?: StatementFilter }): { openingBalanceMinor: Minor; rows: StatementRow[]; closingBalanceMinor: Minor }
+// payout_prepare({ customerId, currency, selection: PayoutSelection }): PayoutPreparation
+// payout_create({ customerId, currency, txnIds: number[], returnedEntryIds: number[], amountText?: string, differenceReason?: string,
+//   date: string, details: PayoutDetails, status: 'draft' | 'sent', matchedConfirmed: true }): Payout
+//   throws validation (field 'overlap' | 'difference_reason' | 'matched') | invalid_transition
+// payout_mark_sent({ payoutId, date?: string }): Payout
+// payout_update_details({ payoutId, details: PayoutDetails }): Payout
+// payout_cancel({ payoutId, reason: string }): Payout          // يعيد الحوالات غير مدفوعة ويعكس القيد إن كانت مرسلة
+// payouts_list({ customerId, currency }): Payout[]
+// payout_defaults({ customerId }): PayoutDetails | null        // آخر طريقة/منصة/شبكة/عنوان لهذا العميل
+// payout_platform_suggestions(): string[]                       // منصات/بنوك استُخدمت سابقاً
+// txn_set_matched({ ids: number[], matched: boolean }): BulkResult
 // ledger_add_adjustment({ customerId, input: AdjustmentInput }): LedgerEntry
 // ledger_reverse_entry({ entryId, reason }): LedgerEntry               throws already_reversed
 // ledger_delete_preview({ entryId }): { entries: LedgerEntry[]; balanceBeforeMinor: Minor; balanceAfterMinor: Minor }  // entries = القيد وزوجه إن وُجد
@@ -330,7 +381,7 @@ export type ExcelExportResult = { path: string; sheets: number; rows: number; ex
 
 // ===== ملف Excel للعميل (SPEC §6.8.2) =====
 export type CustomerExcel = { path: string; updatedAt: IsoDate | null; exists: boolean; addToExcelByDefault: boolean };
-export type CustomerExcelItemRef = { kind: 'txn' | 'ledger'; id: number };
+export type CustomerExcelItemRef = { kind: 'txn' | 'ledger' | 'payout'; id: number };
 export type CustomerExcelPreview = {
   toAdd: { kind: 'txn' | 'ledger'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];
   duplicates: { kind: 'txn' | 'ledger'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];

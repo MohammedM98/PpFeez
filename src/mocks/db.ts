@@ -6,7 +6,7 @@ import type {
   Transaction, TxnAction, TxnStatus, TxnType, CommissionMode, PayoutMethod, LedgerType, BackupFile,
 } from '@/lib/contract';
 
-export type TxnRow = Omit<Transaction, 'customer' | 'mailbox' | 'refundedBy' | 'allowedActions' | 'inCustomerExcel' | 'changedAfterExcel'> & {
+export type TxnRow = Omit<Transaction, 'customer' | 'mailbox' | 'refundedBy' | 'allowedActions' | 'inCustomerExcel' | 'changedAfterExcel' | 'customerSeq' | 'matched' | 'payout'> & {
   customerId: number | null;
   mailboxId: number | null;
   refundHandled: boolean; // refund alert confirmed or dismissed
@@ -204,6 +204,7 @@ export function seed(): Db {
       excelExportPath: 'D:\\PpFeez\\PpFeez.xlsx', excelLastExportedAt: daysAgo(1, 22, 40), excelUpdateOnClose: true,
       autoCheckUpdates: true,
       excelMode: 'append',
+      accent: 'blue', density: 'regular', uiScale: 100, uiPrefs: '{}',
       extraPaypalDomains: [],
       builtinPaypalDomains: ['paypal.com', 'paypal.co.il', 'paypal.co.uk'], // same as BUILTIN in the backend
     },

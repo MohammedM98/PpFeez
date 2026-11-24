@@ -16,7 +16,8 @@ export function ThemeProvider({ initial, onChange, children }: { initial: Theme;
     m.addEventListener('change', h);
     return () => m.removeEventListener('change', h);
   }, []);
-  const resolved = theme === 'system' ? (systemDark ? 'dark' : 'light') : theme;
+  // high_contrast (SPEC 6.10) is not built yet: until its palette lands it shows the dark theme
+  const resolved = theme === 'system' ? (systemDark ? 'dark' : 'light') : theme === 'high_contrast' ? 'dark' : theme;
   useEffect(() => {
     document.documentElement.dataset.theme = resolved;
   }, [resolved]);
