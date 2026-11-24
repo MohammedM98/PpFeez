@@ -27,6 +27,8 @@ pub struct Customer {
     pub balances: Vec<Money>,
     pub pending_count: i64,
     pub created_at: String,
+    /// SPEC §6.8.2: the linked Excel statement.
+    pub excel: Option<crate::excel::customer::CustomerExcel>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -82,6 +84,7 @@ fn from_row(r: &Row<'_>) -> rusqlite::Result<Customer> {
         balances: vec![],
         pending_count: r.get("pending_count")?,
         created_at: r.get("created_at")?,
+        excel: None,
     })
 }
 
@@ -93,6 +96,7 @@ pub fn get(conn: &Connection, id: i64) -> AppResult<Customer> {
     let row = conn.query_row(&format!("{SELECT} WHERE c.id = ?1"), params![id], from_row).optional()?;
     let mut c = row.ok_or_else(|| AppError::not_found("العميل"))?;
     c.balances = balances(conn, id)?;
+    c.excel = crate::excel::customer::get_link(conn, id)?;
     Ok(c)
 }
 
@@ -152,6 +156,7 @@ impl Core {
         for row in rows {
             let mut c = row?;
             c.balances = balances(&conn, c.id)?;
+            c.excel = crate::excel::customer::get_link(&conn, c.id)?;
             out.push(c);
         }
         Ok(out)

@@ -34,6 +34,10 @@ pub enum V {
     Num(f64),
     DateTime(NaiveDateTime),
     Date(NaiveDate),
+    /// A formula (without "="); recalculated by Excel on open.
+    Formula(String),
+    /// An empty cell that only carries a style (e.g. a row fill).
+    Blank,
 }
 
 /// The 17 program columns of a transaction: (column, value or empty, style).
@@ -44,6 +48,8 @@ pub struct MCell {
     pub col: u16,
     pub v: V,
     pub st: St,
+    /// Background fill (RGB), e.g. payout rows of a customer statement.
+    pub fill: Option<u32>,
 }
 
 pub struct SheetModel {
@@ -54,6 +60,10 @@ pub struct SheetModel {
     pub filter_last: u32,
     pub cols: u16,
     pub widths: Vec<f64>,
+    /// An Excel Table over the header and data rows instead of an autofilter.
+    pub table: Option<String>,
+    /// Hidden columns (0-based).
+    pub hidden: Vec<u16>,
 }
 
 /// One row being built.
@@ -63,7 +73,7 @@ pub struct RowB(pub Vec<MCell>);
 impl RowB {
     pub fn str(&mut self, col: u16, v: &str, st: St) -> &mut Self {
         if !v.is_empty() {
-            self.0.push(MCell { col, v: V::Str(v.to_string()), st });
+            self.0.push(MCell { col, v: V::Str(v.to_string()), st, fill: None });
         }
         self
     }
@@ -71,24 +81,49 @@ impl RowB {
         self.str(col, v.unwrap_or(""), st)
     }
     pub fn num(&mut self, col: u16, v: f64, st: St) -> &mut Self {
-        self.0.push(MCell { col, v: V::Num(v), st });
+        self.0.push(MCell { col, v: V::Num(v), st, fill: None });
         self
     }
     pub fn money(&mut self, col: u16, minor: Option<i64>, currency: &str, bold: bool) -> &mut Self {
         if let Some(m) = minor {
-            self.0.push(MCell { col, v: V::Num(super::to_number(m, currency)), st: St::money(currency, bold) });
+            self.0.push(MCell {
+                col,
+                v: V::Num(super::to_number(m, currency)),
+                st: St::money(currency, bold),
+                fill: None,
+            });
         }
         self
     }
     pub fn dt(&mut self, col: u16, v: Option<NaiveDateTime>) -> &mut Self {
         if let Some(d) = v {
-            self.0.push(MCell { col, v: V::DateTime(d), st: St::DateTime });
+            self.0.push(MCell { col, v: V::DateTime(d), st: St::DateTime, fill: None });
+        }
+        self
+    }
+    pub fn formula(&mut self, col: u16, f: &str, st: St) -> &mut Self {
+        self.0.push(MCell { col, v: V::Formula(f.to_string()), st, fill: None });
+        self
+    }
+    pub fn blank(&mut self, col: u16, st: St) -> &mut Self {
+        self.0.push(MCell { col, v: V::Blank, st, fill: None });
+        self
+    }
+    /// Fill every cell of the row; columns `0..cols` without a value get an empty filled cell.
+    pub fn fill_all(&mut self, rgb: u32, cols: u16) -> &mut Self {
+        for c in 0..cols {
+            if !self.0.iter().any(|m| m.col == c) {
+                self.0.push(MCell { col: c, v: V::Blank, st: St::Text, fill: None });
+            }
+        }
+        for m in &mut self.0 {
+            m.fill = Some(rgb);
         }
         self
     }
     pub fn date(&mut self, col: u16, v: Option<NaiveDate>) -> &mut Self {
         if let Some(d) = v {
-            self.0.push(MCell { col, v: V::Date(d), st: St::Date });
+            self.0.push(MCell { col, v: V::Date(d), st: St::Date, fill: None });
         }
         self
     }
@@ -110,6 +145,8 @@ impl SheetModel {
             filter_last: 1,
             cols: headers.len() as u16,
             widths: widths.to_vec(),
+            table: None,
+            hidden: vec![],
         }
     }
 
@@ -197,8 +234,21 @@ impl Formats {
 }
 
 pub fn write_cell(ws: &mut rust_xlsxwriter::Worksheet, f: &Formats, row: u32, c: &MCell) -> Result<(), XlsxError> {
-    let fmt = f.get(c.st);
+    let filled;
+    let fmt = match c.fill {
+        Some(rgb) => {
+            filled = f.get(c.st).clone().set_background_color(Color::RGB(rgb));
+            &filled
+        }
+        None => f.get(c.st),
+    };
     match &c.v {
+        V::Formula(text) => {
+            ws.write_formula_with_format(row, c.col, rust_xlsxwriter::Formula::new(format!("={text}")), fmt)?;
+        }
+        V::Blank => {
+            ws.write_blank(row, c.col, fmt)?;
+        }
         V::Str(s) => {
             ws.write_string_with_format(row, c.col, s, fmt)?;
         }
@@ -226,10 +276,37 @@ pub fn render(wb: &mut Workbook, f: &Formats, m: &SheetModel) -> Result<(), Xlsx
     }
     if m.cols > 0 {
         ws.set_freeze_panes(m.header_row + 1, 0)?;
-        ws.autofilter(m.header_row, 0, m.filter_last.max(m.header_row), m.cols - 1)?;
+        match &m.table {
+            Some(name) => {
+                let header = m.rows.get(m.header_row as usize).cloned().unwrap_or_default();
+                let columns: Vec<rust_xlsxwriter::TableColumn> = (0..m.cols)
+                    .map(|c| {
+                        let h = header
+                            .iter()
+                            .find(|x| x.col == c)
+                            .and_then(|x| if let V::Str(s) = &x.v { Some(s.clone()) } else { None })
+                            .unwrap_or_else(|| format!("Column{}", c + 1));
+                        rust_xlsxwriter::TableColumn::new().set_header(h).set_header_format(f.get(St::Header))
+                    })
+                    .collect();
+                let table = rust_xlsxwriter::Table::new()
+                    .set_name(name)
+                    .set_style(rust_xlsxwriter::TableStyle::Light9)
+                    .set_columns(&columns);
+                // A table needs one data row: an empty one when there is nothing yet.
+                let last = m.filter_last.max(m.header_row + 1);
+                ws.add_table(m.header_row, 0, last, m.cols - 1, &table)?;
+            }
+            None => {
+                ws.autofilter(m.header_row, 0, m.filter_last.max(m.header_row), m.cols - 1)?;
+            }
+        }
     }
     for (i, w) in m.widths.iter().enumerate() {
         ws.set_column_width(i as u16, *w)?;
+    }
+    for &c in &m.hidden {
+        ws.set_column_hidden(c)?;
     }
     Ok(())
 }
@@ -252,7 +329,7 @@ pub fn value_number(v: &V, date1904: bool) -> Option<f64> {
         V::Num(n) => Some(*n),
         V::DateTime(d) => Some(serial(*d, date1904)),
         V::Date(d) => Some(serial(d.and_hms_opt(0, 0, 0).unwrap(), date1904)),
-        V::Str(_) => None,
+        V::Str(_) | V::Formula(_) | V::Blank => None,
     }
 }
 
@@ -305,7 +382,14 @@ pub struct Keep {
 }
 
 /// The whole worksheet XML of a program sheet.
-pub fn render_xml(m: &SheetModel, styles: &mut StylesDoc, date1904: bool, keep: &Keep) -> String {
+/// `table_rid`: relationship id of the sheet's table part (the table then carries the filter).
+pub fn render_xml(
+    m: &SheetModel,
+    styles: &mut StylesDoc,
+    date1904: bool,
+    keep: &Keep,
+    table_rid: Option<&str>,
+) -> String {
     let max_row = m.rows.len().max(1) as u32;
     let max_col = m.cols.max(1) as u32;
     let mut x = String::from(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#);
@@ -325,12 +409,17 @@ pub fn render_xml(m: &SheetModel, styles: &mut StylesDoc, date1904: bool, keep: 
     if !m.widths.is_empty() {
         x.push_str("<cols>");
         for (i, w) in m.widths.iter().enumerate() {
-            x.push_str(&format!(r#"<col min="{0}" max="{0}" width="{1}" customWidth="1"/>"#, i + 1, w + 0.7109375));
+            let hidden = if m.hidden.contains(&(i as u16)) { r#" hidden="1""# } else { "" };
+            x.push_str(&format!(
+                r#"<col min="{0}" max="{0}" width="{1}" customWidth="1"{hidden}/>"#,
+                i + 1,
+                w + 0.7109375
+            ));
         }
         x.push_str("</cols>");
     }
     x.push_str("<sheetData>");
-    let mut xfs: std::collections::HashMap<St, u32> = std::collections::HashMap::new();
+    let mut xfs: std::collections::HashMap<(St, Option<u32>), u32> = std::collections::HashMap::new();
     for (r, row) in m.rows.iter().enumerate() {
         let rn = r as u32 + 1;
         if row.is_empty() {
@@ -340,7 +429,16 @@ pub fn render_xml(m: &SheetModel, styles: &mut StylesDoc, date1904: bool, keep: 
         cells.sort_by_key(|c| c.col);
         x.push_str(&format!(r#"<row r="{rn}">"#));
         for c in &cells {
-            let s = *xfs.entry(c.st).or_insert_with(|| xf_for(styles, c.st));
+            let s = *xfs.entry((c.st, c.fill)).or_insert_with(|| {
+                let base = xf_for(styles, c.st);
+                match c.fill {
+                    Some(rgb) => {
+                        let fill = styles.solid_fill(&format!("FF{rgb:06X}"));
+                        styles.with_fill(base as usize, fill) as u32
+                    }
+                    None => base,
+                }
+            });
             let r = format!("{}{rn}", col_name(c.col as u32 + 1));
             let sa = if s == 0 { String::new() } else { format!(r#" s="{s}""#) };
             match &c.v {
@@ -348,6 +446,8 @@ pub fn render_xml(m: &SheetModel, styles: &mut StylesDoc, date1904: bool, keep: 
                     r#"<c r="{r}"{sa} t="inlineStr"><is><t xml:space="preserve">{}</t></is></c>"#,
                     esc(t)
                 )),
+                V::Formula(f) => x.push_str(&format!(r#"<c r="{r}"{sa}><f>{}</f></c>"#, esc(f))),
+                V::Blank => x.push_str(&format!(r#"<c r="{r}"{sa}/>"#)),
                 v => {
                     let n = value_number(v, date1904).unwrap_or(0.0);
                     x.push_str(&format!(r#"<c r="{r}"{sa}><v>{}</v></c>"#, num_text(n)));
@@ -357,12 +457,15 @@ pub fn render_xml(m: &SheetModel, styles: &mut StylesDoc, date1904: bool, keep: 
         x.push_str("</row>");
     }
     x.push_str("</sheetData>");
-    if m.cols > 0 {
+    if m.cols > 0 && table_rid.is_none() {
         x.push_str(&format!(r#"<autoFilter ref="{}"/>"#, esc_attr(&filter_ref(m))));
     }
     x.push_str(r#"<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>"#);
     for t in &keep.tail {
         x.push_str(t);
+    }
+    if let Some(rid) = table_rid {
+        x.push_str(&format!(r#"<tableParts count="1"><tablePart r:id="{}"/></tableParts>"#, esc_attr(rid)));
     }
     x.push_str("</worksheet>");
     x

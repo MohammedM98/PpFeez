@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 mod append;
 pub mod customer;
 pub mod model;
+pub mod statement;
 pub mod xlsx;
 
 pub const SHEET_SUMMARY: &str = "الملخص";
@@ -58,11 +59,11 @@ pub struct ExcelExportResult {
     pub created: bool,
 }
 
-fn export_failed(e: impl std::fmt::Display) -> AppError {
+pub(crate) fn export_failed(e: impl std::fmt::Display) -> AppError {
     AppError::new(ErrorCode::ExportFailed, format!("فشل التصدير إلى Excel: {e}"))
 }
 
-fn file_locked() -> AppError {
+pub(crate) fn file_locked() -> AppError {
     AppError::new(ErrorCode::FileLocked, "أغلق الملف في Excel ثم أعد المحاولة")
 }
 
@@ -133,7 +134,7 @@ pub fn previous_path(path: &Path) -> PathBuf {
     path.with_file_name(format!("{stem}.previous.xlsx"))
 }
 
-fn keep_previous(path: &Path) -> AppResult<()> {
+pub(crate) fn keep_previous(path: &Path) -> AppResult<()> {
     match std::fs::copy(path, previous_path(path)) {
         Ok(_) => Ok(()),
         Err(e) if is_lock_error(&e) => Err(file_locked()),
@@ -359,7 +360,7 @@ impl Core {
         for t in items {
             for (col, v, st) in self.txn_cells(t) {
                 if let Some(v) = v {
-                    model::write_cell(s.ws, &f, s.row, &MCell { col, v, st })?;
+                    model::write_cell(s.ws, &f, s.row, &MCell { col, v, st, fill: None })?;
                 }
             }
             s.next();
@@ -514,7 +515,7 @@ impl Core {
         for (r, t) in items.iter().enumerate() {
             for (col, v, st) in self.txn_cells(t) {
                 if let Some(v) = v {
-                    model::write_cell(ws, f, r as u32 + 1, &MCell { col, v, st })?;
+                    model::write_cell(ws, f, r as u32 + 1, &MCell { col, v, st, fill: None })?;
                 }
             }
         }

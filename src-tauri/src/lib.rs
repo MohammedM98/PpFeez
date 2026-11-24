@@ -122,6 +122,13 @@ pub fn run() {
             commands::excel::excel_export_transactions,
             commands::excel::excel_export_ledger,
             commands::excel::open_path,
+            commands::excel::customer_excel_get,
+            commands::excel::customer_excel_create,
+            commands::excel::customer_excel_link,
+            commands::excel::customer_excel_unlink,
+            commands::excel::customer_excel_set_default,
+            commands::excel::customer_excel_preview,
+            commands::excel::customer_excel_add,
         ])
         .build(tauri::generate_context!())
         .expect("error while building PpFeez");

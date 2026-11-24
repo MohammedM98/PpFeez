@@ -67,8 +67,18 @@ const TRANSACTION: &[&str] = &[
     "matched",
     "payout",
 ];
-const CUSTOMER: &[&str] =
-    &["id", "name", "phone", "defaultCommissionBps", "notes", "isActive", "balances", "pendingCount", "createdAt"];
+const CUSTOMER: &[&str] = &[
+    "id",
+    "name",
+    "phone",
+    "defaultCommissionBps",
+    "notes",
+    "isActive",
+    "balances",
+    "pendingCount",
+    "createdAt",
+    "excel",
+];
 const LEDGER_ENTRY: &[&str] = &[
     "id",
     "customerId",
@@ -636,4 +646,36 @@ fn payouts_group() {
         .iter()
         .any(|a| serde_json::to_value(a).unwrap() == "set_matched"));
     assert_eq!(serde_json::to_value(h.core.payout_defaults(c.id).unwrap()).unwrap()["method"], json!("western_union"));
+}
+
+#[test]
+fn customer_excel_group() {
+    use ppfeez_core::excel::customer::ItemRef;
+    let h = harness();
+    let c = h.customer("Ali", 2500);
+    let t = h.manual("USD", "100", Some("5"));
+    h.core.txn_assign(t.id, c.id, None, true).unwrap();
+    assert_eq!(serde_json::to_value(h.core.customer_excel_get(c.id).unwrap()).unwrap(), json!(null));
+    let path = h.dir.path().join("ali.xlsx");
+    let created = h.core.customer_excel_create(c.id, &path.display().to_string(), false).unwrap();
+    assert_keys(&created, &["path", "added", "sheets"]);
+    assert_keys(
+        &h.core.customer_excel_get(c.id).unwrap().unwrap(),
+        &["path", "updatedAt", "exists", "addToExcelByDefault"],
+    );
+    let items: Vec<ItemRef> = serde_json::from_value(json!([{ "kind": "txn", "id": t.id }])).unwrap();
+    let p = assert_keys(
+        &h.core.customer_excel_preview(c.id, &items).unwrap(),
+        &["toAdd", "duplicates", "notAllowed", "olderThanLastRow"],
+    );
+    let first = p["toAdd"][0].as_object().unwrap();
+    let mut k: Vec<&str> = first.keys().map(String::as_str).collect();
+    k.sort_unstable();
+    assert_eq!(k, vec!["amountMinor", "currency", "date", "id", "kind", "labelAr"]);
+    assert_eq!(p["toAdd"][0]["kind"], json!("txn"));
+    assert_keys(&h.core.customer_excel_add(c.id, &items).unwrap(), &["path", "added", "skippedDuplicates", "sheets"]);
+    let cust = serde_json::to_value(h.core.customer_get(c.id).unwrap()).unwrap();
+    assert!(cust["excel"]["path"].is_string());
+    let txn = serde_json::to_value(h.core.txn_get(t.id).unwrap()).unwrap();
+    assert_eq!(txn["inCustomerExcel"], json!(true));
 }

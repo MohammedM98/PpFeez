@@ -71,3 +71,72 @@ pub async fn open_path(app: AppHandle, state: State<'_, AppState>, path: PathBuf
     }
     app.opener().open_path(path.display().to_string(), None::<&str>).map_err(runtime)
 }
+
+// ===== Customer Excel statement (SPEC 6.8.2) =====
+
+use ppfeez_core::excel::customer::{
+    CustomerExcel, CustomerExcelAdded, CustomerExcelCreated, CustomerExcelPreview, ItemRef,
+};
+
+#[tauri::command]
+pub async fn customer_excel_get(state: State<'_, AppState>, customer_id: i64) -> AppResult<Option<CustomerExcel>> {
+    state.core.guard()?;
+    state.core.customer_excel_get(customer_id)
+}
+
+#[tauri::command]
+pub async fn customer_excel_create(
+    state: State<'_, AppState>,
+    customer_id: i64,
+    path: String,
+    include_existing: bool,
+) -> AppResult<CustomerExcelCreated> {
+    state.core.guard()?;
+    state.core.customer_excel_create(customer_id, &path, include_existing)
+}
+
+#[tauri::command]
+pub async fn customer_excel_link(
+    state: State<'_, AppState>,
+    customer_id: i64,
+    path: String,
+) -> AppResult<CustomerExcel> {
+    state.core.guard()?;
+    state.core.customer_excel_link(customer_id, &path)
+}
+
+#[tauri::command]
+pub async fn customer_excel_unlink(state: State<'_, AppState>, customer_id: i64) -> AppResult<()> {
+    state.core.guard()?;
+    state.core.customer_excel_unlink(customer_id)
+}
+
+#[tauri::command]
+pub async fn customer_excel_set_default(
+    state: State<'_, AppState>,
+    customer_id: i64,
+    add_to_excel_by_default: bool,
+) -> AppResult<CustomerExcel> {
+    state.core.guard()?;
+    state.core.customer_excel_set_default(customer_id, add_to_excel_by_default)
+}
+
+#[tauri::command]
+pub async fn customer_excel_preview(
+    state: State<'_, AppState>,
+    customer_id: i64,
+    items: Vec<ItemRef>,
+) -> AppResult<CustomerExcelPreview> {
+    state.core.guard()?;
+    state.core.customer_excel_preview(customer_id, &items)
+}
+
+#[tauri::command]
+pub async fn customer_excel_add(
+    state: State<'_, AppState>,
+    customer_id: i64,
+    items: Vec<ItemRef>,
+) -> AppResult<CustomerExcelAdded> {
+    state.core.guard()?;
+    state.core.customer_excel_add(customer_id, &items)
+}

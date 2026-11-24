@@ -763,6 +763,15 @@ impl StylesDoc {
         self.xfs.find_or_add(new, true)
     }
 
+    /// The same cell style with a background fill (found or appended).
+    pub fn with_fill(&mut self, base: usize, fill: usize) -> usize {
+        let Some(raw) = self.xfs.get(base).cloned() else { return base };
+        let Ok(toks) = tokens(&raw) else { return base };
+        let head = retag(&toks[0], &[("fillId", fill.to_string()), ("applyFill", "1".into())], &[]);
+        let new = format!("{head}{}", &raw[toks[0].end..]);
+        self.xfs.find_or_add(new, true)
+    }
+
     fn plain_xf(&mut self, num_fmt: u32) -> usize {
         self.xfs.find_or_add(
             format!(r#"<xf numFmtId="{num_fmt}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>"#),
@@ -1212,6 +1221,148 @@ pub fn cell_empty(col: u32, row: u32, s: Option<u32>) -> String {
 
 pub fn cell_formula(col: u32, row: u32, s: Option<u32>, f: &str) -> String {
     format!(r#"<c r="{}"{}><f>{}</f></c>"#, cell_ref(col, row), s_attr(s), esc(f))
+}
+
+// ===== New sheets and document properties =====
+
+pub const CT_WORKSHEET: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
+pub const CT_TABLE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
+pub const REL_WORKSHEET: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet";
+pub const REL_TABLE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table";
+
+/// An Excel Table for a new sheet: header names are the column names.
+pub struct NewTable {
+    pub name: String,
+    pub range: String,
+    pub columns: Vec<String>,
+    pub style: String,
+}
+
+/// Names of every table in the package (table names are workbook-wide).
+pub fn table_names(pkg: &mut Package) -> LResult<Vec<(u32, String)>> {
+    let names: Vec<String> =
+        pkg.names.iter().filter(|n| n.starts_with("xl/tables/") && n.ends_with(".xml")).cloned().collect();
+    let mut out = vec![];
+    for n in names {
+        if let Some(xml) = pkg.read(&n)? {
+            if let Some(t) = tokens(&xml).ok().and_then(|t| t.into_iter().next()) {
+                out.push((
+                    t.attr("id").and_then(|v| v.parse().ok()).unwrap_or(0),
+                    t.attr("name").unwrap_or_default().to_string(),
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn insert_before_close(xml: &str, close_tag: &str, text: &str) -> LResult<String> {
+    let at = xml.rfind(close_tag).ok_or_else(|| unexpected(close_tag))?;
+    Ok(format!("{}{}{}", &xml[..at], text, &xml[at..]))
+}
+
+fn add_override(pkg: &mut Package, part: &str, content_type: &str) -> LResult<()> {
+    let ct = pkg.read("[Content_Types].xml")?.ok_or_else(|| unexpected("[Content_Types].xml"))?;
+    let entry = format!(r#"<Override PartName="/{}" ContentType="{}"/>"#, esc_attr(part), content_type);
+    pkg.put("[Content_Types].xml", insert_before_close(&ct, "</Types>", &entry)?);
+    Ok(())
+}
+
+/// Add a worksheet (and its table) to the package; returns the new sheet's part path. The
+/// sheet XML must reference the table with `r:id="rId1"` when a table is given.
+pub fn add_sheet(pkg: &mut Package, name: &str, sheet_xml: String, table: Option<&NewTable>) -> LResult<String> {
+    let wb_xml = pkg.read("xl/workbook.xml")?.ok_or_else(|| unexpected("workbook"))?;
+    let toks = tokens(&wb_xml).map_err(|_| unexpected("workbook"))?;
+    let max_sheet_id: u32 =
+        toks.iter().filter(|t| t.name == "sheet").filter_map(|t| t.attr("sheetId")?.parse().ok()).max().unwrap_or(0);
+    let rels_path = rels_path("xl/workbook.xml");
+    let rels_xml = pkg.read(&rels_path)?.ok_or_else(|| unexpected("workbook rels"))?;
+    let rels = parse_rels(&rels_xml)?;
+    let mut n = rels.len() + 1;
+    let rid = loop {
+        let id = format!("rIdPp{n}");
+        if !rels.iter().any(|r| r.id == id) {
+            break id;
+        }
+        n += 1;
+    };
+    let mut k = 1;
+    let sheet_path = loop {
+        let p = format!("xl/worksheets/sheet{k}.xml");
+        if !pkg.has(&p) {
+            break p;
+        }
+        k += 1;
+    };
+    let wb_xml = insert_before_close(
+        &wb_xml,
+        "</sheets>",
+        &format!(r#"<sheet name="{}" sheetId="{}" r:id="{rid}"/>"#, esc_attr(name), max_sheet_id + 1),
+    )?;
+    pkg.put("xl/workbook.xml", wb_xml);
+    let target = sheet_path.trim_start_matches("xl/");
+    pkg.put(
+        &rels_path,
+        insert_before_close(
+            &rels_xml,
+            "</Relationships>",
+            &format!(r#"<Relationship Id="{rid}" Type="{REL_WORKSHEET}" Target="{target}"/>"#),
+        )?,
+    );
+    add_override(pkg, &sheet_path, CT_WORKSHEET)?;
+    if let Some(t) = table {
+        let existing = table_names(pkg)?;
+        let id = existing.iter().map(|(i, _)| *i).max().unwrap_or(0) + 1;
+        let mut m = 1;
+        let table_path = loop {
+            let p = format!("xl/tables/table{m}.xml");
+            if !pkg.has(&p) {
+                break p;
+            }
+            m += 1;
+        };
+        let cols: String = t
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!(r#"<tableColumn id="{}" name="{}"/>"#, i + 1, esc_attr(c)))
+            .collect();
+        let table_xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="{id}" name="{name}" displayName="{name}" ref="{r}" totalsRowShown="0"><autoFilter ref="{r}"/><tableColumns count="{n}">{cols}</tableColumns><tableStyleInfo name="{style}" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/></table>"#,
+            name = esc_attr(&t.name),
+            r = t.range,
+            n = t.columns.len(),
+            style = esc_attr(&t.style),
+        );
+        pkg.put(&table_path, table_xml);
+        add_override(pkg, &table_path, CT_TABLE)?;
+        let sheet_rels = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{REL_TABLE}" Target="../tables/{}"/></Relationships>"#,
+            table_path.trim_start_matches("xl/tables/")
+        );
+        pkg.put(&self::rels_path(&sheet_path), sheet_rels);
+    }
+    pkg.put(&sheet_path, sheet_xml);
+    Ok(sheet_path)
+}
+
+/// A custom document property (docProps/custom.xml), as text.
+pub fn custom_property(pkg: &mut Package, name: &str) -> LResult<Option<String>> {
+    let Some(xml) = pkg.read("docProps/custom.xml")? else { return Ok(None) };
+    let toks = tokens(&xml).map_err(|_| unexpected("docProps/custom.xml"))?;
+    for (i, t) in toks.iter().enumerate() {
+        if t.name == "property" && t.kind == Kind::Start && t.attr("name") == Some(name) {
+            let end = matching_end(&toks, i);
+            if let Some(v) = toks[i + 1..end].iter().find(|v| v.kind == Kind::Start) {
+                let j = toks.iter().position(|x| x.start == v.start).unwrap_or(i + 1);
+                let close = matching_end(&toks, j);
+                return Ok(Some(inner_text(&xml, v, &toks[close]).trim().to_string()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
