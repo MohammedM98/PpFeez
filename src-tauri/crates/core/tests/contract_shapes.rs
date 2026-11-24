@@ -127,9 +127,11 @@ fn app_and_settings_group() {
             "excelExportPath",
             "excelLastExportedAt",
             "excelUpdateOnClose",
+            "autoCheckUpdates",
         ],
     );
     assert_eq!(s["theme"], json!("system"));
+    assert_eq!(s["autoCheckUpdates"], json!(true), "SPEC 6.9: on by default");
     assert_eq!(s["backupDir"], Value::Null);
 
     // Partial<Settings> patch, with explicit nulls.

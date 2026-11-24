@@ -41,6 +41,12 @@ jobs:
     name: Windows installer (NSIS .exe)
     needs: core-tests
     runs-on: windows-latest
+    # Needed only to publish the GitHub Release (SPEC 6.9).
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -53,6 +59,40 @@ jobs:
             "present=false" >> $env:GITHUB_OUTPUT
             Write-Output "::notice title=Installer skipped::package.json is not on this branch yet (the UI session adds it). The installer is built once the frontend exists."
           }
+
+      # Publish a release only for a pushed commit on desktop, when the signing key secret
+      # exists and no release v{version} exists yet. Otherwise build the artifact only.
+      - name: Decide release
+        id: rel
+        if: steps.fe.outputs.present == 'true'
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          "version=$version" >> $env:GITHUB_OUTPUT
+          $exists = $false
+          gh release view "v$version" --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) { $exists = $true }
+          $global:LASTEXITCODE = 0
+          $publish = ($env:HAS_SIGNING_KEY -eq 'true') -and (-not $exists) -and
+                     ('${{ github.event_name }}' -eq 'push') -and ('${{ github.ref }}' -eq 'refs/heads/desktop')
+          "publish=$($publish.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if ($env:HAS_SIGNING_KEY -ne 'true') {
+            Write-Output "::notice title=Unsigned build::TAURI_SIGNING_PRIVATE_KEY is not set: building the installer without updater signatures and without a release."
+          } elseif ($exists) {
+            Write-Output "::notice title=No release::Release v$version already exists; bump the version in src-tauri/tauri.conf.json to publish a new one."
+          }
+          # Release notes: this version's section of docs/CHANGELOG.md.
+          $notes = @(); $in = $false
+          foreach ($line in Get-Content docs/CHANGELOG.md -Encoding utf8) {
+            if ($line -match '^## ') { if ($in) { break }; $in = ($line.Trim() -eq "## $version"); continue }
+            if ($in) { $notes += $line }
+          }
+          $body = ($notes -join "`n").Trim()
+          if (-not $body) { $body = "PpFeez $version" }
+          $delim = "EOF_$([guid]::NewGuid().ToString('N'))"
+          "notes<<$delim" >> $env:GITHUB_OUTPUT
+          $body >> $env:GITHUB_OUTPUT
+          $delim >> $env:GITHUB_OUTPUT
 
       - uses: actions/setup-node@v5
         if: steps.fe.outputs.present == 'true'
@@ -73,12 +113,42 @@ jobs:
         if: steps.fe.outputs.present == 'true'
         run: npm ci
 
-      - name: Build installer
-        if: steps.fe.outputs.present == 'true'
+      - name: Build and publish release v${{ steps.rel.outputs.version }}
+        if: steps.fe.outputs.present == 'true' && steps.rel.outputs.publish == 'true'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: --bundles nsis
+          tagName: v__VERSION__
+          releaseName: PpFeez __VERSION__
+          releaseBody: ${{ steps.rel.outputs.notes }}
+          releaseDraft: false
+          prerelease: false
+          releaseCommitish: ${{ github.sha }}
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: PpFeez-[version]-windows-[arch]-[bundle]
+
+      - name: Build installer (signed, no release)
+        if: steps.fe.outputs.present == 'true' && steps.rel.outputs.publish != 'true' && env.HAS_SIGNING_KEY == 'true'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          args: --bundles nsis
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: PpFeez-[version]-windows-[arch]-[bundle]
+
+      # Without the key, updater artifacts cannot be signed: build without them instead of failing.
+      - name: Build installer (unsigned, no release)
+        if: steps.fe.outputs.present == 'true' && env.HAS_SIGNING_KEY != 'true'
+        uses: tauri-apps/tauri-action@v1
+        with:
+          args: --bundles nsis --config src-tauri/tauri.unsigned.conf.json
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: PpFeez-[version]-windows-[arch]-[bundle]

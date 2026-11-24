@@ -28,7 +28,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "publisher": "PpFeez",
     "shortDescription": "محاسبة دفعات PayPal للعملاء",
     "icon": [
@@ -41,8 +43,23 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["Arabic", "English"],
+        "languages": [
+          "Arabic",
+          "English"
+        ],
         "displayLanguageSelector": false
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/MohammedM98/PpFeez/releases/latest/download/latest.json"
+      ],
+      "pubkey": "PLACEHOLDER-OWNER-MUST-PASTE-THE-UPDATER-PUBLIC-KEY-HERE (output of `npm run tauri signer generate`, public part only)",
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

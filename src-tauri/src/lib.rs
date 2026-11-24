@@ -14,7 +14,11 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            // Signed updates from GitHub Releases (SPEC 6.9); the UI calls check()/downloadAndInstall().
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             let data_dir = app.path().app_data_dir()?;
             let version = app.package_info().version.to_string();
             let core = Core::open(CoreConfig::production(&data_dir, &version))

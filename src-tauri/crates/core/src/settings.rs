@@ -21,6 +21,7 @@ pub const K_ONBOARDING_DONE: &str = "onboarding_done";
 pub const K_EXCEL_EXPORT_PATH: &str = "excel_export_path";
 pub const K_EXCEL_LAST_EXPORTED_AT: &str = "excel_last_exported_at";
 pub const K_EXCEL_UPDATE_ON_CLOSE: &str = "excel_update_on_close";
+pub const K_AUTO_CHECK_UPDATES: &str = "auto_check_updates";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,6 +57,7 @@ pub struct Settings {
     pub excel_export_path: Option<String>,
     pub excel_last_exported_at: Option<String>,
     pub excel_update_on_close: bool,
+    pub auto_check_updates: bool,
 }
 
 /// Distinguish an absent field from an explicit `null` in a patch.
@@ -86,6 +88,7 @@ pub struct SettingsPatch {
     #[serde(default, deserialize_with = "double_option")]
     pub excel_export_path: Option<Option<String>>,
     pub excel_update_on_close: Option<bool>,
+    pub auto_check_updates: Option<bool>,
 }
 
 pub fn get_raw(conn: &Connection, key: &str) -> AppResult<Option<String>> {
@@ -141,6 +144,7 @@ pub fn load(conn: &Connection) -> AppResult<Settings> {
         excel_export_path: get_raw(conn, K_EXCEL_EXPORT_PATH)?.filter(|s| !s.is_empty()),
         excel_last_exported_at: get_raw(conn, K_EXCEL_LAST_EXPORTED_AT)?.filter(|s| !s.is_empty()),
         excel_update_on_close: get_bool(conn, K_EXCEL_UPDATE_ON_CLOSE, true)?,
+        auto_check_updates: get_bool(conn, K_AUTO_CHECK_UPDATES, true)?,
     })
 }
 
@@ -210,6 +214,9 @@ impl Core {
         }
         if let Some(b) = patch.excel_update_on_close {
             set_raw(&tx, K_EXCEL_UPDATE_ON_CLOSE, bool_str(b))?;
+        }
+        if let Some(b) = patch.auto_check_updates {
+            set_raw(&tx, K_AUTO_CHECK_UPDATES, bool_str(b))?;
         }
         let s = load(&tx)?;
         tx.commit()?;
