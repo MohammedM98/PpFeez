@@ -1420,3 +1420,72 @@ pub fn parse_local_datetime(s: &str) -> Option<NaiveDateTime> {
     }
     parse_date(s).and_then(|d| d.and_hms_opt(12, 0, 0))
 }
+
+/// Where a transaction lives in the UI (SPEC §6.3): the inbox, excluded, or a customer's page.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TxnLocation {
+    Inbox,
+    Excluded,
+    #[serde(rename_all = "camelCase")]
+    Customer {
+        customer_id: i64,
+        customer_name: String,
+        status: TxnStatus,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TxnSearchHit {
+    pub txn: Transaction,
+    pub location: TxnLocation,
+}
+
+fn location_of(t: &Transaction) -> TxnLocation {
+    match (t.status, &t.customer) {
+        (TxnStatus::Excluded, _) => TxnLocation::Excluded,
+        (TxnStatus::PendingApproval | TxnStatus::Approved, Some(c)) => {
+            TxnLocation::Customer { customer_id: c.id, customer_name: c.name.clone(), status: t.status }
+        }
+        _ => TxnLocation::Inbox,
+    }
+}
+
+impl Core {
+    /// Search every transaction, whatever its status, by PayPal id, payer name/email, payer note,
+    /// or an amount ("71.25" matches gross, net or the customer's amount in any currency).
+    pub fn txn_search_all(&self, query: &str, limit: Option<i64>) -> AppResult<Vec<TxnSearchHit>> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Ok(vec![]);
+        }
+        let limit = limit.unwrap_or(50).clamp(1, 200);
+        let like = format!("%{}%", escape_like(q));
+        // The same text as an amount, for 2-decimal and 0-decimal currencies.
+        let two = crate::money::parse_amount(q, "USD").filter(|v| *v > 0);
+        let zero = crate::money::parse_amount(q, "JPY").filter(|v| *v > 0);
+        let sql = format!(
+            "SELECT t.* FROM paypal_transactions t
+             WHERE t.paypal_txn_id LIKE ?1 ESCAPE '\\' OR t.payer_name LIKE ?1 ESCAPE '\\'
+                OR t.payer_email LIKE ?1 ESCAPE '\\' OR t.payer_note LIKE ?1 ESCAPE '\\'
+                OR (t.currency NOT IN ('JPY','HUF','TWD') AND ?2 IS NOT NULL
+                    AND (t.gross_minor = ?2 OR t.net_minor = ?2 OR t.customer_amount_minor = ?2))
+                OR (t.currency IN ('JPY','HUF','TWD') AND ?3 IS NOT NULL
+                    AND (t.gross_minor = ?3 OR t.net_minor = ?3 OR t.customer_amount_minor = ?3))
+             ORDER BY t.occurred_at DESC, t.id DESC LIMIT {limit}"
+        );
+        let conn = self.conn();
+        let rows: Vec<TxnRow> = {
+            let mut stmt = conn.prepare(&sql)?;
+            let it = stmt.query_map(params![like, two, zero], TxnRow::from_row)?;
+            it.collect::<Result<_, _>>()?
+        };
+        rows.into_iter()
+            .map(|r| {
+                let txn = to_dto(&conn, r)?;
+                Ok(TxnSearchHit { location: location_of(&txn), txn })
+            })
+            .collect()
+    }
+}

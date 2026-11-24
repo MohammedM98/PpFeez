@@ -119,6 +119,16 @@ fn duplicate_name() -> AppError {
 
 impl Core {
     pub fn customers_list(&self, search: Option<&str>, active: Option<bool>) -> AppResult<Vec<Customer>> {
+        self.customers_list_filtered(search, active, None)
+    }
+
+    /// `has_pending`: only customers with (true) / without (false) transactions awaiting approval.
+    pub fn customers_list_filtered(
+        &self,
+        search: Option<&str>,
+        active: Option<bool>,
+        has_pending: Option<bool>,
+    ) -> AppResult<Vec<Customer>> {
         let conn = self.conn();
         let mut sql = format!("{SELECT} WHERE 1=1");
         let mut args: Vec<rusqlite::types::Value> = vec![];
@@ -131,6 +141,9 @@ impl Core {
         if let Some(a) = active {
             sql.push_str(" AND c.is_active = ?");
             args.push((a as i64).into());
+        }
+        if let Some(p) = has_pending {
+            sql.push_str(if p { " AND pending_count > 0" } else { " AND pending_count = 0" });
         }
         sql.push_str(" ORDER BY c.is_active DESC, c.name COLLATE NOCASE");
         let mut stmt = conn.prepare(&sql)?;

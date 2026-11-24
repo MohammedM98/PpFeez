@@ -3,7 +3,7 @@ use crate::state::AppState;
 use ppfeez_core::audit::HistoryItem;
 use ppfeez_core::transactions::{
     BulkAction, BulkResult, CommissionInput, FeeInput, ManualTxnInput, Transaction, TxnCounts, TxnDetailsInput,
-    TxnFilter, TxnListResult, TxnPreview, TxnSort,
+    TxnFilter, TxnListResult, TxnPreview, TxnSearchHit, TxnSort,
 };
 use tauri::State;
 
@@ -135,4 +135,15 @@ pub async fn txn_edit_details(state: State<'_, AppState>, id: i64, input: TxnDet
 pub async fn txn_confirm_review(state: State<'_, AppState>, id: i64) -> AppResult<Transaction> {
     state.core.guard()?;
     state.core.txn_confirm_review(id)
+}
+
+/// SPEC 6.3: search every transaction (all statuses) and say where it lives.
+#[tauri::command]
+pub async fn txn_search_all(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<i64>,
+) -> AppResult<Vec<TxnSearchHit>> {
+    state.core.guard()?;
+    state.core.txn_search_all(&query, limit)
 }

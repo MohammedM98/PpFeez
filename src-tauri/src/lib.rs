@@ -61,6 +61,7 @@ pub fn run() {
             commands::transactions::txn_bulk,
             commands::transactions::txn_edit_details,
             commands::transactions::txn_confirm_review,
+            commands::transactions::txn_search_all,
             // ledger & refunds
             commands::ledger::ledger_balances,
             commands::ledger::ledger_entries,

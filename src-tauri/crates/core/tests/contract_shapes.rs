@@ -515,3 +515,14 @@ fn deletion_group() {
     assert_keys(&h.core.ledger_delete_entry(entry.id, None).unwrap(), &["backup"]);
     assert_keys(&h.core.data_reset(scope, "حذف").unwrap(), &["backup"]);
 }
+
+#[test]
+fn inbox_group() {
+    let h = harness();
+    let t = h.manual("USD", "71.25", None);
+    let hits = h.core.txn_search_all("71.25", None).unwrap();
+    let v = assert_keys(&hits[0], &["txn", "location"]);
+    assert_eq!(keys(&v["txn"]), set(TRANSACTION));
+    assert_eq!(v["location"], json!({ "kind": "inbox" }));
+    assert_eq!(v["txn"]["id"], json!(t.id));
+}

@@ -8,9 +8,10 @@ pub async fn customers_list(
     state: State<'_, AppState>,
     search: Option<String>,
     active: Option<bool>,
+    has_pending: Option<bool>,
 ) -> AppResult<Vec<Customer>> {
     state.core.guard()?;
-    state.core.customers_list(search.as_deref(), active)
+    state.core.customers_list_filtered(search.as_deref(), active, has_pending)
 }
 
 #[tauri::command]
