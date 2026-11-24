@@ -19,6 +19,7 @@ import { SettingsPage } from '@/pages/Settings';
 import { PullProvider } from '@/lib/pull';
 import { Toasts } from '@/components/ui/Toast';
 import { TxnActionsHost } from '@/components/transactions/TxnActions';
+import { UpdatesProvider } from '@/components/update/Updates';
 
 const queryClient: QueryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: false, staleTime: 5_000 } },
@@ -81,9 +82,11 @@ function Gate() {
   else if (!settings.data) return null;
   else body = (
     <PullProvider>
+      <UpdatesProvider>
       <TxnActionsHost>
         <RouterProvider router={router} />
       </TxnActionsHost>
+      </UpdatesProvider>
     </PullProvider>
   );
   return (

@@ -2,6 +2,8 @@
 // command from the in-memory mock backend in ./handlers.ts.
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { getDb, handle, resetDb } from './handlers';
+import { mockUpdater } from './updater';
+import { setUpdaterImpl } from '@/lib/updater';
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -31,6 +33,7 @@ export function installMocks() {
     },
     { shouldMockEvents: true },
   );
+  setUpdaterImpl(mockUpdater(params));
   Object.assign(window, { __ppfeezMock: { getDb, resetDb } });
   console.info('[PpFeez] Running in browser mode with mock data');
 }

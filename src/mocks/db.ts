@@ -187,6 +187,7 @@ export function seed(): Db {
       theme: 'dark', defaultCommissionBps: 2500, feeEstimateEnabled: true, feeEstimateBps: 440, feeEstimateFixedMinor: 30,
       backupDir: 'D:\\Backups\\PpFeez', backupOnClose: true, backupKeep: 30, autoLockMinutes: 15, onboardingDone: true,
       excelExportPath: 'D:\\PpFeez\\PpFeez.xlsx', excelLastExportedAt: daysAgo(1, 22, 40), excelUpdateOnClose: true,
+      autoCheckUpdates: true,
     },
     customers, txns, ledger,
     history: [],

@@ -19,6 +19,7 @@ import { DateTime } from '@/components/ui/DateTime';
 import { Trunc } from '@/components/ui/Trunc';
 import { cx } from '@/components/ui/cx';
 import { pullRangeLabel } from '@/lib/strings';
+import { UpdateSettingsRows } from '@/components/update/Updates';
 import { MailboxDialog } from '@/components/settings/MailboxForm';
 import { LockPasswordDialog } from '@/components/settings/LockPasswordDialog';
 import { useExcelUpdate } from '@/components/settings/useExcelUpdate';
@@ -297,12 +298,17 @@ function AppearanceSection() {
   );
 }
 
-function AboutSection() {
+function AboutSection({ s }: { s: SettingsT }) {
   const status = useQuery({ queryKey: ['app_status'], queryFn: api.appStatus });
   const { run } = useAction();
   return (
     <Section id="about" title="حول">
-      <Row label="الإصدار"><bdi dir="ltr" className="num text-fg-2">{status.data?.version}</bdi></Row>
+      <Row label="الإصدار" hint="التحديثات موقّعة وتُنزَّل من صفحة إصدارات البرنامج على GitHub">
+        <UpdateSettingsRows version={status.data?.version} />
+      </Row>
+      <Row label="التحقق التلقائي من التحديثات" hint="بصمت بعد فتح البرنامج، ولا يُثبَّت شيء إلا بموافقتك">
+        <Switch isSelected={s.autoCheckUpdates} onChange={(v) => void run(() => api.updateSettings({ autoCheckUpdates: v }), 'حُفظ')} aria-label="التحقق التلقائي من التحديثات" />
+      </Row>
       <Row label="مجلد البيانات">
         <Trunc className="max-w-[360px] text-[13px] text-fg-2">{status.data?.dataDir}</Trunc>
         <Button size="sm" variant="secondary" onPress={() => void run(() => api.openDataDir())}><FolderOpen />فتح المجلد</Button>
@@ -342,7 +348,7 @@ export function SettingsPage() {
             <BackupSection s={s} />
             <SecuritySection s={s} />
             <AppearanceSection />
-            <AboutSection />
+            <AboutSection s={s} />
           </div>
         )}
       </div>

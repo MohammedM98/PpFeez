@@ -46,6 +46,7 @@ export type Settings = {
   excelExportPath: string | null;     // الملف الرئيسي (SPEC §6.8)
   excelLastExportedAt: IsoDate | null;
   excelUpdateOnClose: boolean;
+  autoCheckUpdates: boolean;          // SPEC §6.9، افتراضي true
 };
 
 // app_status(): AppStatus

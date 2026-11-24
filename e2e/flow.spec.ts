@@ -132,3 +132,33 @@ for (const theme of ['dark', 'light'] as const) {
     expect(errors).toEqual([]);
   });
 }
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`auto-update (${theme})`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+
+    // an update found by the silent check offers itself with its notes
+    await page.goto(`/?theme=${theme}&update=1#/dashboard`);
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('يتوفر إصدار جديد');
+    await expect(dialog).toContainText('0.2.0');
+    await expect(dialog).toContainText('اختيار نطاق السحب');
+    await page.screenshot({ path: `e2e/screenshots/${theme}-11-update.png` });
+    await dialog.getByRole('button', { name: 'لاحقاً' }).click();
+    await expect(dialog).toBeHidden();
+
+    // a bad signature is refused with an Arabic message and nothing is installed
+    await page.goto(`/?theme=${theme}&updateError=signature#/dashboard`);
+    await page.reload();
+    await page.getByRole('button', { name: 'تحديث الآن' }).click();
+    await expect(page.getByRole('dialog')).toContainText('فشل التحقق من توقيع التحديث', { timeout: 15_000 });
+
+    // manual check with nothing new
+    await page.goto(`/?theme=${theme}#/settings`);
+    await page.reload();
+    await page.getByRole('button', { name: 'التحقق من التحديثات' }).click();
+    await expect(page.getByText('لديك أحدث إصدار')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}
