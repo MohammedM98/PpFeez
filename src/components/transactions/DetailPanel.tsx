@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
 import { FileText, MoreHorizontal, Pencil, X } from 'lucide-react';
@@ -28,11 +28,32 @@ export function DetailPanel({ id, onClose }: { id: number; onClose: () => void }
   const actions = useTxnActions();
   const [emailOpen, setEmailOpen] = useState(false);
 
+  // SPEC 6.10 "إغلاق اللوحات": Esc or a click anywhere outside closes it (X stays for keyboard and screen
+  // readers); a click on another row that opens details moves the panel there; Esc and X return focus
+  // to what opened it.
+  const opener = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !document.querySelector('[role="dialog"][aria-modal="true"]') && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const a = document.activeElement as HTMLElement | null;
+    if (a && a !== document.body && !a.closest('[data-detail-panel]')) opener.current = a;
+  }, [id]);
+  const closeAndReturn = useCallback(() => {
+    const o = opener.current;
+    onClose();
+    if (o?.isConnected) requestAnimationFrame(() => o.focus());
   }, [onClose]);
+  useEffect(() => {
+    const modal = () => !!document.querySelector('[role="dialog"][aria-modal="true"]');
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !modal() && !e.defaultPrevented) closeAndReturn(); };
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (!t?.isConnected || modal()) return;
+      if (t.closest('[data-detail-panel], [data-opens-detail], [role=dialog], [role=alertdialog], [role=menu], [role=listbox], [data-trigger], .toasts')) return;
+      onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown, true);
+    return () => { window.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onDown, true); };
+  }, [onClose, closeAndReturn]);
 
   if (!t) return null;
   const primary = PRIMARY.find((a) => t.allowedActions.includes(a));
@@ -54,7 +75,7 @@ export function DetailPanel({ id, onClose }: { id: number; onClose: () => void }
           <div className="truncate text-[17px] font-medium"><bdi>{t.payerName ?? '—'}</bdi></div>
           {t.payerEmail && <div className="truncate text-[13px] text-fg-3"><bdi dir="ltr">{t.payerEmail}</bdi></div>}
         </div>
-        <Button variant="quiet" size="icon" aria-label="إغلاق" onPress={onClose}><X /></Button>
+        <Button variant="quiet" size="icon" aria-label="إغلاق" onPress={closeAndReturn}><X /></Button>
       </header>
 
       <div className="flex-1 space-y-5 overflow-auto p-5">

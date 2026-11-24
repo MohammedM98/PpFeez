@@ -186,6 +186,12 @@ export const api = {
     call<CustomerExcel>('customer_excel_set_default', { customerId, addToExcelByDefault }),
   customerExcelPreview: (customerId: number, items: CustomerExcelItemRef[]) =>
     call<CustomerExcelPreview>('customer_excel_preview', { customerId, items }),
+  // auto-sync and export status (SPEC 6.8.3)
+  customerExcelSetAuto: (customerId: number, autoSync: boolean) => call<CustomerExcel>('customer_excel_set_auto', { customerId, autoSync }),
+  customerExcelSendUnexported: (customerId: number) =>
+    call<{ path: string; added: number; skippedDuplicates: number; stillPending: number }>('customer_excel_send_unexported', { customerId }),
+  customerExcelUnexportedSummary: () =>
+    call<{ customerId: number; customerName: string; pending: number; notExported: number; lastError: AppError | null }[]>('customer_excel_unexported_summary'),
   customerExcelAdd: (customerId: number, items: CustomerExcelItemRef[]) =>
     call<{ path: string; added: number; skippedDuplicates: number; sheets: string[] }>('customer_excel_add', { customerId, items }),
 };
@@ -193,6 +199,9 @@ export const api = {
 export const events = {
   onPullProgress: (fn: (run: PullRun) => void): Promise<UnlistenFn> => listen<PullRun>('pull://progress', (e) => fn(e.payload)),
   onPullFinished: (fn: (run: PullRun) => void): Promise<UnlistenFn> => listen<PullRun>('pull://finished', (e) => fn(e.payload)),
+  /** after each background write to a customer's Excel statement (SPEC 6.8.3) */
+  onCustomerExcelSynced: (fn: (e: { customerId: number; added: number; pending: number; error: AppError | null }) => void): Promise<UnlistenFn> =>
+    listen<{ customerId: number; added: number; pending: number; error: AppError | null }>('customer-excel://synced', (e) => fn(e.payload)),
 };
 
 // Native dialogs and links (plugin-dialog / plugin-opener, contract §4).

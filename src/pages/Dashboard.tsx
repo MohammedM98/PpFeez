@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
-import { FileSpreadsheet, RefreshCw, ShieldQuestion, TriangleAlert } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { CircleCheck, FileSpreadsheet, RefreshCw, ShieldQuestion, TriangleAlert } from 'lucide-react';
 import { useExcelUpdate } from '@/components/settings/useExcelUpdate';
-import { api } from '@/lib/api';
+import { api, toAppError } from '@/lib/api';
 import type { Period, RefundAlert } from '@/lib/contract';
 import { formatMinor } from '@/lib/money';
 import { periodLabels, presetPeriod, type PeriodPreset } from '@/lib/period';
@@ -21,6 +21,8 @@ import { ConfirmMoney } from '@/components/ui/ConfirmMoney';
 import { TextField } from '@/components/ui/TextField';
 import { cx } from '@/components/ui/cx';
 import { Trunc } from '@/components/ui/Trunc';
+import { Dialog } from '@/components/ui/Dialog';
+import { excelWhy, movesLabel } from '@/components/customers/CustomerExcel';
 
 
 const DASH_COLS = ['grossMinor', 'feeMinor', 'commissionMinor', 'paidOutMinor', 'owedToCustomersMinor'] as const;
@@ -123,6 +125,79 @@ function ExcelCard() {
   );
 }
 
+/** "عميل واحد" / "عميلان" / "3 عملاء" / "11 عميلاً" */
+function customersLabel(n: number) {
+  if (n === 1) return 'عميل واحد';
+  if (n === 2) return 'عميلين';
+  return n >= 3 && n <= 10 ? `${n} عملاء` : `${n} عميلاً`;
+}
+
+type SendResult = { customerId: number; name: string; added?: number; error?: string };
+
+/** SPEC 6.8.3: what is not in the customers' Excel files yet; "إرسال الكل" goes customer by customer, then reports. */
+function UnexportedCard() {
+  const qc = useQueryClient();
+  const list = useQuery({ queryKey: ['customer_excel_unexported_summary'], queryFn: api.customerExcelUnexportedSummary });
+  const [sending, setSending] = useState(false);
+  const [report, setReport] = useState<SendResult[] | null>(null);
+  const rows = list.data ?? [];
+  if (!rows.length && !report) return null;
+  const total = rows.reduce((n, r) => n + r.pending + r.notExported, 0);
+
+  const sendAll = async () => {
+    setSending(true);
+    const out: SendResult[] = [];
+    for (const r of rows) {
+      try {
+        const v = await api.customerExcelSendUnexported(r.customerId);
+        out.push({ customerId: r.customerId, name: r.customerName, added: v.added });
+      } catch (raw) {
+        out.push({ customerId: r.customerId, name: r.customerName, error: excelWhy(toAppError(raw)) });
+      }
+    }
+    await qc.invalidateQueries();
+    setSending(false);
+    setReport(out);
+  };
+
+  return (
+    <section aria-label="غير المُصدَّر لملفات العملاء" className="mb-6 rounded-card border border-line bg-surface">
+      {rows.length > 0 && (
+        <div className="flex items-center gap-3 px-4 py-3">
+          <FileSpreadsheet className="size-5 shrink-0 text-warn" strokeWidth={1.6} />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm text-fg">حركات غير مُصدّرة لملفات العملاء: <span className="num font-medium">{total}</span> <span className="text-fg-3">(لدى {customersLabel(rows.length)})</span></div>
+            <div className="mt-0.5 flex flex-wrap gap-x-3 text-[12.5px] text-fg-3">
+              {rows.map((r) => (
+                <Link key={r.customerId} to={`/customers/${r.customerId}`} className="hover:text-fg-2 hover:underline">
+                  {r.customerName} <span className="num">{r.pending + r.notExported}</span>{r.lastError && <span className="text-warn"> · {excelWhy(r.lastError)}</span>}
+                </Link>
+              ))}
+            </div>
+          </div>
+          <Button size="sm" variant="secondary" isPending={sending} onPress={() => void sendAll()}>إرسال الكل</Button>
+        </div>
+      )}
+      {report && (
+        <Dialog isOpen onOpenChange={(o) => !o && setReport(null)} width="sm" title="نتيجة الإرسال لملفات العملاء"
+          footer={<Button variant="primary" onPress={() => setReport(null)}>تم</Button>}>
+          <ul className="flex flex-col divide-y divide-line text-sm" aria-label="نتيجة كل عميل">
+            {report.map((r) => (
+              <li key={r.customerId} className="flex items-start gap-2 py-2">
+                {r.error ? <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warn" /> : <CircleCheck className="mt-0.5 size-4 shrink-0 text-pos" />}
+                <div className="min-w-0 flex-1">
+                  <div className="text-fg">{r.name}</div>
+                  <div className={cx('text-[12.5px]', r.error ? 'text-warn' : 'text-fg-3')}>{r.error ? `لم يُرسل: ${r.error}` : `أُضيف ${movesLabel(r.added ?? 0)}`}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Dialog>
+      )}
+    </section>
+  );
+}
+
 export function DashboardPage() {
   const [preset, setPreset] = useState<PeriodPreset>('this_month');
   const [custom, setCustom] = useState<Period>({});
@@ -154,6 +229,7 @@ export function DashboardPage() {
       </div>
 
       <RefundAlerts alerts={alerts.data ?? []} domains={unknownDomains.data ?? []} />
+      <UnexportedCard />
 
       <div className="grid grid-cols-1 gap-6 min-[1440px]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section>

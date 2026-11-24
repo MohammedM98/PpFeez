@@ -1,7 +1,7 @@
 // Browser-only mode (contract §1): when there is no Tauri runtime, answer every
 // command from the in-memory mock backend in ./handlers.ts.
 import { mockIPC } from '@tauri-apps/api/mocks';
-import { getDb, handle, resetDb } from './handlers';
+import { getDb, handle, resetDb, setExcelLocked } from './handlers';
 import { addStressData } from './db';
 import { mockUpdater } from './updater';
 import { setUpdaterImpl } from '@/lib/updater';
@@ -41,6 +41,6 @@ export function installMocks() {
     { shouldMockEvents: true },
   );
   setUpdaterImpl(mockUpdater(params));
-  Object.assign(window, { __ppfeezMock: { getDb, resetDb } });
+  Object.assign(window, { __ppfeezMock: { getDb, resetDb, setExcelLocked } });
   console.info('[PpFeez] Running in browser mode with mock data');
 }

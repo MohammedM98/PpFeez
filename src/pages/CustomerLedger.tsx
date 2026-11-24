@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Tabs, TabList, Tab, TabPanel } from 'react-aria-components';
-import { ArrowRight, HandCoins, Pencil, Scale, Send, Trash2 } from 'lucide-react';
+import { Tabs, TabList, Tab, TabPanel, MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
+import { ArrowRight, HandCoins, MoreHorizontal, Pencil, Scale, Send, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Customer, PayoutMethod, PayoutSelection } from '@/lib/contract';
 import { USDT_NETWORKS, payoutMethod } from '@/lib/strings';
@@ -19,13 +19,17 @@ import { TextField } from '@/components/ui/TextField';
 import { Segmented } from '@/components/ui/Segmented';
 import { ConfirmMoney } from '@/components/ui/ConfirmMoney';
 import { cx } from '@/components/ui/cx';
+import { tablePage } from '@/components/ui/Table';
+import { ToolbarSlotContext } from '@/components/layout/ToolbarSlot';
 import { TransactionsView } from '@/components/transactions/TransactionsView';
 import { CURRENCIES } from '@/components/transactions/TxnActions';
 import { CustomerDialog, DeleteCustomerDialog } from './Customers';
-import { CustomerExcelCard, StatementCheckbox, addToStatementAfter, useStatementChoice } from '@/components/customers/CustomerExcel';
+import { CustomerExcelChip, StatementCheckbox, addToStatementAfter, useStatementChoice } from '@/components/customers/CustomerExcel';
 import { StatementTab } from '@/components/customers/StatementTab';
 import { PreparePayoutDialog } from '@/components/customers/PreparePayoutDialog';
 import { PayoutsRegister } from '@/components/customers/PayoutsRegister';
+
+const moreItem = 'flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised [&_svg]:size-4 [&_svg]:text-fg-3';
 
 const tabCls = ({ isSelected }: { isSelected: boolean }) => cx(
   'relative -mb-px flex h-10 cursor-default items-center gap-2 px-3 text-sm outline-none transition-colors duration-150',
@@ -77,7 +81,7 @@ function MoneyEntryDialog({ kind, customer, currencies, defaultCurrency, onClose
     const signed = isPayout || direction === 'debit' ? `-${amountText.trim()}` : `+${amountText.trim()}`;
     return (
       <ConfirmMoney isOpen onOpenChange={(o) => !o && onClose()} title={isPayout ? `دفعة لـ ${customer.name}` : `تسوية في دفتر ${customer.name}`}
-        amountText={signed} currency={currency} tone={overdraw ? 'danger' : 'primary'} pending={pending}
+        amountText={signed} currency={currency} tone={overdraw ? 'danger' : 'primary'} pending={pending} dirty
         confirmLabel={overdraw ? 'تأكيد رغم التجاوز' : isPayout ? 'تسجيل الدفعة' : 'تسجيل التسوية'}
         onConfirm={() => submit(!!overdraw)}>
         <div className="flex flex-col gap-2 text-sm text-fg-2">
@@ -143,6 +147,7 @@ function CustomerPage({ customerId }: { customerId: number }) {
   useEffect(() => { if (tab === null && cards.data) setTab(cards.data[0]?.currency ?? 'pending'); }, [cards.data, tab]);
   const [dialog, setDialog] = useState<'payout' | 'adjustment' | 'edit' | 'delete' | null>(null);
   const [prepare, setPrepare] = useState<{ currency: string; initial?: PayoutSelection } | null>(null);
+  const [toolbar, setToolbar] = useState<HTMLDivElement | null>(null);
   const navigate = useNavigate();
 
   const c = customer.data;
@@ -152,41 +157,52 @@ function CustomerPage({ customerId }: { customerId: number }) {
   const activeCurrency = tab && currencies.includes(tab) ? tab : currencies[0] ?? 'USD';
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[1800px] flex-col px-6 pb-8 pt-6">
-      <PageHeader
-        back={<Link to="/customers" className="mb-1 inline-flex items-center gap-1 text-[13px] text-fg-3 hover:text-fg-2"><ArrowRight className="size-3.5" />العملاء</Link>}
-        title={<span className="flex items-center gap-3">{c.name}{!c.isActive && <Badge tone="outline">معطّل</Badge>}</span>}
+    <div className={cx(tablePage, 'max-w-[1800px]')}>
+      <PageHeader compact
+        back={<Link to="/customers" aria-label="العملاء" title="العملاء" className="grid size-7 shrink-0 place-items-center self-center rounded-[6px] text-fg-3 hover:bg-raised hover:text-fg-2"><ArrowRight className="size-4" /></Link>}
+        title={<span className="flex min-w-0 items-center gap-2"><span className="truncate" title={c.name}>{c.name}</span>{!c.isActive && <Badge tone="outline">معطّل</Badge>}</span>}
         subtitle={<>
-          {c.phone && <><bdi dir="ltr" className="num">{c.phone}</bdi>، </>}
-          العمولة الافتراضية <bdi dir="ltr" className="num">{formatBps(c.defaultCommissionBps)}</bdi>
-          {c.pendingCount > 0 && <>، <span className="text-accent-ink">{c.pendingCount} بانتظار الموافقة</span></>}
+          {c.phone && <><bdi dir="ltr" className="num">{c.phone}</bdi> · </>}
+          العمولة <bdi dir="ltr" className="num">{formatBps(c.defaultCommissionBps)}</bdi>
         </>}
         actions={<>
-          <Button variant="quiet" className="text-neg data-[hovered]:text-neg" onPress={() => setDialog('delete')}><Trash2 />حذف العميل</Button>
-          <Button variant="quiet" onPress={() => setDialog('edit')}><Pencil />تعديل</Button>
-          <Button variant="secondary" onPress={() => setDialog('adjustment')}><Scale />قيد تسوية</Button>
-          <Button variant="secondary" onPress={() => setDialog('payout')}><HandCoins />تسجيل دفعة</Button>
-          <Button variant="primary" isDisabled={!currencies.length} onPress={() => setPrepare({ currency: activeCurrency })}><Send />تجهيز دفعة</Button>
+          <CustomerExcelChip customer={c} />
+          <Button variant="primary" size="sm" isDisabled={!currencies.length} onPress={() => setPrepare({ currency: activeCurrency })}><Send />تجهيز دفعة</Button>
+          <MenuTrigger>
+            <Button variant="secondary" size="sm" aria-label="المزيد"><MoreHorizontal />المزيد</Button>
+            <Popover placement="bottom end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
+              <Menu className="outline-none" onAction={(k) => setDialog(k as 'payout' | 'adjustment' | 'edit' | 'delete')}>
+                <MenuItem id="payout" className={moreItem}><HandCoins />تسجيل دفعة</MenuItem>
+                <MenuItem id="adjustment" className={moreItem}><Scale />قيد تسوية</MenuItem>
+                <MenuItem id="edit" className={moreItem}><Pencil />تعديل العميل</MenuItem>
+                <MenuItem id="delete" className={cx(moreItem, 'text-neg')}><Trash2 />حذف العميل</MenuItem>
+              </Menu>
+            </Popover>
+          </MenuTrigger>
         </>}
       />
-      <CustomerExcelCard customer={c} />
 
       {tab !== null && (
-        <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(String(k))}>
-          <TabList aria-label="كشف الحساب" className="mb-4 flex gap-1 border-b border-line">
-            {currencies.map((cur) => <Tab key={cur} id={cur} className={tabCls}>كشف {cur}</Tab>)}
-            <Tab id="pending" className={tabCls}>
-              <span className="flex items-center gap-2">بانتظار الموافقة{c.pendingCount > 0 && <Badge tone="accent"><span className="num">{c.pendingCount}</span></Badge>}</span>
-            </Tab>
-            <Tab id="payouts" className={tabCls}>الدفعات</Tab>
-          </TabList>
-          {currencies.map((cur) => (
-            <TabPanel key={cur} id={cur} className="outline-none">
-              <StatementTab customer={c} currency={cur} onPrepare={(initial) => setPrepare({ currency: cur, initial })} />
-            </TabPanel>
-          ))}
-          <TabPanel id="pending" className="outline-none"><TransactionsView scope={{ kind: 'customer', customerId: c.id }} /></TabPanel>
-          <TabPanel id="payouts" className="outline-none"><PayoutsRegister customerId={c.id} currencies={currencies} /></TabPanel>
+        <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(String(k))} className="flex min-h-0 flex-1 flex-col">
+          <div className="mb-2 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-line">
+            <TabList aria-label="كشف الحساب" className="flex gap-1">
+              {currencies.map((cur) => <Tab key={cur} id={cur} className={tabCls}>كشف {cur}</Tab>)}
+              <Tab id="pending" className={tabCls}>
+                <span className="flex items-center gap-2">بانتظار الموافقة{c.pendingCount > 0 && <Badge tone="accent"><span className="num">{c.pendingCount}</span></Badge>}</span>
+              </Tab>
+              <Tab id="payouts" className={tabCls}>الدفعات</Tab>
+            </TabList>
+            <div ref={setToolbar} className="flex min-w-0 flex-1 items-center gap-2 py-1" />
+          </div>
+          <ToolbarSlotContext.Provider value={toolbar}>
+            {currencies.map((cur) => (
+              <TabPanel key={cur} id={cur} className="flex min-h-0 flex-1 flex-col outline-none">
+                <StatementTab customer={c} currency={cur} onPrepare={(initial) => setPrepare({ currency: cur, initial })} />
+              </TabPanel>
+            ))}
+            <TabPanel id="pending" className="flex min-h-0 flex-1 flex-col outline-none"><TransactionsView scope={{ kind: 'customer', customerId: c.id }} /></TabPanel>
+            <TabPanel id="payouts" className="flex min-h-0 flex-1 flex-col outline-none"><PayoutsRegister customerId={c.id} currencies={currencies} /></TabPanel>
+          </ToolbarSlotContext.Provider>
         </Tabs>
       )}
 

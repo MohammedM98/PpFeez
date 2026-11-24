@@ -4,7 +4,7 @@ import type {
   AppError, BalanceCard, BulkResult, CommissionInput, Customer, CustomerInput, DashboardSummary, ErrorCode,
   FeeInput, LedgerEntry, LedgerView, ManualTxnInput, Money, Page, Period, PullRun, RawEmailSummary,
   RefundAlert, Transaction, TxnAction, TxnCounts, TxnFilter, TxnListResult, TxnPreview, TxnSort, AdjustmentInput, PayoutInput,
-  MailboxInput, ParseStatus, PullRange, TxnLocation, TxnSearchHit, CustomerExcel, CustomerExcelItemRef, CustomerExcelPreview,
+  MailboxInput, ParseStatus, PullRange, TxnLocation, TxnSearchHit, CustomerExcel, CustomerExcelItemRef, CustomerExcelPreview, ExcelStatus,
   Payout, PayoutPreparation, PayoutSelection, CustomerSummary, StatementFilter, StatementRow,
 } from '@/lib/contract';
 import { amountTextToMinor2, decimalsOf, formatMinor } from '@/lib/money';
@@ -79,12 +79,19 @@ function view(t: TxnRow): Transaction {
     allowedActions: allowedActions(t),
     payout: payoutOf(t.id),
     inCustomerExcel: !!t.customerId && inExcel(t.customerId, 'txn', t.id),
+    excelStatus: excelStatusOf(t.customerId, 'txn', t.id),
     changedAfterExcel: t.status !== 'approved' && Object.values(db.customerExcel).some((x) => x.items.some((i) => i.kind === 'txn' && i.id === t.id)),
   };
 }
 
+/** In the file already (a pending item still has to be written, so it is not a duplicate). */
 const inExcel = (customerId: number, kind: 'txn' | 'ledger' | 'payout', id: number) =>
-  !!db.customerExcel[customerId]?.items.some((i) => i.kind === kind && i.id === id);
+  !!db.customerExcel[customerId]?.items.some((i) => i.kind === kind && i.id === id && i.status === 'exported');
+/** SPEC 6.8.3 per-row status: exported / pending (could not be written yet) / not exported. */
+function excelStatusOf(customerId: number | null, kind: 'txn' | 'ledger' | 'payout', id: number): ExcelStatus {
+  const it = customerId === null ? undefined : db.customerExcel[customerId]?.items.find((i) => i.kind === kind && i.id === id);
+  return it ? it.status : 'not_exported';
+}
 
 function getTxn(id: number) {
   return db.txns.find((t) => t.id === id) ?? fail('not_found', 'المعاملة غير موجودة');
@@ -251,6 +258,7 @@ function approveTxn(id: number) {
   t.customerSeq = db.txnSeq[k] = (db.txnSeq[k] ?? 0) + 1;
   addLedger({ customerId: t.customerId!, currency: t.currency, type: 'credit', amountMinor: t.customerAmountMinor!, transactionId: t.id, reference: t.paypalTxnId, description: creditDescription(t), entryDate: nowIso().slice(0, 10) });
   log(t, 'approved', 'اعتُمدت وأُضيف قيد للعميل');
+  syncEvent(t.customerId, { kind: 'txn', id: t.id });
   return view(t);
 }
 
@@ -278,7 +286,7 @@ function deletability(e: LedgerRow): Pick<LedgerEntry, 'deletable' | 'notDeletab
   }
   return { deletable: true, notDeletableReasonAr: null };
 }
-const asEntry = (e: LedgerRow, running = e.runningBalanceMinor): LedgerEntry => ({ ...e, runningBalanceMinor: running, ...deletability(e), inCustomerExcel: inExcel(e.customerId, 'ledger', e.id) });
+const asEntry = (e: LedgerRow, running = e.runningBalanceMinor): LedgerEntry => ({ ...e, runningBalanceMinor: running, ...deletability(e), inCustomerExcel: inExcel(e.customerId, 'ledger', e.id), excelStatus: excelStatusOf(e.customerId, 'ledger', e.id) });
 
 function addLedger(e: Partial<LedgerRow> & Pick<LedgerRow, 'customerId' | 'currency' | 'type' | 'amountMinor' | 'description' | 'entryDate'>): LedgerEntry {
   const entry: LedgerRow = {
@@ -338,6 +346,11 @@ function reverseEntry(entryId: number, reason: string): LedgerEntry {
   if (!reason?.trim()) fail('validation', 'السبب إلزامي', 'reason');
   const r = addLedger({ customerId: e.customerId, currency: e.currency, type: 'reversal', amountMinor: -e.amountMinor, reversesEntryId: e.id, description: `عكس: ${e.description} — ${reason}`, entryDate: nowIso().slice(0, 10) });
   e.reversedByEntryId = r.id;
+  // a reversal of something already in the file is written there too (SPEC 6.8.3)
+  const payout = db.payouts.find((x) => x.ledgerEntryId === e.id);
+  const wasExported = e.type === 'credit' && e.transactionId !== null ? inExcel(e.customerId, 'txn', e.transactionId)
+    : payout ? inExcel(e.customerId, 'payout', payout.id) : inExcel(e.customerId, 'ledger', e.id);
+  if (wasExported) syncEvent(e.customerId, { kind: 'ledger', id: r.id });
   return r;
 }
 
@@ -366,7 +379,8 @@ function payoutView(p: PayoutRow): Payout {
   return {
     id: p.id, customerId: p.customerId, currency: p.currency, seq: p.seq, status: p.status, amountMinor: p.amountMinor, dueMinor: p.dueMinor,
     date: p.date, rangeLabel: p.rangeLabel, details: { ...p.details }, txnCount: p.txnIds.length, cumulativePaidMinor: cumulative,
-    ledgerEntryId: p.ledgerEntryId, itemIds: { txns: [...p.txnIds], ledger: [...p.ledgerIds] }, inCustomerExcel: inExcel(p.customerId, 'payout', p.id), createdAt: p.createdAt,
+    ledgerEntryId: p.ledgerEntryId, itemIds: { txns: [...p.txnIds], ledger: [...p.ledgerIds] }, inCustomerExcel: inExcel(p.customerId, 'payout', p.id),
+    excelStatus: excelStatusOf(p.customerId, 'payout', p.id), createdAt: p.createdAt,
   };
 }
 
@@ -413,6 +427,7 @@ function payoutLedger(p: PayoutRow): LedgerEntry {
     reference: p.details.reference ?? null, description: `دفعة ${p.seq} ${p.rangeLabel}`, entryDate: p.date,
   });
   p.ledgerEntryId = e.id;
+  syncEvent(p.customerId, { kind: 'payout', id: p.id });
   return e;
 }
 
@@ -489,6 +504,7 @@ function customerStatement(customerId: number, currency: string, filter: Stateme
   const show = filter.show ?? 'all';
   const shown = inPeriod.filter((r) =>
     show === 'all' ? true
+      : show === 'not_exported' ? (r.kind === 'txn' ? r.txn.excelStatus : r.kind === 'payout' ? (r.payout.status === 'sent' ? r.payout.excelStatus : 'exported') : r.entry.type === 'credit' || db.payouts.some((p) => p.ledgerEntryId === r.entry.id) ? 'exported' : r.entry.excelStatus) !== 'exported'
       : show === 'payouts' ? r.kind === 'payout' || (r.kind === 'entry' && r.entry.type === 'payout')
         : r.kind === 'txn' && (show === 'paid' ? !!r.txn.payout : !r.txn.payout));
   return {
@@ -501,7 +517,48 @@ function customerStatement(customerId: number, currency: string, filter: Stateme
 // ---------------------------------------------------------------- customer Excel statement (SPEC 6.8.2)
 function excelView(customerId: number): CustomerExcel | null {
   const x = db.customerExcel[customerId];
-  return x ? { path: x.path, updatedAt: x.updatedAt, exists: true, addToExcelByDefault: x.addToExcelByDefault } : null;
+  if (!x) return null;
+  const exported = x.items.filter((i) => i.status === 'exported').length;
+  const pending = x.items.filter((i) => i.status === 'pending').length;
+  const notExported = excelAllItems(customerId).filter((r) => !x.items.some((i) => i.kind === r.kind && i.id === r.id)).length;
+  return {
+    path: x.path, updatedAt: x.updatedAt, exists: true, addToExcelByDefault: x.addToExcelByDefault,
+    autoSync: x.autoSync, exportedCount: exported, pendingCount: pending, notExportedCount: notExported, lastError: excelLastError[customerId] ?? null,
+    currentFileId: 1, filesCount: 1, // several files per customer (SPEC 6.8.4) are not mocked yet
+  };
+}
+
+// ---- auto-sync (SPEC 6.8.3): written in the background after each money event
+/** `?customerExcelLocked=1` (or setExcelLocked from a test): the file is open in Excel */
+let excelLocked = new URLSearchParams(location.search).get('customerExcelLocked') === '1';
+export const setExcelLocked = (v: boolean) => { excelLocked = v; };
+const excelLastError: Record<number, AppError | null> = {};
+const LOCKED: AppError = { code: 'file_locked', messageAr: 'الملف مفتوح في Excel. أغلقه وسيُرسل ما بانتظار التصدير.' };
+
+/** Writes what is pending for this customer; returns what happened (used by events and "send now"). */
+function flushPending(customerId: number) {
+  const x = db.customerExcel[customerId];
+  if (!x) return { added: 0, pending: 0, error: null as AppError | null };
+  const pending = x.items.filter((i) => i.status === 'pending');
+  if (excelLocked) { excelLastError[customerId] = LOCKED; return { added: 0, pending: pending.length, error: LOCKED }; }
+  for (const i of pending) { i.status = 'exported'; i.exportedAt = nowIso(); }
+  x.updatedAt = nowIso();
+  excelLastError[customerId] = null;
+  return { added: pending.length, pending: 0, error: null };
+}
+
+/** A money event happened: queue its row and write in the background (the money action is already saved). */
+function syncEvent(customerId: number | null, ref: CustomerExcelItemRef) {
+  if (customerId === null) return;
+  const x = db.customerExcel[customerId];
+  if (!x || !x.autoSync) return;
+  const l = excelLine(customerId, ref);
+  if ('reasonAr' in l || x.items.some((i) => i.kind === ref.kind && i.id === ref.id)) return;
+  x.items.push({ kind: ref.kind, id: ref.id, currency: l.currency, date: l.date, status: 'pending', exportedAt: null });
+  setTimeout(() => {
+    const r = flushPending(customerId);
+    void emit('customer-excel://synced', { customerId, ...r });
+  }, 300);
 }
 
 type ExcelLine = CustomerExcelPreview['toAdd'][number];
@@ -518,7 +575,7 @@ function excelLine(customerId: number, ref: CustomerExcelItemRef): ExcelLine | C
     if (!t) return { ...r, reasonAr: 'المعاملة غير موجودة' };
     if (t.customerId !== customerId) return { ...r, reasonAr: 'معاملة عميل آخر' };
     if (t.status !== 'approved') return { ...r, reasonAr: 'غير معتمدة؛ يُضاف للكشف ما اعتُمد فقط' };
-    return { ...r, date: t.occurredAt.slice(0, 10), labelAr: `حوالة PayPal من ${t.payerName || t.payerEmail}`, currency: t.currency, amountMinor: t.customerAmountMinor ?? 0 };
+    return { ...r, date: t.occurredAt.slice(0, 10), labelAr: `حوالة${t.customerSeq !== null ? ` #${t.customerSeq}` : ''} من ${t.payerName || t.payerEmail}`, currency: t.currency, amountMinor: t.customerAmountMinor ?? 0 };
   }
   const e = db.ledger.find((x) => x.id === ref.id);
   if (!e) return { ...r, reasonAr: 'القيد غير موجود' };
@@ -540,28 +597,40 @@ function excelPreview(customerId: number, items: CustomerExcelItemRef[]): Custom
       if (last && line.date < last) out.olderThanLastRow++;
     }
   }
-  out.toAdd.sort((a, b) => (a.date < b.date ? -1 : 1));
+  // statement order, whatever the selection order (SPEC 6.8.3): by date, the day's transfers by their #
+  out.toAdd.sort((a, b) => (a.date !== b.date ? (a.date < b.date ? -1 : 1) : statementRank(a) - statementRank(b)));
   return out;
+}
+
+function statementRank(l: { kind: string; id: number }) {
+  if (l.kind === 'txn') return db.txns.find((t) => t.id === l.id)?.customerSeq ?? 0;
+  return 1e6 + l.id;
 }
 
 function excelAdd(customerId: number, items: CustomerExcelItemRef[]) {
   const x = db.customerExcel[customerId];
   if (!x) fail('no_export_path', 'لا ملف Excel مرتبط بهذا العميل');
-  if (new URLSearchParams(location.search).get('customerExcelLocked') === '1') fail('file_locked', 'أغلق الملف في Excel ثم أعد المحاولة');
+  if (excelLocked) fail('file_locked', 'أغلق الملف في Excel ثم أعد المحاولة');
   const p = excelPreview(customerId, items);
-  for (const ref of items) {
-    const l = excelLine(customerId, ref);
-    if (!('reasonAr' in l) && !inExcel(customerId, ref.kind, ref.id)) x.items.push({ kind: ref.kind, id: ref.id, currency: l.currency, date: l.date });
+  if (items.length && !p.toAdd.length && !p.duplicates.length) fail('validation', p.notAllowed[0]?.reasonAr ?? 'لا شيء يمكن إضافته', 'items');
+  for (const l of p.toAdd) {
+    const ref = { kind: l.kind, id: l.id };
+    const it = x.items.find((i) => i.kind === ref.kind && i.id === ref.id);
+    if (it) { it.status = 'exported'; it.exportedAt = nowIso(); }
+    else x.items.push({ kind: ref.kind, id: ref.id, currency: l.currency, date: l.date, status: 'exported', exportedAt: nowIso() });
   }
+  excelLastError[customerId] = null;
   x.updatedAt = nowIso();
   return { path: x.path, added: p.toAdd.length, skippedDuplicates: p.duplicates.length, sheets: [...new Set(x.items.map((i) => `كشف ${i.currency}`))] };
 }
 
 /** Everything that can go into a statement today: approved transfers, and ledger lines that are not approval credits. */
 function excelAllItems(customerId: number): CustomerExcelItemRef[] {
+  const payoutEntries = new Set(db.payouts.map((p) => p.ledgerEntryId).filter((x) => x !== null));
   return [
     ...db.txns.filter((t) => t.customerId === customerId && t.status === 'approved').map((t) => ({ kind: 'txn' as const, id: t.id })),
-    ...db.ledger.filter((e) => e.customerId === customerId && e.type !== 'credit').map((e) => ({ kind: 'ledger' as const, id: e.id })),
+    ...db.payouts.filter((p) => p.customerId === customerId && p.status === 'sent').map((p) => ({ kind: 'payout' as const, id: p.id })),
+    ...db.ledger.filter((e) => e.customerId === customerId && e.type !== 'credit' && !payoutEntries.has(e.id)).map((e) => ({ kind: 'ledger' as const, id: e.id })),
   ];
 }
 
@@ -839,8 +908,29 @@ export function handle(cmd: string, a: Args = {}): unknown {
       return { ok, failed: [] };
     }
     case 'customer_excel_get': return excelView(a.customerId);
+    case 'customer_excel_set_auto': {
+      const x = db.customerExcel[a.customerId] ?? fail('no_export_path', 'لا ملف Excel مرتبط بهذا العميل');
+      x.autoSync = !!a.autoSync;
+      return excelView(a.customerId);
+    }
+    case 'customer_excel_send_unexported': {
+      const x = db.customerExcel[a.customerId] ?? fail('no_export_path', 'لا ملف Excel مرتبط بهذا العميل');
+      if (excelLocked) { excelLastError[a.customerId] = LOCKED; fail('file_locked', LOCKED.messageAr); }
+      const missing = excelAllItems(a.customerId).filter((r) => !x.items.some((i) => i.kind === r.kind && i.id === r.id));
+      const pendingBefore = x.items.filter((i) => i.status === 'pending').length;
+      const r = excelAdd(a.customerId, missing);
+      flushPending(a.customerId);
+      return { path: r.path, added: r.added + pendingBefore, skippedDuplicates: r.skippedDuplicates, stillPending: 0 };
+    }
+    case 'customer_excel_unexported_summary':
+      return Object.keys(db.customerExcel).map(Number).flatMap((cid) => {
+        const v = excelView(cid);
+        const c = db.customers.find((x) => x.id === cid);
+        return v && c && v.pendingCount + v.notExportedCount > 0
+          ? [{ customerId: cid, customerName: c.name, pending: v.pendingCount, notExported: v.notExportedCount, lastError: v.lastError }] : [];
+      });
     case 'customer_excel_create': {
-      db.customerExcel[a.customerId] = { path: a.path, updatedAt: nowIso(), addToExcelByDefault: true, items: [] };
+      db.customerExcel[a.customerId] = { path: a.path, updatedAt: nowIso(), addToExcelByDefault: true, autoSync: true, linkedAt: nowIso(), items: [] };
       if (!a.includeExisting) return { path: a.path, added: 0, sheets: [] };
       const r = excelAdd(a.customerId, excelAllItems(a.customerId));
       return { path: r.path, added: r.added, sheets: r.sheets };
@@ -848,7 +938,7 @@ export function handle(cmd: string, a: Args = {}): unknown {
     case 'customer_excel_link': {
       // ?wrongStatement=1: the chosen file is not this customer's statement
       if (new URLSearchParams(location.search).get('wrongStatement') === '1') fail('excel_layout', 'هذا الملف ليس كشف حساب أنشأه البرنامج لهذا العميل.');
-      db.customerExcel[a.customerId] = { path: a.path, updatedAt: nowIso(), addToExcelByDefault: true, items: db.customerExcel[a.customerId]?.items ?? [] };
+      db.customerExcel[a.customerId] = { path: a.path, updatedAt: nowIso(), addToExcelByDefault: true, autoSync: true, linkedAt: nowIso(), items: db.customerExcel[a.customerId]?.items ?? [] };
       return excelView(a.customerId);
     }
     case 'customer_excel_unlink': delete db.customerExcel[a.customerId]; return null;
@@ -1010,13 +1100,17 @@ export function handle(cmd: string, a: Args = {}): unknown {
       const amt = parseAmount(i.amountText, i.currency);
       if (amt <= 0) fail('validation', 'المبلغ يجب أن يكون أكبر من صفر', 'amount');
       if (amt > balanceOf(a.customerId, i.currency) && !i.confirmOverdraw) fail('validation', 'الدفعة أكبر من الرصيد المتاح', 'overdraw');
-      return addLedger({ customerId: a.customerId, currency: i.currency, type: 'payout', amountMinor: -amt, payoutMethod: i.method, reference: i.reference || null, description: i.description || ['دفعة', i.platform].filter(Boolean).join(' — '), entryDate: i.entryDate });
+      const paid = addLedger({ customerId: a.customerId, currency: i.currency, type: 'payout', amountMinor: -amt, payoutMethod: i.method, reference: i.reference || null, description: i.description || ['دفعة', i.platform].filter(Boolean).join(' — '), entryDate: i.entryDate });
+      syncEvent(a.customerId, { kind: 'ledger', id: paid.id });
+      return paid;
     }
     case 'ledger_add_adjustment': {
       const i = a.input as AdjustmentInput;
       if (!i.description?.trim()) fail('validation', 'الوصف إلزامي', 'description');
       const amt = parseAmount(i.amountText, i.currency);
-      return addLedger({ customerId: a.customerId, currency: i.currency, type: 'adjustment', amountMinor: i.direction === 'credit' ? amt : -amt, description: i.description, entryDate: i.entryDate });
+      const adj = addLedger({ customerId: a.customerId, currency: i.currency, type: 'adjustment', amountMinor: i.direction === 'credit' ? amt : -amt, description: i.description, entryDate: i.entryDate });
+      syncEvent(a.customerId, { kind: 'ledger', id: adj.id });
+      return adj;
     }
     case 'ledger_reverse_entry': return reverseEntry(a.entryId, a.reason);
     case 'ledger_export_csv': return null;

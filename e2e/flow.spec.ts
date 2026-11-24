@@ -5,6 +5,14 @@ import { expect, test, type Page } from '@playwright/test';
 // 500.00 gross, 15.00 fee → 485.00 net; 20% commission = 97.00 → 388.00 to the customer;
 // after a 100.00 payout the remaining balance is 288.00 USD.
 
+/** the customer page keeps one primary action in its header; the rest are under "المزيد" (SPEC 6.5) */
+const more = async (page: Page, item: string) => {
+  await page.getByRole('button', { name: 'المزيد' }).click();
+  await page.getByRole('menuitem', { name: item }).click();
+};
+/** the Excel chip in the customer header and its menu (SPEC 6.8.3) */
+const excelChip = (page: Page) => page.getByTestId('customer-excel').getByRole('button', { name: /ملف Excel للعميل/ });
+
 const shot = (page: Page, theme: string, name: string) => page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-${name}.png` });
 
 for (const theme of ['dark', 'light'] as const) {
@@ -93,7 +101,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.getByRole('row').filter({ hasText: 'Samer Ali' })).toContainText('#1');
 
     // 6. payout from the same page
-    await page.getByRole('button', { name: 'تسجيل دفعة' }).click();
+    await more(page, 'تسجيل دفعة');
     const payout = page.getByRole('dialog');
     await payout.getByRole('textbox', { name: 'المبلغ' }).fill('100.00');
     await payout.getByRole('button', { name: 'متابعة' }).click();
@@ -318,7 +326,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.getByRole('table', { name: 'الرصيد الختامي' })).toContainText('72.01');
 
     // 4. customer: disabled until the exact name is typed; transactions go back to unassigned
-    await page.getByRole('button', { name: 'حذف العميل' }).click();
+    await more(page, 'حذف العميل');
     const cust = page.getByRole('dialog');
     await expect(cust).toContainText('ترجع «غير مخصّصة»');
     const confirm = cust.getByRole('button', { name: 'حذف العميل ودفتره' });
@@ -450,10 +458,12 @@ for (const theme of ['dark', 'light'] as const) {
 
     // linked statement: ✓ on what is already in it; duplicates are listed and skipped
     await page.goto(`/?theme=${theme}#/customers/2?tab=USD`);
-    const card = page.getByTestId('customer-excel');
-    await expect(card).toContainText('كشف حساب - علي حسن.xlsx');
+    await expect(excelChip(page)).toContainText('لم تُصدَّر');
+    await excelChip(page).click();
+    await expect(page.getByTestId('customer-excel-menu')).toContainText('كشف حساب - علي حسن.xlsx');
+    await page.keyboard.press('Escape');
     const opening = page.getByRole('row').filter({ hasText: 'رصيد افتتاحي' });
-    await expect(opening.getByLabel('في ملف العميل')).toBeVisible();
+    await expect(opening.locator('[data-excel="exported"]')).toContainText('صُدّرت');
     await opening.getByRole('checkbox').check({ force: true });
     await page.getByRole('row').filter({ hasText: 'Noah Smith' }).getByRole('checkbox').check({ force: true });
     await bar().getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
@@ -465,7 +475,7 @@ for (const theme of ['dark', 'light'] as const) {
     await add.getByRole('button', { name: 'إضافة سطر واحد' }).click();
     await expect(toast('أُضيف سطر واحد إلى ملف العميل')).toBeVisible();
     await expect(toast('أُضيف سطر واحد إلى ملف العميل').getByRole('button', { name: 'فتح الملف' })).toBeVisible();
-    await expect(page.getByRole('row').filter({ hasText: 'Noah Smith' }).getByLabel('في ملف العميل')).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'Noah Smith' }).locator('[data-excel="exported"]')).toBeVisible();
 
     // the rest of the statement: payouts and reversals are added, what is there is skipped
     await page.getByRole('checkbox', { name: 'تحديد كل الأسطر' }).check({ force: true });
@@ -490,24 +500,26 @@ for (const theme of ['dark', 'light'] as const) {
     // no statement yet: create one (with what exists), then approve with "add to the statement" on
     await page.getByRole('link', { name: 'العملاء' }).click();
     await page.getByRole('row').filter({ hasText: 'أحمد يلماز' }).getByRole('rowheader').click();
-    await page.getByRole('button', { name: 'إنشاء ملف للعميل' }).click();
+    await excelChip(page).click();
+    await page.getByRole('menuitem', { name: 'إنشاء ملف للعميل…' }).click();
     const create = page.getByRole('dialog');
     await expect(create).toContainText('(1 حوالة، 1 قيد)');
     await create.getByRole('checkbox', { name: /أضف كل الحوالات المعتمدة/ }).check({ force: true });
     await shot('35-statement-create');
     await create.getByRole('button', { name: 'اختيار مكان الحفظ وإنشاء' }).click();
     await expect(toast('أُنشئ ملف العميل')).toContainText('أُضيف سطران');
-    await expect(page.getByTestId('customer-excel')).toContainText('كشف حساب - أحمد يلماز.xlsx');
+    await expect(excelChip(page)).toContainText('محدَّث');
     await page.getByRole('tab', { name: /بانتظار الموافقة/ }).click();
     await page.getByRole('row').filter({ hasText: 'Website hosting' }).getByRole('button', { name: 'إجراءات' }).click();
     await page.getByRole('menuitem', { name: 'اعتماد' }).click();
     const approve = page.getByRole('dialog');
-    await expect(approve.getByRole('checkbox', { name: /أضف إلى ملف العميل/ })).toBeChecked();
+    // auto-sync is on for a new file (SPEC 6.8.3): no checkbox, the row is written in the background
+    await expect(approve.getByRole('checkbox', { name: /أضف إلى ملف العميل/ })).toHaveCount(0);
     await shot('36-statement-approve');
     await approve.getByRole('button', { name: 'اعتماد' }).click();
-    await expect(toast('أُضيفت إلى ملف العميل')).toBeVisible();
+    await expect(toast('أُضيف لملف أحمد يلماز')).toBeVisible();
     await page.getByRole('tab', { name: 'كشف USD' }).click();
-    await expect(page.getByRole('row').filter({ hasText: 'Website hosting' }).getByLabel('في ملف العميل')).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'Website hosting' }).locator('[data-excel="exported"]')).toBeVisible();
     expect(errors).toEqual([]);
   });
 
@@ -530,7 +542,8 @@ for (const theme of ['dark', 'light'] as const) {
     // linking a file that is not this customer's statement
     await page.goto(`/?theme=${theme}&wrongStatement=1#/customers/3`);
     await page.reload();
-    await page.getByRole('button', { name: 'ربط ملف موجود' }).click();
+    await excelChip(page).click();
+    await page.getByRole('menuitem', { name: 'ربط ملف موجود…' }).click();
     await expect(page.getByRole('dialog')).toContainText('ليس كشف حساب أنشأه البرنامج لهذا العميل');
   });
 }

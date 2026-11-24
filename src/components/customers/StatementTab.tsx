@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
-import { Check, Download, FileCheck2, FileSpreadsheet, MoreHorizontal, Printer, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Download, FileSpreadsheet, MoreHorizontal, Printer, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
-import type { Customer, CustomerExcelItemRef, LedgerEntry, Payout, PayoutSelection, Period, StatementFilter, StatementRow, Transaction, TxnAction } from '@/lib/contract';
+import type { Customer, CustomerExcelItemRef, ExcelStatus, LedgerEntry, Payout, PayoutSelection, Period, StatementFilter, StatementRow, Transaction, TxnAction } from '@/lib/contract';
 import { formatBps } from '@/lib/money';
 import { formatDateTime } from '@/lib/dates';
 import { payoutMethod, payoutStatus, transferCountLabel } from '@/lib/strings';
@@ -15,14 +15,14 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Checkbox, Select } from '@/components/ui/Field';
 import { DateRangePicker } from '@/components/ui/DateFields';
-import { Segmented } from '@/components/ui/Segmented';
 import { HeadLabel, SELECT_W, TableFrame, TotalsCell, TotalsTable, sumWidths } from '@/components/ui/Table';
 import { Trunc } from '@/components/ui/Trunc';
 import { toast } from '@/components/ui/Toast';
 import { cx } from '@/components/ui/cx';
 import { DetailPanel } from '@/components/transactions/DetailPanel';
+import { InToolbar } from '@/components/layout/ToolbarSlot';
 import { actionLabel, useTxnActions } from '@/components/transactions/TxnActions';
-import { AddToStatementDialog } from './CustomerExcel';
+import { AddRangeDialog, AddToStatementDialog, excelWhy, sendUnexported } from './CustomerExcel';
 import { DeleteEntryDialog, ReverseDialog } from './EntryDialogs';
 import { CancelPayoutDialog, MarkSentDialog, PayoutDetailsDialog, PayoutItemsDialog } from './PayoutDialogs';
 
@@ -34,36 +34,84 @@ import { CancelPayoutDialog, MarkSentDialog, PayoutDetailsDialog, PayoutItemsDia
 type Show = NonNullable<StatementFilter['show']>;
 const SHOWS: { id: Show; label: string }[] = [
   { id: 'all', label: 'الكل' }, { id: 'unpaid', label: 'غير المدفوع' }, { id: 'paid', label: 'المدفوع' }, { id: 'payouts', label: 'الدفعات فقط' },
+  { id: 'not_exported', label: 'غير المُصدَّر إلى Excel' },
 ];
+
+/** Typing in a field or working in a dialog: the page's single-key shortcuts stay quiet. */
+const typing = (e: KeyboardEvent) => {
+  const t = e.target as HTMLElement | null;
+  if (t instanceof HTMLInputElement && t.type !== 'checkbox' && t.type !== 'radio') return true;
+  return !!t?.closest('textarea, select, [contenteditable=true], [role=dialog], [role=menu], [role=listbox]');
+};
 
 const keyOf = (r: StatementRow) => (r.kind === 'txn' ? `t:${r.txn.id}` : r.kind === 'payout' ? `p:${r.payout.id}` : `e:${r.entry.id}`);
 const dateOf = (r: StatementRow) => (r.kind === 'txn' ? formatDateTime(r.txn.occurredAt).slice(0, 10) : r.kind === 'payout' ? r.payout.date : r.entry.entryDate);
 
-function Stat({ label, children, tone }: { label: string; children: ReactNode; tone?: 'accent' | 'neg' }) {
+function Fig({ label, children, tone }: { label: string; children: ReactNode; tone?: 'accent' | 'neg' }) {
   return (
-    <div className="min-w-0 px-4 py-3">
-      <div className="truncate text-[12.5px] text-fg-3">{label}</div>
-      <div className={cx('mt-0.5 truncate text-[17px] font-medium', tone === 'accent' ? 'text-accent-ink' : tone === 'neg' ? 'text-neg' : 'text-fg')}>{children}</div>
+    <div className="min-w-0 flex-auto px-2 py-1">
+      <div className="truncate text-[11.5px] leading-4 text-fg-3" title={label}>{label}</div>
+      <div className={cx('truncate text-[13px] font-medium leading-5', tone === 'accent' ? 'text-accent-ink' : tone === 'neg' ? 'text-neg' : 'text-fg')}>{children}</div>
     </div>
   );
 }
 
-/** The eight figures (SPEC 4.8), as the owner's own workbook shows them. */
+const STRIP_KEY = 'ppfeez.summaryCollapsed';
+const readCollapsed = () => { try { return localStorage.getItem(STRIP_KEY) === '1'; } catch { return false; } };
+
+/**
+ * The eight figures (SPEC 4.8), as the owner's own workbook shows them, in one thin strip above the table
+ * (SPEC 6.5). It folds to "المتبقي · غير مدفوع"; the choice is remembered.
+ */
 export function SummaryBar({ customerId, currency }: { customerId: number; currency: string }) {
   const s = useQuery({ queryKey: ['customer_summary', customerId, currency], queryFn: () => api.customerSummary(customerId, currency) }).data;
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggle = () => {
+    setCollapsed(!collapsed);
+    try { localStorage.setItem(STRIP_KEY, collapsed ? '0' : '1'); } catch { /* the choice just isn't kept */ }
+  };
   const money = (m: number | undefined) => (m === undefined ? '—' : <Amount minor={m} currency={currency} showCurrency={false} />);
+  const owes = !!s && s.remainingMinor < 0;
+  const remaining = <>{money(s?.remainingMinor)}{owes && <span className="ms-1.5 text-[12px]">عليه</span>}</>;
   return (
-    <section aria-label={`ملخص ${currency}`} className="mb-4 grid grid-cols-4 divide-x divide-x-reverse divide-line overflow-hidden rounded-card border border-line bg-surface [&>*:nth-child(n+5)]:border-t [&>*:nth-child(n+5)]:border-line">
-      <Stat label="الصافي المكتمل">{money(s?.netCompletedMinor)}</Stat>
-      <Stat label="المُرسل">{money(s?.sentMinor)}</Stat>
-      <Stat label="المتبقي" tone={s && s.remainingMinor < 0 ? 'neg' : 'accent'}>{money(s?.remainingMinor)}{s && s.remainingMinor < 0 && <span className="ms-1.5 text-[13px]">عليه</span>}</Stat>
-      <Stat label="غير مدفوع">{s ? transferCountLabel(s.notPaidCount) : '—'}</Stat>
-      <Stat label="المبلغ قبل العمولة">{money(s?.grossBeforeCommissionMinor)}</Stat>
-      <Stat label="إجمالي العمولة">{money(s?.commissionMinor)}</Stat>
-      <Stat label="عدد المعاملات"><span className="num">{s?.txnCount ?? '—'}</span></Stat>
-      <Stat label="عدد المدفوع"><span className="num">{s?.paidCount ?? '—'}</span></Stat>
+    <section aria-label={`ملخص ${currency}`} data-collapsed={collapsed || undefined} className="mb-2 flex shrink-0 overflow-hidden rounded-card border border-line bg-surface">
+      {collapsed ? (
+        <div className="flex h-8 min-w-0 flex-1 items-center gap-2 px-3 text-[13px]">
+          <span className="text-fg-3">المتبقي</span>
+          <span className={cx('font-medium', owes ? 'text-neg' : 'text-accent-ink')}>{remaining}</span>
+          <span className="text-fg-3">·</span>
+          <span className="text-fg-3">غير مدفوع</span>
+          <span className="font-medium text-fg">{s ? transferCountLabel(s.notPaidCount) : '—'}</span>
+        </div>
+      ) : (
+        <div className="flex min-w-0 flex-1 divide-x divide-x-reverse divide-line">
+          <Fig label="الصافي المكتمل">{money(s?.netCompletedMinor)}</Fig>
+          <Fig label="المُرسل">{money(s?.sentMinor)}</Fig>
+          <Fig label="المتبقي" tone={owes ? 'neg' : 'accent'}>{remaining}</Fig>
+          <Fig label="غير مدفوع">{s ? transferCountLabel(s.notPaidCount) : '—'}</Fig>
+          <Fig label="المبلغ قبل العمولة">{money(s?.grossBeforeCommissionMinor)}</Fig>
+          <Fig label="إجمالي العمولة">{money(s?.commissionMinor)}</Fig>
+          <Fig label="عدد المعاملات"><span className="num">{s?.txnCount ?? '—'}</span></Fig>
+          <Fig label="عدد المدفوع"><span className="num">{s?.paidCount ?? '—'}</span></Fig>
+        </div>
+      )}
+      <button type="button" onClick={toggle} aria-expanded={!collapsed} aria-label={collapsed ? 'إظهار الأرقام الثمانية' : 'طيّ الأرقام'} title={collapsed ? 'إظهار الأرقام الثمانية' : 'طيّ الأرقام'}
+        className="grid w-8 shrink-0 place-items-center border-s border-line text-fg-3 outline-none hover:bg-raised hover:text-fg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus">
+        {collapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
+      </button>
     </section>
   );
+}
+
+/** ✓ صُدّرت / ⏳ بانتظار التصدير / — لم تُصدَّر (SPEC 6.8.3): an icon and words, never the colour alone. */
+function ExcelCell({ status, excel }: { status: ExcelStatus; excel: Customer['excel'] }) {
+  if (!excel) return <td />;
+  const v = {
+    exported: { icon: '✓', text: 'صُدّرت', cls: 'text-pos', title: 'في ملف العميل' },
+    pending: { icon: '⏳', text: 'بانتظار', cls: 'text-warn', title: `بانتظار التصدير${excel.lastError ? `: ${excelWhy(excel.lastError)}` : ''}` },
+    not_exported: { icon: '—', text: 'لم تُصدَّر', cls: 'text-fg-3', title: 'ليست في ملف العميل. حدّدها ثم «إضافة إلى ملف العميل» أو اضغط E' },
+  }[status];
+  return <td data-excel={status} title={v.title}><span className={cx('inline-flex items-center gap-1 text-[12.5px]', v.cls)}><span aria-hidden>{v.icon}</span>{v.text}</span></td>;
 }
 
 function SentCell({ t, onPayout }: { t: Transaction; onPayout: (id: number) => void }) {
@@ -90,7 +138,10 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
     | { kind: 'reverse' | 'delete-entry'; entry: LedgerEntry }
     | { kind: 'send' | 'cancel' | 'details' | 'items'; payout: Payout }
     | { kind: 'statement'; items: CustomerExcelItemRef[] }
+    | { kind: 'range' }
     | null>(null);
+  const anchor = useRef<string | null>(null);
+  const shift = useRef(false);
   const actions = useTxnActions();
   const { run } = useAction();
   const period = preset === 'custom' ? custom : presetPeriod(preset);
@@ -137,7 +188,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
       select: SELECT_W, seq: '60px', date: '92px',
       gross: amountWidth(fit.gross, false, 156), fee: amountWidth(fit.fee, false, 100), net: amountWidth(fit.net, false, 128),
       commission: amountWidth(fit.commission, false, 76), credit: amountWidth(fit.credit, false, 64), debit: amountWidth(fit.debit, false, 64),
-      balance: amountWidth(fit.balance, false, 80), sent: '124px', method: '148px', ref: '128px', matched: '76px', notes: '140px', excel: '40px', menu: '48px',
+      balance: amountWidth(fit.balance, false, 80), sent: '124px', method: '148px', ref: '128px', matched: '76px', notes: '140px', excel: '100px', menu: '48px',
     };
     return { ...w, min: sumWidths([...Object.values(w), '150px']) };
   }, [fit]);
@@ -146,7 +197,16 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
 
   const pickedRows = rows.filter((r) => picked.has(keyOf(r)));
   const pickedTxns = pickedRows.flatMap((r) => (r.kind === 'txn' ? [r.txn] : []));
-  const toggle = (k: string, on: boolean) => setPicked((prev) => { const n = new Set(prev); if (on) n.add(k); else n.delete(k); return n; });
+  /** a click picks one row; Shift+click picks the rows between it and the last one clicked */
+  const toggle = (k: string, on: boolean) => {
+    const keys = rows.map(keyOf);
+    const from = anchor.current ? keys.indexOf(anchor.current) : -1;
+    const to = keys.indexOf(k);
+    const span = shift.current && from >= 0 && to >= 0 ? keys.slice(Math.min(from, to), Math.max(from, to) + 1) : [k];
+    shift.current = false;
+    anchor.current = k;
+    setPicked((prev) => { const n = new Set(prev); for (const x of span) { if (on) n.add(x); else n.delete(x); } return n; });
+  };
   const toPayout = (id: number) => {
     setShow('all');
     setFlash(`p:${id}`);
@@ -169,32 +229,66 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
     navigate(`/statement/${customer.id}?${p}`);
   };
 
+  // E: the picked rows (or the row in focus) to the customer's file; Shift+E: everything not exported (SPEC 6.8.3)
+  const qc = useQueryClient();
+  const keys = useRef({ pickedRows, rows });
+  keys.current = { pickedRows, rows };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'KeyE' || e.ctrlKey || e.metaKey || e.altKey || e.repeat || typing(e) || document.querySelector('[role=dialog]')) return;
+      e.preventDefault();
+      if (!customer.excel) { toast.error('لا ملف Excel لهذا العميل', 'أنشئ ملفاً أو اربطه من شارة Excel أعلى الصفحة.'); return; }
+      if (e.shiftKey) { void sendUnexported(customer.id, qc, customer.name); return; }
+      const { pickedRows: chosen, rows: all } = keys.current;
+      const focused = (document.activeElement as HTMLElement | null)?.closest('tr[id^="row-"]')?.id.slice(4);
+      const rs = chosen.length ? chosen : all.filter((r) => keyOf(r) === focused);
+      if (rs.length) setDialog({ kind: 'statement', items: excelItems(rs) });
+      else toast.error('حدّد صفاً أولاً', 'E يضيف الصفوف المحددة إلى ملف العميل، وShift+E يرسل كل غير المُصدَّر.');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [customer.excel, customer.id, customer.name, qc]);
+  const toExcel = (item: CustomerExcelItemRef) => setDialog({ kind: 'statement', items: [item] });
+
   const menuItem = 'flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised data-[disabled]:text-fg-3';
   const onTxnMenu = (t: Transaction, k: string) => {
     if (k === 'detail') openDetail(t.id);
     else if (k === 'prepare') onPrepare({ kind: 'ids', txnIds: [t.id] });
+    else if (k === 'excel') toExcel({ kind: 'txn', id: t.id });
     else if (k === 'match') void run(() => api.txnSetMatched([t.id], !t.matched), t.matched ? 'أُزيلت المطابقة' : 'وُضعت علامة مطابق');
     else actions.act(k as TxnAction, t);
   };
 
+  const shows = SHOWS.filter((o) => o.id !== 'not_exported' || customer.excel);
   return (
-    <div>
-      <SummaryBar customerId={customer.id} currency={currency} />
-
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Segmented label="عرض" value={show} onChange={setShow} options={SHOWS} className="w-[380px]" />
-        <Select label="الفترة" value={preset} onChange={(k) => setPreset(k as PeriodPreset)} className="w-[140px]"
+    <div className="flex min-h-0 flex-1 flex-col">
+      <InToolbar>
+        <Select label="عرض" value={show} onChange={(k) => setShow(k as Show)} className="w-[188px]" options={shows} />
+        <Select label="الفترة" value={preset} onChange={(k) => setPreset(k as PeriodPreset)} className="w-[132px]"
           options={(Object.keys(periodLabels) as PeriodPreset[]).map((k) => ({ id: k, label: periodLabels[k] }))} />
         {preset === 'custom' && <DateRangePicker label="الفترة المخصّصة" value={custom} onChange={setCustom} className="w-[250px]" />}
-        <div className="ms-auto flex gap-2">
-          <Button variant="secondary" size="sm" onPress={() => void exportExcel()}><FileSpreadsheet />تصدير Excel</Button>
-          <Button variant="secondary" size="sm" onPress={() => void exportCsv()}><Download />تصدير CSV</Button>
-          <Button variant="secondary" size="sm" onPress={print}><Printer />طباعة كشف</Button>
-        </div>
-      </div>
+        <MenuTrigger>
+          <Button variant="secondary" size="sm" className="ms-auto"><Download />تصدير وطباعة</Button>
+          <Popover placement="bottom end" className="min-w-56 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
+            <Menu className="outline-none" onAction={(k) => {
+              if (k === 'xlsx') void exportExcel();
+              if (k === 'csv') void exportCsv();
+              if (k === 'print') print();
+              if (k === 'range') setDialog({ kind: 'range' });
+              if (k === 'unexported') void sendUnexported(customer.id, qc, customer.name);
+            }}>
+              <MenuItem id="xlsx" className={cx(menuItem, 'gap-2')}><FileSpreadsheet className="size-4 text-fg-3" />تصدير Excel…</MenuItem>
+              <MenuItem id="csv" className={cx(menuItem, 'gap-2')}><Download className="size-4 text-fg-3" />تصدير CSV…</MenuItem>
+              <MenuItem id="print" className={cx(menuItem, 'gap-2')}><Printer className="size-4 text-fg-3" />طباعة كشف</MenuItem>
+              {customer.excel && <MenuItem id="range" className={cx(menuItem, 'gap-2')}><FileSpreadsheet className="size-4 text-fg-3" />إضافة نطاق إلى ملف العميل…</MenuItem>}
+              {customer.excel && <MenuItem id="unexported" className={cx(menuItem, 'justify-between gap-4')}>إرسال غير المُصدَّر<kbd className="num text-[12px] text-fg-3">Shift+E</kbd></MenuItem>}
+            </Menu>
+          </Popover>
+        </MenuTrigger>
+      </InToolbar>
 
-      {pickedRows.length > 0 && (
-        <div className="mb-3 flex h-11 items-center gap-1 rounded-card bg-accent-soft pe-2 ps-4 text-sm" role="toolbar" aria-label="إجراءات على المحدد">
+      {pickedRows.length > 0 ? (
+        <div className="mb-2 flex h-[46px] shrink-0 items-center gap-1 rounded-card bg-accent-soft pe-2 ps-4 text-sm" role="toolbar" aria-label="إجراءات على المحدد">
           <span className="me-3 text-fg">محدّد <span className="num">{pickedRows.length}</span></span>
           {pickedTxns.length > 0 && pickedTxns.every((t) => !t.payout) && (
             <Button size="sm" variant="quiet" onPress={() => onPrepare({ kind: 'ids', txnIds: pickedTxns.map((t) => t.id) })}>تجهيز دفعة من المحدد</Button>
@@ -203,7 +297,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
             <Button size="sm" variant="quiet" onPress={() => void run(() => api.txnSetMatched(pickedTxns.map((t) => t.id), true), 'وُضعت علامة مطابق')}>مطابق</Button>
             <Button size="sm" variant="quiet" onPress={() => void run(() => api.txnSetMatched(pickedTxns.map((t) => t.id), false), 'أُزيلت المطابقة')}>إزالة المطابقة</Button>
           </>}
-          <Button size="sm" variant="quiet" onPress={() => setDialog({ kind: 'statement', items: excelItems(pickedRows) })}><FileSpreadsheet />إضافة إلى ملف العميل</Button>
+          <Button size="sm" variant="quiet" onPress={() => setDialog({ kind: 'statement', items: excelItems(pickedRows) })}><FileSpreadsheet />إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></Button>
           {pickedTxns.length === 1 && pickedRows.length === 1 && (
             <Button size="sm" variant="quiet" onPress={() => actions.act('unapprove', pickedTxns[0])}>إلغاء الاعتماد</Button>
           )}
@@ -212,9 +306,11 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
           )}
           <Button size="icon" variant="quiet" aria-label="إلغاء التحديد" className="ms-auto" onPress={() => setPicked(new Set())}><X /></Button>
         </div>
+      ) : (
+        <SummaryBar customerId={customer.id} currency={currency} />
       )}
 
-      <TableFrame>
+      <TableFrame fill>
         <table className="w-full table-fixed border-separate border-spacing-0 text-sm" style={{ minWidth: W.min }} aria-label={`كشف ${currency}`}>
           <colgroup>{widths.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
           <thead className="sticky top-0 z-10">
@@ -239,7 +335,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
               <th className="text-start"><HeadLabel>المرجع</HeadLabel></th>
               <th className="text-start"><HeadLabel>المطابقة</HeadLabel></th>
               <th className="text-start"><HeadLabel>ملاحظات</HeadLabel></th>
-              <th className="text-start"><span title="في ملف العميل" className="inline-flex text-fg-3"><FileCheck2 className="size-4" strokeWidth={1.7} aria-hidden /><span className="sr-only">في ملف العميل</span></span></th>
+              <th className="text-start"><HeadLabel>Excel</HeadLabel></th>
               <th className="sticky z-[2]" data-sticky="end" style={{ insetInlineEnd: 0 }}><span className="sr-only">إجراءات</span></th>
             </tr>
           </thead>
@@ -257,7 +353,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                 : r.kind === 'payout' ? '[--row-tint:color-mix(in_oklab,var(--accent)_7%,transparent)]'
                   : r.kind === 'txn' && detail === r.txn.id ? '[--row-tint:var(--raised)]' : '';
               const sel = (
-                <td className="sticky z-[1] !ps-4" data-sticky="start-inner" style={{ insetInlineStart: 0 }}>
+                <td className="sticky z-[1] !ps-4" data-sticky="start-inner" style={{ insetInlineStart: 0 }} onClickCapture={(ev) => { shift.current = ev.shiftKey; }}>
                   <Checkbox aria-label="تحديد السطر" isSelected={picked.has(k)} onChange={(on) => toggle(k, on)} />
                 </td>
               );
@@ -268,7 +364,9 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
               if (r.kind === 'txn') {
                 const t = r.txn;
                 return (
-                  <tr key={k} id={`row-${k}`} data-kind="txn" className={cx('t-row hover:[--row-tint:color-mix(in_oklab,var(--raised)_55%,transparent)]', tint)}>
+                  <tr key={k} id={`row-${k}`} data-kind="txn" data-opens-detail=""
+                    onClick={(ev) => { if (!(ev.target as Element).closest('button, input, a, label, [role=checkbox]')) openDetail(t.id); }}
+                    className={cx('t-row hover:[--row-tint:color-mix(in_oklab,var(--raised)_55%,transparent)]', tint)}>
                     {sel}
                     {seqCell(t.customerSeq !== null ? `#${t.customerSeq}` : '—')}
                     {dateCell}
@@ -296,7 +394,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                     <td className="text-[13px] text-fg-3"><div dir="ltr" className="num truncate text-right" title={t.paypalTxnId}>{t.paypalTxnId}</div></td>
                     <td>{t.matched ? <span className="inline-flex items-center gap-1 text-[13px] text-pos"><Check className="size-3.5" strokeWidth={2.2} />مطابق</span> : <span className="text-fg-3">—</span>}</td>
                     <td><Trunc className="text-[13px] text-fg-2">{t.note ?? ''}</Trunc></td>
-                    <td>{t.inCustomerExcel && <span title="في ملف العميل" aria-label="في ملف العميل" className="inline-flex text-pos"><Check className="size-4" strokeWidth={2} /></span>}</td>
+                    <ExcelCell status={t.excelStatus} excel={customer.excel} />
                     <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                       <MenuTrigger>
                         <Button variant="quiet" size="icon" aria-label="إجراءات الحوالة"><MoreHorizontal /></Button>
@@ -304,6 +402,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                           <Menu className="outline-none" onAction={(key) => onTxnMenu(t, String(key))}>
                             <MenuItem id="detail" className={menuItem}>عرض التفاصيل</MenuItem>
                             {!t.payout && <MenuItem id="prepare" className={menuItem}>تجهيز دفعة لهذه الحوالة</MenuItem>}
+                            {customer.excel && t.excelStatus !== 'exported' && <MenuItem id="excel" className={cx(menuItem, 'justify-between gap-4')}>إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></MenuItem>}
                             <MenuItem id="match" className={menuItem}>{t.matched ? 'إزالة المطابقة' : 'مطابق'}</MenuItem>
                             {t.allowedActions.filter((a) => a !== 'set_matched').map((a) => (
                               <MenuItem key={a} id={a} className={cx(menuItem, (a === 'unapprove' || a === 'delete') && 'text-neg')}>{actionLabel[a]}</MenuItem>
@@ -338,13 +437,14 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                     <td className="text-[13px] text-fg-3">{p.details.reference && <div dir="ltr" className="num truncate text-right" title={p.details.reference}>{p.details.reference}</div>}</td>
                     <td className="text-fg-3">—</td>
                     <td><Trunc className="text-[13px] text-fg-2">{p.details.note ?? ''}</Trunc></td>
-                    <td>{p.inCustomerExcel && <span title="في ملف العميل" aria-label="في ملف العميل" className="inline-flex text-pos"><Check className="size-4" strokeWidth={2} /></span>}</td>
+                    {p.status === 'sent' ? <ExcelCell status={p.excelStatus} excel={customer.excel} /> : <td />}
                     <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                       <MenuTrigger>
                         <Button variant="quiet" size="icon" aria-label="إجراءات الدفعة"><MoreHorizontal /></Button>
                         <Popover placement="bottom end" className="min-w-52 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                          <Menu className="outline-none" onAction={(key) => setDialog({ kind: key as 'send' | 'cancel' | 'details' | 'items', payout: p })}>
+                          <Menu className="outline-none" onAction={(key) => (key === 'excel' ? toExcel({ kind: 'payout', id: p.id }) : setDialog({ kind: key as 'send' | 'cancel' | 'details' | 'items', payout: p }))}>
                             <MenuItem id="items" className={menuItem}>الحوالات المشمولة</MenuItem>
+                            {customer.excel && p.status === 'sent' && p.excelStatus !== 'exported' && <MenuItem id="excel" className={cx(menuItem, 'justify-between gap-4')}>إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></MenuItem>}
                             {p.status === 'draft' && <MenuItem id="send" className={menuItem}>تأكيد الإرسال</MenuItem>}
                             {!cancelled && <MenuItem id="details" className={menuItem}>تعديل التفاصيل</MenuItem>}
                             {!cancelled && <MenuItem id="cancel" className={cx(menuItem, 'text-neg')}>إلغاء الدفعة</MenuItem>}
@@ -378,12 +478,13 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                   <td className="text-[13px] text-fg-3">{e.reference && <div dir="ltr" className="truncate text-right" title={e.reference}>{e.reference}</div>}</td>
                   <td className="text-fg-3">—</td>
                   <td />
-                  <td>{e.inCustomerExcel && <span title="في ملف العميل" aria-label="في ملف العميل" className="inline-flex text-pos"><Check className="size-4" strokeWidth={2} /></span>}</td>
+                  <ExcelCell status={e.excelStatus} excel={customer.excel} />
                   <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                     <MenuTrigger>
                       <Button variant="quiet" size="icon" aria-label="إجراءات القيد"><MoreHorizontal /></Button>
                       <Popover placement="bottom end" className="w-60 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                        <Menu className="outline-none" disabledKeys={['no-delete']} onAction={(key) => setDialog({ kind: key === 'delete' ? 'delete-entry' : 'reverse', entry: e })}>
+                        <Menu className="outline-none" disabledKeys={['no-delete']} onAction={(key) => (key === 'excel' ? toExcel({ kind: 'ledger', id: e.id }) : setDialog({ kind: key === 'delete' ? 'delete-entry' : 'reverse', entry: e }))}>
+                          {customer.excel && e.excelStatus !== 'exported' && <MenuItem id="excel" className={cx(menuItem, 'justify-between gap-4')}>إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></MenuItem>}
                           {!reversed && e.reversesEntryId === null && <MenuItem id="reverse" className={menuItem}>عكس القيد</MenuItem>}
                           {e.deletable
                             ? <MenuItem id="delete" className={cx(menuItem, 'text-neg')}>حذف القيد</MenuItem>
@@ -422,6 +523,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
       {dialog?.kind === 'cancel' && <CancelPayoutDialog payout={dialog.payout} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'details' && <PayoutDetailsDialog payout={dialog.payout} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'items' && <PayoutItemsDialog payout={dialog.payout} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'range' && <AddRangeDialog customer={customer} currency={currency} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'statement' && <AddToStatementDialog customer={customer} items={dialog.items} onClose={() => setDialog(null)} onDone={() => setPicked(new Set())} />}
     </div>
   );

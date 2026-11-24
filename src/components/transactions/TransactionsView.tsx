@@ -181,10 +181,12 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
 
   const ids = selectedRows.map((t) => t.id);
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* tabs and filters on one line (SPEC 6.5): the table starts high on the screen */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line pb-2">
       {/* a single list (the customer's "awaiting approval") needs no tabs of its own */}
-      <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as TxnStatus)} className={cx('mb-4', tabs.length === 1 && 'hidden')}>
-        <TabList aria-label={inbox ? 'الوارد' : 'معاملات العميل'} className="flex gap-1 border-b border-line">
+      <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as TxnStatus)} className={cx('-mb-2.5', tabs.length === 1 && 'hidden')}>
+        <TabList aria-label={inbox ? 'الوارد' : 'معاملات العميل'} className="flex gap-1">
           {tabs.map((k) => (
             <Tab key={k} id={k} className={({ isSelected }) => cx(
               'relative -mb-px flex h-10 cursor-default items-center gap-2 px-3 text-sm outline-none transition-colors duration-150',
@@ -197,7 +199,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
         </TabList>
       </Tabs>
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+
         <Select label={s.allCurrencies} value={currency} onChange={(k) => setCurrency(String(k))} className="w-[130px]"
           options={[{ id: 'all', label: s.allCurrencies }, ...currencies.map((c) => ({ id: c, label: c }))]} />
         {inbox && (mailboxes.data?.length ?? 0) > 1 && (
@@ -238,7 +240,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
         </div>
       )}
 
-      <TableFrame>
+      <TableFrame fill>
         <Table aria-label={inbox ? 'الوارد' : 'معاملات العميل'} selectionMode="multiple" selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
           sortDescriptor={sort} onSortChange={setSort} onRowAction={(k: Key) => openDetail(Number(k))} minWidth={W.min}>
           <TableHeader>
@@ -260,7 +262,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
             </div>
           )}>
             {(t) => (
-              <Row id={t.id} className={cx(flashId === t.id ? '[--row-tint:var(--accent-soft)]' : detailId === t.id && '[--row-tint:var(--raised)]')}>
+              <Row id={t.id} data-opens-detail="" className={cx(flashId === t.id ? '[--row-tint:var(--accent-soft)]' : detailId === t.id && '[--row-tint:var(--raised)]')}>
                 <Cell sticky="start" stickyOffset={SELECT_W}><DateCell iso={t.occurredAt} /></Cell>
                 <Cell><PayerCell t={t} /></Cell>
                 <Cell><Trunc className="text-fg-2" title={t.payerNote ?? ''}>{t.payerNote ?? ''}</Trunc></Cell>

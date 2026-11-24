@@ -1,9 +1,9 @@
 import { UNSTABLE_Toast as Toast, UNSTABLE_ToastContent as ToastContent, UNSTABLE_ToastQueue as ToastQueue, UNSTABLE_ToastRegion as ToastRegion, Button as RacButton, Text } from 'react-aria-components';
-import { CircleAlert, CircleCheck, X } from 'lucide-react';
+import { CircleAlert, CircleCheck, TriangleAlert, X } from 'lucide-react';
 import { cx } from './cx';
 
 export type ToastAction = { label: string; onPress: () => void };
-type ToastData = { title: string; description?: string; tone: 'ok' | 'error'; actions?: ToastAction[] };
+type ToastData = { title: string; description?: string; tone: 'ok' | 'error' | 'warn'; actions?: ToastAction[] };
 export const toastQueue = new ToastQueue<ToastData>({ maxVisibleToasts: 4 });
 
 export const toast = {
@@ -11,6 +11,8 @@ export const toast = {
   error: (title: string, description?: string) => toastQueue.add({ title, description, tone: 'error' }, { timeout: 7000 }),
   /** a success with follow-up buttons (e.g. "فتح" / "تراجع"); stays longer so there is time to press them */
   action: (title: string, actions: ToastAction[], description?: string) => toastQueue.add({ title, description, tone: 'ok', actions }, { timeout: 9000 }),
+  /** something saved but a follow-up did not happen yet (e.g. the Excel file is open); it says why and how to retry */
+  warn: (title: string, description?: string, actions?: ToastAction[]) => toastQueue.add({ title, description, tone: 'warn', actions }, { timeout: 12000 }),
 };
 
 /** Toasts sit bottom-left (SPEC §6), i.e. the side away from the sidebar. */
@@ -18,9 +20,9 @@ export function Toasts() {
   return (
     <ToastRegion queue={toastQueue} className="toasts fixed bottom-5 left-5 z-[60] flex flex-col-reverse gap-2 outline-none transition-[left] duration-200">
       {({ toast: t }) => (
-        <Toast toast={t} className="flex w-[360px] items-start gap-3 rounded-card border border-line bg-surface p-3.5 shadow-(--shadow-float) outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus">
-          <span className={cx('mt-0.5 [&_svg]:size-[18px]', t.content.tone === 'ok' ? 'text-pos' : 'text-neg')}>
-            {t.content.tone === 'ok' ? <CircleCheck /> : <CircleAlert />}
+        <Toast toast={t} data-tone={t.content.tone} className="flex w-[360px] items-start gap-3 rounded-card border border-line bg-surface p-3.5 shadow-(--shadow-float) outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus">
+          <span className={cx('mt-0.5 [&_svg]:size-[18px]', { ok: 'text-pos', error: 'text-neg', warn: 'text-warn' }[t.content.tone])}>
+            {{ ok: <CircleCheck />, error: <CircleAlert />, warn: <TriangleAlert /> }[t.content.tone]}
           </span>
           <ToastContent className="min-w-0 flex-1">
             <Text slot="title" className="block text-sm font-medium text-fg">{t.content.title}</Text>

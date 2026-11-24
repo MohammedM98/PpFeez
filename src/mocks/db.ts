@@ -6,14 +6,14 @@ import type {
   Transaction, TxnAction, TxnStatus, TxnType, CommissionMode, PayoutMethod, LedgerType, BackupFile, PayoutDetails,
 } from '@/lib/contract';
 
-export type TxnRow = Omit<Transaction, 'customer' | 'mailbox' | 'refundedBy' | 'allowedActions' | 'inCustomerExcel' | 'changedAfterExcel' | 'payout'> & {
+export type TxnRow = Omit<Transaction, 'customer' | 'mailbox' | 'refundedBy' | 'allowedActions' | 'inCustomerExcel' | 'changedAfterExcel' | 'payout' | 'excelStatus'> & {
   customerId: number | null;
   mailboxId: number | null;
   refundHandled: boolean; // refund alert confirmed or dismissed
 };
 export type CustomerRow = Omit<Customer, 'balances' | 'pendingCount' | 'excel'>;
 /** Stored entry; deletable/notDeletableReasonAr are computed when read (SPEC 4.7). */
-export type LedgerRow = Omit<LedgerEntry, 'deletable' | 'notDeletableReasonAr' | 'inCustomerExcel'>;
+export type LedgerRow = Omit<LedgerEntry, 'deletable' | 'notDeletableReasonAr' | 'inCustomerExcel' | 'excelStatus'>;
 /** SPEC 6.8.2: the customer's linked statement file and what was added to it. */
 /** SPEC 4.8: a payout covering numbered transfers. */
 export type PayoutRow = {
@@ -21,7 +21,14 @@ export type PayoutRow = {
   amountMinor: number; dueMinor: number; date: string; rangeLabel: string; details: PayoutDetails;
   txnIds: number[]; ledgerIds: number[]; ledgerEntryId: number | null; createdAt: string; differenceReason: string | null;
 };
-export type CustomerExcelRow = { path: string; updatedAt: string | null; addToExcelByDefault: boolean; items: { kind: 'txn' | 'ledger' | 'payout'; id: number; currency: string; date: string }[] };
+export type CustomerExcelRow = {
+  path: string; updatedAt: string | null; addToExcelByDefault: boolean;
+  /** SPEC 6.8.3: every money event is appended automatically (on by default) */
+  autoSync: boolean;
+  /** pending = could not be written yet (file open, missing…); exported = in the file */
+  items: { kind: 'txn' | 'ledger' | 'payout'; id: number; currency: string; date: string; status: 'pending' | 'exported'; exportedAt: string | null }[];
+  linkedAt: string;
+};
 
 export type Db = {
   status: AppStatus;
@@ -277,10 +284,18 @@ export function seed(): Db {
     txnSeq,
     customerExcel: {
       2: {
-        path: 'D:\\العملاء\\كشف حساب - علي حسن.xlsx', updatedAt: daysAgo(3, 18, 5), addToExcelByDefault: true,
+        path: 'D:\\العملاء\\كشف حساب - علي حسن.xlsx', updatedAt: daysAgo(3, 18, 5), addToExcelByDefault: true, autoSync: true, linkedAt: daysAgo(20),
         items: [
-          { kind: 'ledger', id: 1, currency: 'USD', date: dayStr(40) },
-          { kind: 'txn', id: 11, currency: 'EUR', date: daysAgo(14).slice(0, 10) },
+          { kind: 'ledger', id: 1, currency: 'USD', date: dayStr(40), status: 'exported', exportedAt: daysAgo(20) },
+          { kind: 'txn', id: 11, currency: 'EUR', date: daysAgo(14).slice(0, 10), status: 'exported', exportedAt: daysAgo(13) },
+        ],
+      },
+      // هشام الزعبي: #1-3 and payout 1 are in his file; the rest happened while it was not linked (SPEC 6.8.3)
+      8: {
+        path: 'D:\\العملاء\\كشف حساب - هشام الزعبي.xlsx', updatedAt: daysAgo(20, 12), addToExcelByDefault: true, autoSync: true, linkedAt: daysAgo(30),
+        items: [
+          ...p1.map((t) => ({ kind: 'txn' as const, id: t.id, currency: 'USD', date: t.occurredAt.slice(0, 10), status: 'exported' as const, exportedAt: daysAgo(20, 12) })),
+          { kind: 'payout', id: 1, currency: 'USD', date: dayStr(20), status: 'exported', exportedAt: daysAgo(20, 12) },
         ],
       },
     },

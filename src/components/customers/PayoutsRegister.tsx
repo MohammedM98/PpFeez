@@ -8,6 +8,7 @@ import { Segmented } from '@/components/ui/Segmented';
 import { HeadLabel, TableFrame, sumWidths } from '@/components/ui/Table';
 import { Trunc } from '@/components/ui/Trunc';
 import { cx } from '@/components/ui/cx';
+import { InToolbar } from '@/components/layout/ToolbarSlot';
 
 /** "(13-40) بدون 113" → 13 and 40 (the register's من # / إلى # columns). */
 function rangeEnds(label: string): [string, string] {
@@ -32,11 +33,11 @@ export function PayoutsRegister({ customerId, currencies }: { customerId: number
   const W = { seq: '72px', date: '100px', amount: amountWidth(fit.amount, false, 96), count: '72px', from: '64px', to: '64px', cumulative: amountWidth(fit.cumulative, false, 112), method: '96px', platform: '120px', network: '84px', ref: '140px', status: '128px' };
   const min = sumWidths([...Object.values(W), '180px']);
   return (
-    <div>
+    <div className="flex min-h-0 flex-1 flex-col">
       {currencies.length > 1 && (
-        <Segmented label="العملة" value={currency} onChange={setCurrency} options={currencies.map((c) => ({ id: c, label: c }))} className="mb-3 w-fit" />
+        <InToolbar><Segmented label="العملة" value={currency} onChange={setCurrency} options={currencies.map((c) => ({ id: c, label: c }))} className="w-fit" /></InToolbar>
       )}
-      <TableFrame>
+      <TableFrame fill>
         <table className="w-full table-fixed border-separate border-spacing-0 text-sm" style={{ minWidth: min }} aria-label={`سجل الدفعات ${currency}`}>
           <colgroup>
             <col style={{ width: W.seq }} /><col style={{ width: W.date }} /><col style={{ width: W.amount }} /><col style={{ width: W.count }} />

@@ -51,12 +51,14 @@ export function Table({ className, minWidth, style, ...props }: TableProps & { m
  * than what is left of the window below it, so the horizontal scrollbar is always in view, and
  * the header stays in place while the rows scroll.
  */
-export function TableFrame({ children, footer, className }: { children: ReactNode; footer?: ReactNode; className?: string }) {
+export function TableFrame({ children, footer, className, fill }: { children: ReactNode; footer?: ReactNode; className?: string; fill?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // without `fill`, the frame is no taller than what is left of the window below it
     const fit = () => {
+      if (fill) return;
       const page = el.closest('main');
       const top = el.getBoundingClientRect().top + (page?.scrollTop ?? 0);
       el.style.maxHeight = `${Math.max(360, window.innerHeight - top - 24)}px`;
@@ -78,12 +80,16 @@ export function TableFrame({ children, footer, className }: { children: ReactNod
     return () => { window.removeEventListener('resize', fit); el.removeEventListener('scroll', edges); ro.disconnect(); };
   });
   return (
-    <div className={cx('overflow-hidden rounded-card border border-line bg-surface', className)}>
-      <div ref={ref} className="overflow-auto overscroll-contain" data-table-scroll="">{children}</div>
+    // `fill` (SPEC 6.5 "the table is the page"): the frame takes the rest of the page's height and scrolls inside
+    <div className={cx('overflow-hidden rounded-card border border-line bg-surface', fill && 'flex min-h-0 flex-1 flex-col', className)}>
+      <div ref={ref} className={cx('overflow-auto overscroll-contain', fill && 'min-h-0 flex-1')} data-table-scroll="">{children}</div>
       {footer}
     </div>
   );
 }
+
+/** A screen whose table is the page (SPEC 6.5): the page itself does not scroll; the table fills the rest. */
+export const tablePage = 'mx-auto flex h-full w-full flex-col overflow-hidden px-6 pb-4 pt-4';
 
 export function TableHeader<T extends object>({ columns, children, className }: TableHeaderProps<T>) {
   const { selectionBehavior, selectionMode, allowsDragging } = useTableOptions();

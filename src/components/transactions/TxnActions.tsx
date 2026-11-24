@@ -199,7 +199,7 @@ function AssignDialog({ txn, ids, move, onClose, onBulk }: { txn?: Transaction; 
   };
 
   return (
-    <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="md"
+    <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="md" dirty={customerId !== null}
       title={move ? 'نقل لعميل آخر' : txn ? 'تخصيص لعميل' : `تخصيص ${ids?.length} معاملة لعميل`}
       description={txn && <>دفعة من <bdi>{txn.payerName || txn.payerEmail}</bdi> بقيمة <Amount minor={txn.grossMinor} currency={txn.currency} />{move && txn.customer && <> مخصّصة الآن لـ {txn.customer.name}</>}</>}
       footer={<>

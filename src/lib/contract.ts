@@ -144,6 +144,7 @@ export type Transaction = {
   reviewReasonAr: string | null;
   holdStatus: 'pending_echeck' | 'on_hold' | null;
   inCustomerExcel: boolean;      // SPEC §6.8.2
+  excelStatus: ExcelStatus;      // SPEC §6.8.3
   changedAfterExcel: boolean;    // أُضيفت ثم أُلغي اعتمادها
   customerSeq: number | null;    // SPEC §4.8: رقم الحوالة # لدى العميل (للمعتمدة)
   matched: boolean;              // المطابقة
@@ -239,6 +240,7 @@ export type LedgerEntry = {
   reversedByEntryId: number | null; // إن كان معكوساً => اعرضه مشطوباً
   deletable: boolean;               // SPEC §4.7
   inCustomerExcel: boolean;         // SPEC §6.8.2
+  excelStatus: ExcelStatus;         // SPEC §6.8.3
   notDeletableReasonAr: string | null;
   payoutMethod: PayoutMethod | null;
   reference: string | null;
@@ -267,7 +269,7 @@ export type Payout = {
   id: number; customerId: number; currency: Currency; seq: number; status: PayoutStatus;
   amountMinor: Minor; dueMinor: Minor; date: string; rangeLabel: string;
   details: PayoutDetails; txnCount: number; cumulativePaidMinor: Minor;   // التراكمي حتى هذه الدفعة (المرسلة فقط)
-  ledgerEntryId: number | null; itemIds: { txns: number[]; ledger: number[] }; inCustomerExcel: boolean; createdAt: IsoDate;
+  ledgerEntryId: number | null; itemIds: { txns: number[]; ledger: number[] }; inCustomerExcel: boolean; excelStatus: ExcelStatus; createdAt: IsoDate;
 };
 export type PayoutSelection = { kind: 'unpaid' } | { kind: 'range'; from: number; to: number } | { kind: 'ids'; txnIds: number[] };
 export type PayoutPreparation = {
@@ -287,7 +289,7 @@ export type StatementRow =
   | { kind: 'txn'; txn: Transaction; runningBalanceMinor: Minor }
   | { kind: 'payout'; payout: Payout; runningBalanceMinor: Minor }
   | { kind: 'entry'; entry: LedgerEntry; runningBalanceMinor: Minor };   // تسوية / عكس / دفعة غير مرتبطة
-export type StatementFilter = { show?: 'all' | 'unpaid' | 'paid' | 'payouts'; period?: Period };
+export type StatementFilter = { show?: 'all' | 'unpaid' | 'paid' | 'payouts' | 'not_exported'; period?: Period };   // not_exported = pending أو not_exported
 // customer_summary({ customerId, currency }): CustomerSummary
 // customer_statement({ customerId, currency, filter?: StatementFilter }): { openingBalanceMinor: Minor; rows: StatementRow[]; closingBalanceMinor: Minor }
 // payout_prepare({ customerId, currency, selection: PayoutSelection }): PayoutPreparation
@@ -380,7 +382,10 @@ export type ExcelExportResult = { path: string; sheets: number; rows: number; ex
 // excel_export_ledger({ customerId, currency?: Currency, period?: Period, path }): ExcelExportResult  // بلا currency => ورقة لكل عملة
 
 // ===== ملف Excel للعميل (SPEC §6.8.2) =====
-export type CustomerExcel = { path: string; updatedAt: IsoDate | null; exists: boolean; addToExcelByDefault: boolean };
+export type ExcelStatus = 'exported' | 'pending' | 'not_exported';   // SPEC §6.8.3
+export type CustomerExcel = { path: string; updatedAt: IsoDate | null; exists: boolean; addToExcelByDefault: boolean;
+  autoSync: boolean; exportedCount: number; pendingCount: number; notExportedCount: number; lastError: AppError | null;
+  currentFileId: number; filesCount: number };   // القيم كلها للملف الحالي (SPEC §6.8.4)
 export type CustomerExcelItemRef = { kind: 'txn' | 'ledger' | 'payout'; id: number };
 export type CustomerExcelPreview = {
   toAdd: { kind: 'txn' | 'ledger' | 'payout'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];
@@ -392,8 +397,21 @@ export type CustomerExcelPreview = {
 // customer_excel_create({ customerId, path, includeExisting: boolean }): { path: string; added: number; sheets: string[] }
 // customer_excel_link({ customerId, path }): CustomerExcel            throws excel_layout (ليس كشفاً لهذا العميل)
 // customer_excel_unlink({ customerId }): void
-// customer_excel_set_default({ customerId, addToExcelByDefault: boolean }): CustomerExcel   // خيار نافذتي الاعتماد والدفعة
+// customer_excel_set_default({ customerId, addToExcelByDefault: boolean }): CustomerExcel   // خيار نافذتي الاعتماد والدفعة (عندما autoSync معطّل)
+// customer_excel_set_auto({ customerId, autoSync: boolean }): CustomerExcel                  // SPEC §6.8.3
+// customer_excel_send_unexported({ customerId }): { path: string; added: number; skippedDuplicates: number; stillPending: number }   throws file_locked | excel_layout | no_export_path
+// customer_excel_unexported_summary(): { customerId: number; customerName: string; pending: number; notExported: number; lastError: AppError | null }[]   // للوحة التحكم
+// event 'customer-excel://synced' payload: { customerId: number; added: number; pending: number; error: AppError | null }   // بعد كل كتابة تلقائية
 // customer_excel_preview({ customerId, items: CustomerExcelItemRef[] }): CustomerExcelPreview
+// ===== أكثر من ملف للعميل (SPEC §6.8.4) =====
+export type CustomerExcelFile = { id: number; path: string; label: string | null; isCurrent: boolean; exists: boolean;
+  startMode: 'carry_balance' | 'all' | 'from_date' | 'from_seq'; startValue: string | null; exportedCount: number; updatedAt: IsoDate | null; createdAt: IsoDate };
+export type ExcelStart = { kind: 'carry_balance' } | { kind: 'all' } | { kind: 'from_date'; date: string } | { kind: 'from_seq'; seq: number };
+// customer_excel_files({ customerId }): CustomerExcelFile[]
+// customer_excel_new_file({ customerId, path, start: ExcelStart, makeCurrent: boolean, label?: string }): { file: CustomerExcelFile; added: number; sheets: string[] }
+// customer_excel_set_current({ customerId, fileId }): CustomerExcel
+// customer_excel_remove_file({ customerId, fileId }): void          // من القائمة فقط؛ لا يحذف الملف؛ لا يُزال الحالي
+//   customer_excel_add / customer_excel_preview / customer_excel_send_unexported تقبل fileId?: number (الافتراضي: الملف الحالي)
 // customer_excel_add({ customerId, items: CustomerExcelItemRef[] }): { path: string; added: number; skippedDuplicates: number; sheets: string[] }
 //   throws no_export_path (لا ملف مرتبط) | file_locked | excel_layout | export_failed
 // open_path({ path }): void                             // فتح الملف في Excel

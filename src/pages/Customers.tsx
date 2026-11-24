@@ -11,7 +11,7 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { SearchField, Checkbox } from '@/components/ui/Field';
 import { Segmented } from '@/components/ui/Segmented';
-import { Table, TableFrame, TableHeader, Column, TableBody, Row, Cell, sumWidths } from '@/components/ui/Table';
+import { Table, TableFrame, TableHeader, Column, TableBody, Row, Cell, sumWidths, tablePage } from '@/components/ui/Table';
 import { Amount } from '@/components/ui/Amount';
 import { Badge } from '@/components/ui/Badge';
 import { Dialog } from '@/components/ui/Dialog';
@@ -80,18 +80,18 @@ export function CustomersPage() {
   };
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[1560px] flex-col px-6 pb-8 pt-6">
-      <PageHeader title="العملاء" subtitle="أرصدة كل عميل لكل عملة، وما ينتظر موافقته"
-        actions={<Button variant="primary" onPress={() => setEditing('new')}><Plus />إضافة عميل</Button>} />
+    <div className={cx(tablePage, 'max-w-[1560px]')}>
+      <PageHeader compact title="العملاء" subtitle="أرصدة كل عميل لكل عملة، وما ينتظر موافقته"
+        actions={<Button variant="primary" size="sm" onPress={() => setEditing('new')}><Plus />إضافة عميل</Button>} />
 
-      <div className="mb-4 flex items-center gap-2">
+      <div className="mb-3 flex shrink-0 items-center gap-2">
         <SearchField label="بحث بالاسم أو الهاتف" value={search} onChange={setSearch} className="w-[300px]" />
         <Segmented label="الحالة" value={active} onChange={setActive} className="w-[240px]"
           options={[{ id: 'active', label: 'النشطون' }, { id: 'inactive', label: 'المعطّلون' }, { id: 'all', label: 'الكل' }]} />
         <Checkbox isSelected={pendingOnly} onChange={setPendingOnly} className="ms-2">لديهم بانتظار الموافقة</Checkbox>
       </div>
 
-      <TableFrame>
+      <TableFrame fill>
         <Table aria-label="العملاء" onRowAction={(k) => navigate(pendingOnly ? `/customers/${k}?tab=pending` : `/customers/${k}`)} minWidth={CW.min}>
           <TableHeader>
             <Column isRowHeader width={CW.name} sticky="start">الاسم</Column>

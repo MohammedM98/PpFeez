@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
-import { FileSpreadsheet, MoreHorizontal, TriangleAlert } from 'lucide-react';
-import { api, native, toAppError } from '@/lib/api';
-import type { Customer, CustomerExcelItemRef, CustomerExcelPreview } from '@/lib/contract';
+import { MenuTrigger, Menu, MenuItem, Popover, Button as RacButton } from 'react-aria-components';
+import { FileSpreadsheet, TriangleAlert } from 'lucide-react';
+import { api, events, native, toAppError } from '@/lib/api';
+import type { AppError, Customer, CustomerExcelItemRef, CustomerExcelPreview } from '@/lib/contract';
 import { useAction } from '@/lib/useAction';
 import { Button } from '@/components/ui/Button';
 import { Dialog } from '@/components/ui/Dialog';
@@ -11,6 +11,7 @@ import { Checkbox } from '@/components/ui/Field';
 import { Amount } from '@/components/ui/Amount';
 import { DateTime } from '@/components/ui/DateTime';
 import { Trunc } from '@/components/ui/Trunc';
+import { TextField } from '@/components/ui/TextField';
 import { toast } from '@/components/ui/Toast';
 import { cx } from '@/components/ui/cx';
 
@@ -56,7 +57,7 @@ export async function addToStatementAfter(customerId: number, item: CustomerExce
 export function StatementCheckbox({ customerId, value, onChange }: { customerId: number; value: boolean | null; onChange: (v: boolean) => void }) {
   const customer = useQuery({ queryKey: ['customer', customerId], queryFn: () => api.customerGet(customerId) });
   const excel = customer.data?.excel;
-  if (!excel) return null;
+  if (!excel || excel.autoSync) return null; // auto-sync writes it anyway (SPEC 6.8.3)
   const checked = value ?? excel.addToExcelByDefault;
   return (
     <Checkbox isSelected={checked} onChange={(v) => { onChange(v); void api.customerExcelSetDefault(customerId, v).catch(() => undefined); }}>
@@ -70,17 +71,58 @@ export function useStatementChoice(customerId: number | undefined) {
   const [value, setValue] = useState<boolean | null>(null);
   const customer = useQuery({ queryKey: ['customer', customerId], queryFn: () => api.customerGet(customerId!), enabled: customerId !== undefined });
   const excel = customer.data?.excel;
-  return { value, setValue, on: !!excel && (value ?? excel.addToExcelByDefault) };
+  return { value, setValue, on: !!excel && !excel.autoSync && (value ?? excel.addToExcelByDefault) };
 }
 
-// ---------------------------------------------------------------- header card
-export function CustomerExcelCard({ customer }: { customer: Customer }) {
+// ---------------------------------------------------------------- sending (SPEC 6.8.3)
+/** "حركة واحدة" / "حركتان" / "3 حركات" / "11 حركة" */
+export function movesLabel(n: number): string {
+  if (n === 1) return 'حركة واحدة';
+  if (n === 2) return 'حركتان';
+  return n >= 3 && n <= 10 ? `${n} حركات` : `${n} حركة`;
+}
+
+/** Why a write to the customer's file did not happen, in the owner's words. */
+export const excelWhy = (e: AppError) => (e.code === 'file_locked' ? 'الملف مفتوح في Excel' : e.messageAr);
+
+/** "إرسال غير المُصدَّر": everything this customer has that is not in the file yet, in statement order. */
+export async function sendUnexported(customerId: number, qc: QueryClient, customerName?: string): Promise<boolean> {
+  const who = customerName ? `ملف ${customerName}` : 'ملف العميل';
+  try {
+    const r = await api.customerExcelSendUnexported(customerId);
+    await qc.invalidateQueries();
+    if (r.added) toast.action(`أُضيف ${movesLabel(r.added)} إلى ${who}`, [openFileAction(r.path)], fileName(r.path));
+    else toast.ok(`${who} محدَّث، لا شيء لإرساله`);
+    return true;
+  } catch (raw) {
+    const e = toAppError(raw);
+    await qc.invalidateQueries();
+    if (e.code === 'file_locked') {
+      toast.warn(`لم يُرسل إلى ${who}: الملف مفتوح في Excel`, 'أغلقه في Excel ثم أرسل. لا شيء ضاع: الحركات بانتظار التصدير.',
+        [{ label: 'إرسال الآن', onPress: () => void sendUnexported(customerId, qc, customerName) }]);
+    } else toast.error(`لم يُرسل إلى ${who}`, e.messageAr);
+    return false;
+  }
+}
+
+const menuItem = 'flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised';
+const chipClass = 'inline-flex h-8 shrink-0 cursor-default items-center gap-1.5 rounded-full border px-3 text-[12.5px] outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus data-[hovered]:bg-raised data-[pressed]:bg-raised';
+
+// ---------------------------------------------------------------- header chip
+/**
+ * The customer's Excel file in the one-line header (SPEC 6.5 / 6.8.3): its state in a few words,
+ * "إرسال غير المُصدَّر (N)" when something is not in the file, and the file's actions in its menu.
+ */
+export function CustomerExcelChip({ customer }: { customer: Customer }) {
   const qc = useQueryClient();
   const { run } = useAction();
   const [creating, setCreating] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
+  const [askSend, setAskSend] = useState<number | null>(null);
+  const [sending, setSending] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const x = customer.excel;
+  const unsent = x ? x.pendingCount + x.notExportedCount : 0;
 
   const link = async () => {
     const path = await native.pickXlsx();
@@ -89,48 +131,88 @@ export function CustomerExcelCard({ customer }: { customer: Customer }) {
     if (!r.ok && r.error.code === 'excel_layout') setLinkError(r.error.messageAr);
     await qc.invalidateQueries();
   };
+  const send = async () => {
+    setSending(true);
+    await sendUnexported(customer.id, qc, customer.name);
+    setSending(false);
+  };
+  const setAuto = async (on: boolean) => {
+    const r = await run(() => api.customerExcelSetAuto(customer.id, on), on ? 'المزامنة التلقائية مفعّلة: كل حركة جديدة تُضاف للملف' : 'أُوقفت المزامنة التلقائية');
+    await qc.invalidateQueries();
+    if (r.ok && on && unsent > 0) setAskSend(unsent);
+  };
+
+  let state: { text: string; tone: string; title: string };
+  if (!x) state = { text: 'غير مرتبط', tone: 'text-fg-3', title: 'لا ملف Excel لهذا العميل' };
+  else if (!x.exists) state = { text: 'الملف غير موجود في مكانه', tone: 'text-warn', title: x.path };
+  else if (x.lastError && x.pendingCount) state = { text: `⏳ بانتظار التصدير ${x.pendingCount}`, tone: 'text-warn', title: `${excelWhy(x.lastError)} — ${x.path}` };
+  else if (unsent) state = { text: `لم تُصدَّر ${unsent}`, tone: 'text-warn', title: x.path };
+  else state = { text: '✓ محدَّث', tone: 'text-pos', title: x.path };
 
   return (
-    <div className="mb-6 flex items-center gap-4 rounded-card border border-line bg-surface px-4 py-3" data-testid="customer-excel">
-      <FileSpreadsheet className="size-5 shrink-0 text-fg-3" strokeWidth={1.6} />
-      <div className="min-w-0 flex-1">
-        <div className="text-sm text-fg">ملف Excel للعميل</div>
-        {x ? (
-          <div className="flex min-w-0 items-center gap-3 text-[12.5px] text-fg-3">
-            <PathText path={x.path} className={cx('min-w-0 max-w-[420px]', x.exists ? 'text-fg-2' : 'text-warn')} />
-            {!x.exists && <span className="shrink-0 text-warn">الملف غير موجود في مكانه</span>}
-            {x.updatedAt && <span className="shrink-0">آخر تحديث <DateTime iso={x.updatedAt} /></span>}
-          </div>
-        ) : (
-          <div className="text-[12.5px] text-fg-3">كشف حساب Excel تسلّمه للعميل بدل البرنامج، وتضيف إليه ما تريد بيدك</div>
-        )}
-      </div>
-      {x ? (
-        <div className="flex shrink-0 items-center gap-1">
-          <Button size="sm" variant="secondary" isDisabled={!x.exists} onPress={() => openFileAction(x.path).onPress()}>فتح الملف</Button>
-          <MenuTrigger>
-            <Button size="icon" variant="quiet" aria-label="خيارات ملف العميل" className="size-8"><MoreHorizontal /></Button>
-            <Popover placement="bottom end" className="min-w-44 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-              <Menu className="outline-none" onAction={(k) => {
-                if (k === 'folder') void run(() => api.openPath(folderOf(x.path)));
-                if (k === 'change') void link();
-                if (k === 'unlink') setUnlinking(true);
-              }}>
-                <MenuItem id="folder" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">فتح المجلد</MenuItem>
-                <MenuItem id="change" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">تغيير الملف…</MenuItem>
-                <MenuItem id="unlink" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm text-neg outline-none data-[focused]:bg-raised">إلغاء الربط</MenuItem>
-              </Menu>
-            </Popover>
-          </MenuTrigger>
-        </div>
-      ) : (
-        <div className="flex shrink-0 gap-2">
-          <Button size="sm" variant="quiet" onPress={() => void link()}>ربط ملف موجود</Button>
-          <Button size="sm" variant="secondary" onPress={() => setCreating(true)}>إنشاء ملف للعميل</Button>
-        </div>
+    <div className="flex shrink-0 items-center gap-1.5" data-testid="customer-excel">
+      <MenuTrigger>
+        <RacButton aria-label={`ملف Excel للعميل: ${state.text}`} className={cx(chipClass, x ? 'border-line' : 'border-dashed border-line-strong')} data-state={state.text}>
+          <FileSpreadsheet className="size-4 text-fg-3" strokeWidth={1.6} />
+          <span className="text-fg-2">{x ? 'Excel' : 'ملف Excel'}</span>
+          <span className="text-fg-3">·</span>
+          <span className={cx('num', state.tone)} title={state.title}>{state.text}</span>
+          {x && !x.autoSync && <span className="text-fg-3">· يدوي</span>}
+        </RacButton>
+        <Popover placement="bottom end" data-testid="customer-excel-menu" className="w-72 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
+          {x && (
+            <div className="border-b border-line px-2.5 pb-2 pt-1.5 text-[12.5px] text-fg-3">
+              <PathText path={x.path} className={x.exists ? 'text-fg-2' : 'text-warn'} />
+              <div className="num mt-0.5 flex gap-2">
+                <span>صُدّرت {x.exportedCount}</span>
+                {x.pendingCount > 0 && <span className="text-warn">بانتظار {x.pendingCount}</span>}
+                {x.notExportedCount > 0 && <span>لم تُصدَّر {x.notExportedCount}</span>}
+              </div>
+              {x.updatedAt && <div>آخر تحديث <DateTime iso={x.updatedAt} /></div>}
+              {x.lastError && <div className="text-warn">{excelWhy(x.lastError)}</div>}
+            </div>
+          )}
+          <Menu className="pt-1 outline-none" onAction={(k) => {
+            if (k === 'open' && x) openFileAction(x.path).onPress();
+            if (k === 'folder' && x) void run(() => api.openPath(folderOf(x.path)));
+            if (k === 'change' || k === 'link') void link();
+            if (k === 'create') setCreating(true);
+            if (k === 'auto' && x) void setAuto(!x.autoSync);
+            if (k === 'unlink') setUnlinking(true);
+          }}>
+            {x ? (
+              <>
+                <MenuItem id="open" isDisabled={!x.exists} className={cx(menuItem, 'data-[disabled]:text-fg-3')}>فتح الملف</MenuItem>
+                <MenuItem id="folder" className={menuItem}>فتح المجلد</MenuItem>
+                <MenuItem id="auto" className={menuItem}>{x.autoSync ? 'إيقاف المزامنة التلقائية' : 'تفعيل المزامنة التلقائية'}</MenuItem>
+                <MenuItem id="change" className={menuItem}>تغيير الملف…</MenuItem>
+                <MenuItem id="unlink" className={cx(menuItem, 'text-neg')}>إلغاء الربط</MenuItem>
+              </>
+            ) : (
+              <>
+                <MenuItem id="create" className={menuItem}>إنشاء ملف للعميل…</MenuItem>
+                <MenuItem id="link" className={menuItem}>ربط ملف موجود…</MenuItem>
+              </>
+            )}
+          </Menu>
+        </Popover>
+      </MenuTrigger>
+      {x && x.exists && unsent > 0 && (
+        <Button size="sm" variant="secondary" isPending={sending} onPress={() => void send()}>
+          إرسال غير المُصدَّر <span className="num">({unsent})</span>
+        </Button>
       )}
 
       {creating && <CreateStatementDialog customer={customer} onClose={() => setCreating(false)} />}
+      {askSend !== null && (
+        <Dialog isOpen onOpenChange={(o) => !o && setAskSend(null)} width="sm" title="إرسالها الآن؟"
+          footer={<>
+            <Button variant="secondary" onPress={() => setAskSend(null)}>لاحقاً</Button>
+            <Button variant="primary" onPress={() => { setAskSend(null); void send(); }}>إرسال الآن <span className="num">({askSend})</span></Button>
+          </>}>
+          <p className="text-sm text-fg-2">يوجد {movesLabel(askSend)} غير مُصدّرة إلى ملف العميل. المزامنة ترسل الحركات الجديدة فقط؛ القديمة تُرسل الآن أو لاحقاً بزر «إرسال غير المُصدَّر».</p>
+        </Dialog>
+      )}
       {unlinking && x && (
         <Dialog isOpen onOpenChange={(o) => !o && setUnlinking(false)} width="sm" title="إلغاء ربط ملف العميل"
           footer={<>
@@ -291,4 +373,76 @@ export function AddToStatementDialog({ customer, items, onClose, onDone }: { cus
       )}
     </Dialog>
   );
+}
+
+// ---------------------------------------------------------------- range (SPEC 6.8.3)
+/**
+ * "إضافة نطاق…": transfers #from to #to, with the payouts / returns that sit between them in the
+ * statement (unless "الحوالات فقط"), then the usual preview. The core writes them in statement order.
+ */
+export function AddRangeDialog({ customer, currency, onClose }: { customer: Customer; currency: string; onClose: () => void }) {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [txnsOnly, setTxnsOnly] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [items, setItems] = useState<CustomerExcelItemRef[] | null>(null);
+  const all = useQuery({ queryKey: ['customer_statement', customer.id, currency, { show: 'all' }], queryFn: () => api.customerStatement(customer.id, currency, { show: 'all' }) });
+
+  const next = () => {
+    const a = Number(from), b = Number(to || from);
+    if (!Number.isInteger(a) || !Number.isInteger(b) || a < 1 || b < a) { setError('اكتب رقمين صحيحين، الأول أصغر من الثاني أو يساويه'); return; }
+    const rows = all.data?.rows ?? [];
+    const seqAt = rows.map((r) => (r.kind === 'txn' ? r.txn.customerSeq : null));
+    const first = seqAt.findIndex((n) => n !== null && n >= a);
+    let last = -1;
+    seqAt.forEach((n, i) => { if (n !== null && n <= b) last = i; });
+    if (first < 0 || last < first) { setError(`لا حوالات بين #${a} و#${b} في كشف ${currency}`); return; }
+    const picked: CustomerExcelItemRef[] = rows.slice(first, last + 1).flatMap((r): CustomerExcelItemRef[] => {
+      if (r.kind === 'txn') return r.txn.customerSeq !== null && r.txn.customerSeq >= a && r.txn.customerSeq <= b ? [{ kind: 'txn', id: r.txn.id }] : [];
+      if (txnsOnly) return [];
+      if (r.kind === 'payout') return r.payout.status === 'sent' ? [{ kind: 'payout', id: r.payout.id }] : [];
+      return [{ kind: 'ledger', id: r.entry.id }];
+    });
+    setItems(picked);
+  };
+
+  if (items) return <AddToStatementDialog customer={customer} items={items} onClose={onClose} />;
+  return (
+    <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="sm" title="إضافة نطاق إلى ملف العميل"
+      description={`حوالات كشف ${currency} بأرقامها، وما بينها من دفعات ومرتجعات`}
+      footer={<><Button variant="secondary" onPress={onClose}>تراجع</Button><Button variant="primary" isDisabled={!all.data} onPress={next}>معاينة</Button></>}>
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-3">
+          <TextField label="من #" ltr value={from} onChange={(v) => { setFrom(v.replace(/\D/g, '')); setError(null); }} autoFocus isRequired />
+          <TextField label="إلى #" ltr value={to} onChange={(v) => { setTo(v.replace(/\D/g, '')); setError(null); }} placeholder={from} />
+        </div>
+        <Checkbox isSelected={txnsOnly} onChange={setTxnsOnly}>الحوالات فقط (بدون الدفعات والمرتجعات بينها)</Checkbox>
+        {error && <p role="alert" className="rounded-card bg-warn-soft px-3 py-2 text-sm text-fg">{error}</p>}
+      </div>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------- background sync (SPEC 6.8.3)
+/**
+ * One listener for the whole app: after each automatic write the core says what happened. Success is a
+ * quiet note; a failure (usually the file open in Excel) says why and offers "إرسال الآن".
+ */
+export function ExcelSyncListener() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    let gone = false;
+    void events.onCustomerExcelSynced(async (e) => {
+      await qc.invalidateQueries();
+      const c = await qc.fetchQuery({ queryKey: ['customer', e.customerId], queryFn: () => api.customerGet(e.customerId) }).catch(() => null);
+      const name = c?.name ?? 'العميل';
+      if (e.error) {
+        toast.warn(`لم يُضف لملف ${name}: ${excelWhy(e.error)}`, `${movesLabel(e.pending)} بانتظار التصدير. أغلق الملف ثم أرسل؛ لا شيء ضاع.`,
+          [{ label: 'إرسال الآن', onPress: () => void sendUnexported(e.customerId, qc, name) }]);
+      } else if (e.added) toast.ok(`أُضيف لملف ${name}`, movesLabel(e.added));
+    }).then((u) => { if (gone) u(); else off = u; });
+    return () => { gone = true; off?.(); };
+  }, [qc]);
+  return null;
 }

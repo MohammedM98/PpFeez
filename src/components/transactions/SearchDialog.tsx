@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Autocomplete, Dialog, Input, ListBox, ListBoxItem, Modal, ModalOverlay, SearchField } from 'react-aria-components';
-import { Search } from 'lucide-react';
+import { FileSpreadsheet, Search } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { Transaction, TxnLocation, TxnSearchHit } from '@/lib/contract';
+import type { AppError, Transaction, TxnLocation, TxnSearchHit } from '@/lib/contract';
 import { formatDateTime } from '@/lib/dates';
 import { Amount } from '@/components/ui/Amount';
 import { Badge } from '@/components/ui/Badge';
 import { Trunc } from '@/components/ui/Trunc';
 import { cx } from '@/components/ui/cx';
+import { excelWhy, movesLabel, sendUnexported } from '@/components/customers/CustomerExcel';
+
+type Item = { id: string; cmd: { customerId: number; customerName: string; pending: number; notExported: number; lastError: AppError | null } } | { id: string; hit: TxnSearchHit };
 
 /** Opens the search from anywhere (the inbox's search box, Ctrl+K). */
 export const openSearch = () => window.dispatchEvent(new Event('ppfeez:search'));
@@ -38,6 +41,7 @@ export function locationHref({ txn, location: l }: TxnSearchHit): string {
  */
 export function SearchDialog() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [isOpen, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [q, setQ] = useState('');
@@ -60,10 +64,26 @@ export function SearchDialog() {
     placeholderData: keepPreviousData,
   });
   const hits = q.length >= 2 ? results.data ?? [] : [];
+  // commands (SPEC 6.8.3): "إرسال غير المُصدَّر لـ …" for each customer whose file is behind
+  const unexported = useQuery({ queryKey: ['customer_excel_unexported_summary'], queryFn: api.customerExcelUnexportedSummary, enabled: isOpen });
+  const plain = (x: string) => x.replace(/[\u064B-\u0652]/g, '').toLowerCase();
+  const typed = plain(text.trim());
+  const cmds = typed ? (unexported.data ?? []).filter((c) => {
+    const label = plain(`إرسال غير المُصدَّر لـ ${c.customerName} excel اكسل إكسل تصدير`);
+    return typed.split(/\s+/).every((w) => label.includes(w));
+  }) : [];
+  const items: Item[] = [...cmds.map((c) => ({ id: `cmd-${c.customerId}`, cmd: c })), ...hits.map((h) => ({ id: `t-${h.txn.id}`, hit: h }))];
 
   const go = (hit: TxnSearchHit) => {
     setOpen(false);
     navigate(locationHref(hit));
+  };
+  const act = (key: string) => {
+    const it = items.find((x) => x.id === key);
+    if (!it) return;
+    if ('hit' in it) { go(it.hit); return; }
+    setOpen(false);
+    void sendUnexported(it.cmd.customerId, qc, it.cmd.customerName);
   };
 
   return (
@@ -78,15 +98,25 @@ export function SearchDialog() {
                 className="h-14 min-w-0 flex-1 bg-transparent text-[15px] text-fg outline-none placeholder:text-fg-3 [&::-webkit-search-cancel-button]:hidden" />
               <kbd className="num rounded border border-line px-1.5 text-[11.5px] text-fg-3">Esc</kbd>
             </SearchField>
-            <ListBox aria-label="نتائج البحث" items={hits} onAction={(k) => { const h = hits.find((x) => x.txn.id === Number(k)); if (h) go(h); }}
+            <ListBox aria-label="نتائج البحث" items={items} onAction={(k) => act(String(k))}
               className="max-h-[56vh] overflow-auto p-1.5 outline-none"
               renderEmptyState={() => (
                 <p className="px-3 py-8 text-center text-sm text-fg-3">
-                  {q.length < 2 ? 'اكتب حرفين على الأقل. يبحث في كل المعاملات: الوارد والمستبعدة وصفحات العملاء' : results.isFetching ? 'جارٍ البحث…' : 'لا معاملة بهذا البحث'}
+                  {text.trim().length < 2 ? 'اكتب حرفين على الأقل. يبحث في كل المعاملات: الوارد والمستبعدة وصفحات العملاء' : results.isFetching ? 'جارٍ البحث…' : 'لا معاملة بهذا البحث'}
                 </p>
               )}>
-              {(h) => (
-                <ListBoxItem id={h.txn.id} textValue={h.txn.payerName || h.txn.payerEmail || h.txn.paypalTxnId}
+              {(it) => 'cmd' in it ? (
+                <ListBoxItem id={it.id} textValue={`إرسال غير المُصدَّر لـ ${it.cmd.customerName}`}
+                  className="flex cursor-default items-center gap-3 rounded-ctl px-3 py-2 outline-none data-[focused]:bg-raised">
+                  <FileSpreadsheet className="size-[18px] shrink-0 text-fg-3" strokeWidth={1.6} />
+                  <div className="min-w-0 flex-1">
+                    <Trunc className="text-sm text-fg">إرسال غير المُصدَّر لـ {it.cmd.customerName}</Trunc>
+                    <div className="text-[12px] text-fg-3">{movesLabel(it.cmd.pending + it.cmd.notExported)} ليست في ملفه{it.cmd.lastError ? ` · ${excelWhy(it.cmd.lastError)}` : ''}</div>
+                  </div>
+                  <Badge tone="outline" className="shrink-0">أمر</Badge>
+                </ListBoxItem>
+              ) : ((h) => (
+                <ListBoxItem id={it.id} textValue={h.txn.payerName || h.txn.payerEmail || h.txn.paypalTxnId}
                   className="flex cursor-default items-center gap-3 rounded-ctl px-3 py-2 outline-none data-[focused]:bg-raised">
                   <div className="min-w-0 flex-1">
                     <Trunc className="text-sm text-fg">{h.txn.payerName || h.txn.payerEmail || '—'}</Trunc>
@@ -101,7 +131,7 @@ export function SearchDialog() {
                   </Badge>
                   <Amount minor={h.txn.grossMinor} currency={h.txn.currency} className="shrink-0 text-sm" />
                 </ListBoxItem>
-              )}
+              ))(it.hit)}
             </ListBox>
           </Autocomplete>
         </Dialog>

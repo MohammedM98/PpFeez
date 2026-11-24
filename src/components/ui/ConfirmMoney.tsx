@@ -5,12 +5,12 @@ import { Amount } from './Amount';
 import type { Currency, Minor } from '@/lib/contract';
 
 /** Every money action asks first and shows the amount (contract §5). */
-export function ConfirmMoney({ isOpen, onOpenChange, title, amount, amountText, currency, children, confirmLabel, tone = 'primary', onConfirm, pending, extraValid = true }: {
+export function ConfirmMoney({ isOpen, onOpenChange, title, amount, amountText, currency, children, confirmLabel, tone = 'primary', onConfirm, pending, extraValid = true, dirty }: {
   isOpen: boolean; onOpenChange: (o: boolean) => void; title: string; amount?: Minor | null; amountText?: string; currency: Currency;
-  children?: ReactNode; confirmLabel: string; tone?: 'primary' | 'danger'; onConfirm: () => void; pending?: boolean; extraValid?: boolean;
+  children?: ReactNode; confirmLabel: string; tone?: 'primary' | 'danger'; onConfirm: () => void; pending?: boolean; extraValid?: boolean; dirty?: boolean;
 }) {
   return (
-    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} title={title} width="sm"
+    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} title={title} width="sm" dirty={dirty}
       footer={<>
         <Button variant="secondary" onPress={() => onOpenChange(false)}>تراجع</Button>
         <Button variant={tone} onPress={onConfirm} isPending={pending} isDisabled={!extraValid}>{confirmLabel}</Button>

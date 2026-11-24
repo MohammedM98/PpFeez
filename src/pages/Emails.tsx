@@ -11,7 +11,7 @@ import { useAction } from '@/lib/useAction';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { SearchField } from '@/components/ui/Field';
-import { Table, TableFrame, TableHeader, Column, TableBody, Row, Cell, SELECT_W, sumWidths } from '@/components/ui/Table';
+import { Table, TableFrame, TableHeader, Column, TableBody, Row, Cell, SELECT_W, sumWidths, tablePage } from '@/components/ui/Table';
 import { DateCell } from '@/components/transactions/bits';
 import { txnHref } from '@/components/transactions/SearchDialog';
 import { Trunc } from '@/components/ui/Trunc';
@@ -107,33 +107,34 @@ export function EmailsPage() {
   };
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[1560px] flex-col px-6 pb-8 pt-6">
-      <PageHeader title="الرسائل" subtitle="رسائل PayPal المسحوبة من البريد ونتيجة قراءتها" />
+    <div className={cx(tablePage, 'max-w-[1560px]')}>
+      <PageHeader compact title="الرسائل" subtitle="رسائل PayPal المسحوبة من البريد ونتيجة قراءتها" />
 
-      <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as ParseStatus)} className="mb-4">
-        <TabList aria-label="حالة الرسالة" className="flex gap-1 border-b border-line">
-          {TABS.map((k) => (
-            <Tab key={k} id={k} className={({ isSelected }) => cx(
-              'relative -mb-px flex h-10 cursor-default items-center gap-2 px-3 text-sm outline-none transition-colors duration-150',
-              'data-[focus-visible]:outline-2 data-[focus-visible]:-outline-offset-2 data-[focus-visible]:outline-focus',
-              isSelected ? 'text-fg after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent' : 'text-fg-3 hover:text-fg-2')}>
-              {parseStatus[k]}
-              <span className={cx('num text-[12.5px]', k === 'failed' && (counts.data?.failed ?? 0) > 0 ? 'text-warn' : 'text-fg-3')}>{counts.data?.[k] ?? ''}</span>
-            </Tab>
-          ))}
-        </TabList>
-      </Tabs>
-
-      <div className="mb-4 flex items-center gap-2">
-        <SearchField label="بحث بالموضوع أو المرسل" value={search} onChange={setSearch} className="w-[320px]" />
-        {tab !== 'parsed' && (
-          <Button variant="secondary" className="ms-auto" isPending={pending} isDisabled={items.length === 0} onPress={() => reparse(ids.length ? ids : items.map((e) => e.id))}>
-            <RefreshCw />{ids.length ? `إعادة تحليل المحدّد (${ids.length})` : 'إعادة تحليل الكل'}
-          </Button>
-        )}
+      <div className="mb-3 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-line">
+        <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as ParseStatus)}>
+          <TabList aria-label="حالة الرسالة" className="flex gap-1">
+            {TABS.map((k) => (
+              <Tab key={k} id={k} className={({ isSelected }) => cx(
+                'relative -mb-px flex h-10 cursor-default items-center gap-2 px-3 text-sm outline-none transition-colors duration-150',
+                'data-[focus-visible]:outline-2 data-[focus-visible]:-outline-offset-2 data-[focus-visible]:outline-focus',
+                isSelected ? 'text-fg after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent' : 'text-fg-3 hover:text-fg-2')}>
+                {parseStatus[k]}
+                <span className={cx('num text-[12.5px]', k === 'failed' && (counts.data?.failed ?? 0) > 0 ? 'text-warn' : 'text-fg-3')}>{counts.data?.[k] ?? ''}</span>
+              </Tab>
+            ))}
+          </TabList>
+        </Tabs>
+        <div className="flex min-w-0 flex-1 items-center gap-2 py-1">
+          <SearchField label="بحث بالموضوع أو المرسل" value={search} onChange={setSearch} className="w-[280px]" />
+          {tab !== 'parsed' && (
+            <Button variant="secondary" size="sm" className="ms-auto" isPending={pending} isDisabled={items.length === 0} onPress={() => reparse(ids.length ? ids : items.map((e) => e.id))}>
+              <RefreshCw />{ids.length ? `إعادة تحليل المحدّد (${ids.length})` : 'إعادة تحليل الكل'}
+            </Button>
+          )}
+        </div>
       </div>
 
-      <TableFrame>
+      <TableFrame fill>
         <Table aria-label="الرسائل" selectionMode={selectable ? 'multiple' : 'none'} selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
           onRowAction={(k) => { const e = items.find((x) => x.id === Number(k)); if (e) setViewing(e); }} minWidth={EW.min}>
           <TableHeader>

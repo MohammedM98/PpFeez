@@ -168,3 +168,34 @@ for (const theme of ['dark', 'light'] as const) {
     });
   }
 }
+
+/*
+ * SPEC 6.5 "الجدول هو الصفحة": the page itself does not scroll, the table takes the remaining height
+ * and scrolls inside. At 1100×700 the first data row starts within 240px of the top and at least
+ * 10 rows are in view (where there are that many).
+ */
+for (const size of SIZES) {
+  test(`the table is the page at ${size.width}×${size.height}`, async ({ page }) => {
+    await page.setViewportSize(size);
+    const problems: string[] = [];
+    for (const route of ['transactions', 'customers', 'customers/8', 'emails']) {
+      await page.goto(`/?stress=1&theme=dark#/${route}`);
+      await expect(page.locator('main table tbody tr').first()).toBeVisible();
+      await page.waitForTimeout(200);
+      const m = await page.evaluate(() => {
+        const scroll = document.querySelector('main [data-table-scroll]')!.getBoundingClientRect();
+        const rows = Array.from(document.querySelectorAll('main [data-table-scroll] table:first-of-type tbody tr'));
+        const inView = rows.filter((r) => { const b = r.getBoundingClientRect(); return b.top >= scroll.top - 1 && b.bottom <= scroll.bottom + 1; }).length;
+        const main = document.querySelector('main')!;
+        return {
+          firstRowTop: rows[0].getBoundingClientRect().top, rows: rows.length, inView,
+          pageScrolls: document.scrollingElement!.scrollHeight > innerHeight, mainScrolls: main.scrollHeight > main.clientHeight + 1,
+        };
+      });
+      if (m.firstRowTop > 240) problems.push(`${route}: first row at ${m.firstRowTop}px (> 240)`);
+      if (m.inView < Math.min(10, m.rows)) problems.push(`${route}: ${m.inView} rows in view of ${m.rows} (< 10)`);
+      if (m.pageScrolls || m.mainScrolls) problems.push(`${route}: the page scrolls`);
+    }
+    expect(problems).toEqual([]);
+  });
+}
