@@ -3,13 +3,14 @@ import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { FileSpreadsheet, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useExcelUpdate } from '@/components/settings/useExcelUpdate';
+import { pullRangeLabel } from '@/lib/strings';
 import { api } from '@/lib/api';
 import type { Period, RefundAlert } from '@/lib/contract';
 import { formatMinor } from '@/lib/money';
 import { periodLabels, presetPeriod, type PeriodPreset } from '@/lib/period';
 import { useAction } from '@/lib/useAction';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { PullControl } from '@/components/transactions/PullControl';
+import { PullControl, PullProgress } from '@/components/transactions/PullControl';
 import { Amount } from '@/components/ui/Amount';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Field';
@@ -122,7 +123,7 @@ export function DashboardPage() {
       <PageHeader
         title="لوحة التحكم"
         subtitle={run ? (
-          <>آخر سحب من {run.mailboxLabel} <DateTime iso={run.finishedAt ?? run.startedAt} />، {
+          <>آخر سحب من {run.mailboxLabel} <DateTime iso={run.finishedAt ?? run.startedAt} /> ({pullRangeLabel(run.range, true)})، {
             run.status === 'failed' ? <span className="text-neg">فشل: {run.error}</span>
               : run.status === 'running' ? 'قيد التشغيل'
               : <>{run.newTransactionsCount} جديدة، {run.failedCount} فاشلة</>}</>
@@ -130,6 +131,7 @@ export function DashboardPage() {
         actions={<PullControl label="سحب الآن" />}
       />
 
+      <PullProgress />
       <div className="mb-6 grid grid-cols-4 gap-3">
         <CountCard label="غير مخصّصة" value={s?.counts.unassigned} to="/transactions?tab=unassigned" hint="خصّصها لعملائها" />
         <CountCard label="تحتاج رسوم" value={s?.counts.needsFee} to="/transactions?tab=all&needsFee=1" hint="أدخل رسوم PayPal أو الصافي" tone="warn" />

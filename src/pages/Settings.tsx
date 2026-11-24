@@ -18,6 +18,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { DateTime } from '@/components/ui/DateTime';
 import { Trunc } from '@/components/ui/Trunc';
 import { cx } from '@/components/ui/cx';
+import { pullRangeLabel } from '@/lib/strings';
 import { MailboxDialog } from '@/components/settings/MailboxForm';
 import { LockPasswordDialog } from '@/components/settings/LockPasswordDialog';
 import { useExcelUpdate } from '@/components/settings/useExcelUpdate';
@@ -132,7 +133,7 @@ function PullsSection() {
     <Section id="pulls" title="سجل السحب" description="آخر 20 عملية سحب">
       <table className="w-full text-sm">
         <thead><tr className="text-[12.5px] text-fg-3 [&>th]:pb-2 [&>th]:font-medium">
-          <th className="text-start">البدء</th><th className="text-start">البريد</th><th className="text-start">النتيجة</th>
+          <th className="text-start">البدء</th><th className="text-start">البريد</th><th className="text-start">النطاق</th><th className="text-start">النتيجة</th>
           <th className="text-end">مقروءة</th><th className="text-end">جديدة</th><th className="text-end">مكررة</th><th className="text-end">متجاهلة</th><th className="text-end">فاشلة</th>
         </tr></thead>
         <tbody className="[&>tr>td]:border-t [&>tr>td]:border-line [&>tr>td]:py-2.5">
@@ -140,6 +141,7 @@ function PullsSection() {
             <tr key={r.id}>
               <td><DateTime iso={r.startedAt} className="text-fg-2" /></td>
               <td>{r.mailboxLabel}</td>
+              <td className="text-fg-2">{pullRangeLabel(r.range)}</td>
               <td><Badge tone={tone[r.status]}>{label[r.status]}</Badge>{r.error && <span className="ms-2 text-[12.5px] text-neg">{r.error}</span>}</td>
               {[r.fetchedCount, r.newTransactionsCount, r.duplicateCount, r.ignoredCount, r.failedCount].map((n, i) => <td key={i} className="num text-end text-fg-2">{n}</td>)}
             </tr>

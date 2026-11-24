@@ -195,9 +195,9 @@ export function seed(): Db {
       { id: 2, label: 'Gmail الاحتياطي', email: 'mohammed.pp2@gmail.com', host: 'imap.gmail.com', port: 993, folder: 'INBOX', isActive: false, hasPassword: false, lastPulledAt: null, lastUid: 0, password: null },
     ],
     pullRuns: [
-      { id: 3, mailboxId: 1, mailboxLabel: 'Gmail الرئيسي', status: 'done', totalCount: 6, fetchedCount: 6, newTransactionsCount: 3, duplicateCount: 0, ignoredCount: 2, failedCount: 1, error: null, startedAt: daysAgo(0, 8, 24), finishedAt: daysAgo(0, 8, 25) },
-      { id: 2, mailboxId: 1, mailboxLabel: 'Gmail الرئيسي', status: 'failed', totalCount: 0, fetchedCount: 0, newTransactionsCount: 0, duplicateCount: 0, ignoredCount: 0, failedCount: 0, error: 'تعذّر الاتصال بخادم البريد', startedAt: daysAgo(2, 21, 3), finishedAt: daysAgo(2, 21, 3) },
-      { id: 1, mailboxId: 1, mailboxLabel: 'Gmail الرئيسي', status: 'done', totalCount: 41, fetchedCount: 41, newTransactionsCount: 14, duplicateCount: 0, ignoredCount: 25, failedCount: 2, error: null, startedAt: daysAgo(30, 10), finishedAt: daysAgo(30, 10, 2) },
+      { id: 3, mailboxId: 1, mailboxLabel: 'Gmail الرئيسي', status: 'done', totalCount: 6, fetchedCount: 6, newTransactionsCount: 3, duplicateCount: 0, ignoredCount: 2, failedCount: 1, error: null, startedAt: daysAgo(0, 8, 24), finishedAt: daysAgo(0, 8, 25), range: { kind: 'new' } },
+      { id: 2, mailboxId: 1, mailboxLabel: 'Gmail الرئيسي', status: 'failed', totalCount: 0, fetchedCount: 0, newTransactionsCount: 0, duplicateCount: 0, ignoredCount: 0, failedCount: 0, error: 'تعذّر الاتصال بخادم البريد', startedAt: daysAgo(2, 21, 3), finishedAt: daysAgo(2, 21, 3), range: { kind: 'new' } },
+      { id: 1, mailboxId: 1, mailboxLabel: 'Gmail الرئيسي', status: 'done', totalCount: 41, fetchedCount: 41, newTransactionsCount: 14, duplicateCount: 0, ignoredCount: 25, failedCount: 2, error: null, startedAt: daysAgo(30, 10), finishedAt: daysAgo(30, 10, 2), range: { kind: 'last_days', days: 90 } },
     ],
     emails,
     backups: [
@@ -216,10 +216,13 @@ export function seed(): Db {
   return db;
 }
 
+/** Same as ltr() in the backend: isolate numbers inside generated Arabic text (U+2066 … U+2069). */
+export const ltr = (s: string) => `\u2066${s}\u2069`;
+
 export function creditDescription(t: Pick<TxnRow, 'payerName' | 'grossMinor' | 'feeMinor' | 'currency' | 'commissionMode' | 'commissionBps' | 'commissionMinor'>): string {
   const f = (m: number) => fmt(m, t.currency);
   const c = t.commissionMode === 'percent' ? `${(t.commissionBps! / 100).toFixed(2)}%` : f(t.commissionMinor ?? 0);
-  return `دفعة من ${t.payerName ?? '—'} — أصلي ${f(t.grossMinor)}، رسوم ${f(t.feeMinor ?? 0)}، عمولة ${c}`;
+  return `دفعة من ${t.payerName ?? '—'} — أصلي ${ltr(f(t.grossMinor))}، رسوم ${ltr(f(t.feeMinor ?? 0))}، عمولة ${ltr(c)}`;
 }
 
 function fmt(minor: number, cur: string) {

@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { api } from '@/lib/api';
-import { txn as s } from '@/lib/strings';
+import { pullRangeLabel, txn as s } from '@/lib/strings';
 import { Button } from '@/components/ui/Button';
 import { DateTime } from '@/components/ui/DateTime';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { PullControl } from '@/components/transactions/PullControl';
+import { PullControl, PullProgress } from '@/components/transactions/PullControl';
 import { TransactionsView } from '@/components/transactions/TransactionsView';
 import { useTxnActions } from '@/components/transactions/TxnActions';
 
@@ -20,7 +20,7 @@ export function TransactionsPage() {
       <PageHeader
         title={s.title}
         subtitle={run && run.status !== 'running' && (
-          <>آخر سحب من {run.mailboxLabel} <DateTime iso={run.finishedAt ?? run.startedAt} />، {run.status === 'failed' ? <span className="text-neg">فشل</span> : <>{run.newTransactionsCount} جديدة</>}</>
+          <>آخر سحب من {run.mailboxLabel} <DateTime iso={run.finishedAt ?? run.startedAt} /> ({pullRangeLabel(run.range, true)})، {run.status === 'failed' ? <span className="text-neg">فشل</span> : <>{run.newTransactionsCount} جديدة</>}</>
         )}
         actions={<>
           <span ref={setExportSlot} className="contents" />
@@ -28,6 +28,7 @@ export function TransactionsPage() {
           <PullControl />
         </>}
       />
+      <PullProgress />
       <TransactionsView exportSlot={exportSlot} />
     </div>
   );

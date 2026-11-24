@@ -16,7 +16,7 @@ export type ErrorCode =
   | 'invalid_transition' | 'fee_required' | 'commission_exceeds_net'
   | 'customer_inactive' | 'duplicate'
   | 'already_reversed' | 'has_dependents'
-  | 'imap_auth' | 'imap_connect' | 'imap_disabled' | 'pull_running'
+  | 'imap_auth' | 'imap_connect' | 'imap_disabled' | 'pull_running' | 'invalid_range'
   | 'backup_failed' | 'restore_failed'
   | 'file_locked' | 'no_export_path' | 'export_failed'
   | 'internal';
@@ -237,11 +237,17 @@ export type Mailbox = {
 };
 export type MailboxInput = { label: string; email: string; host?: string; port?: number; folder?: string; password?: string };
 export type PullStatus = 'running' | 'done' | 'failed' | 'cancelled';
+export type PullRange =                       // SPEC §5.5
+  | { kind: 'new' }                           // منذ آخر سحب (الافتراضي)
+  | { kind: 'last_days'; days: number }       // 1..3650 (الواجهة تعرض 7/30/90)
+  | { kind: 'between'; from: string; to: string } // YYYY-MM-DD شاملة بتوقيت الجهاز
+  | { kind: 'all' };
 export type PullRun = {
   id: number; mailboxId: number; mailboxLabel: string; status: PullStatus;
   totalCount: number; fetchedCount: number; newTransactionsCount: number;
   duplicateCount: number; ignoredCount: number; failedCount: number;
   error: string | null; startedAt: IsoDate; finishedAt: IsoDate | null;
+  range: PullRange;
 };
 // mailbox_list(): Mailbox[]
 // mailbox_create({ input: MailboxInput }): Mailbox
@@ -250,7 +256,7 @@ export type PullRun = {
 // mailbox_set_active({ id, active: boolean }): Mailbox   // "إيقاف"/تفعيل البريد (SPEC §6.7)؛ السحب يُرفض لبريد موقوف
 // mailbox_test({ id } | { input: MailboxInput }): { ok: true; folderCount: number }   throws imap_auth | imap_connect | imap_disabled
 // mailbox_delete({ id }): void                   throws has_dependents
-// pull_start({ mailboxId }): PullRun              throws pull_running
+// pull_start({ mailboxId, range?: PullRange }): PullRun   // بلا range => { kind: 'new' }   throws pull_running | invalid_range
 // pull_cancel({ runId }): void
 // pull_runs_list({ limit }): PullRun[]
 // events:

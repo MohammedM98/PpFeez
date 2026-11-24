@@ -9,13 +9,13 @@ import type {
   Customer, CustomerInput, DashboardSummary, ErrorCode, FeeInput, HistoryItem, LedgerEntry,
   LedgerView, Mailbox, MailboxInput, ManualTxnInput, Page, PayoutInput, Period, PullRun,
   RawEmail, RawEmailSummary, ParseStatus, RefundAlert, Settings, Transaction, TxnCounts,
-  TxnFilter, TxnListResult, TxnPreview, TxnSort, Currency, ExcelExportResult,
+  TxnFilter, TxnListResult, TxnPreview, TxnSort, Currency, ExcelExportResult, PullRange,
 } from './contract';
 
 const KNOWN_CODES = new Set<ErrorCode>([
   'locked', 'wrong_password', 'too_many_attempts', 'not_found', 'validation', 'invalid_amount',
   'invalid_transition', 'fee_required', 'commission_exceeds_net', 'customer_inactive', 'duplicate',
-  'already_reversed', 'has_dependents', 'imap_auth', 'imap_connect', 'imap_disabled', 'pull_running',
+  'already_reversed', 'has_dependents', 'imap_auth', 'imap_connect', 'imap_disabled', 'pull_running', 'invalid_range',
   'backup_failed', 'restore_failed', 'file_locked', 'no_export_path', 'export_failed', 'internal',
 ]);
 
@@ -115,7 +115,7 @@ export const api = {
   mailboxSetActive: (id: number, active: boolean) => call<Mailbox>('mailbox_set_active', { id, active }),
   mailboxTest: (q: { id: number } | { input: MailboxInput }) => call<{ ok: true; folderCount: number }>('mailbox_test', q),
   mailboxDelete: (id: number) => call<void>('mailbox_delete', { id }),
-  pullStart: (mailboxId: number) => call<PullRun>('pull_start', { mailboxId }),
+  pullStart: (mailboxId: number, range?: PullRange) => call<PullRun>('pull_start', { mailboxId, range }),
   pullCancel: (runId: number) => call<void>('pull_cancel', { runId }),
   pullRunsList: (limit: number) => call<PullRun[]>('pull_runs_list', { limit }),
 

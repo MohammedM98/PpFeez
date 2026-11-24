@@ -4,9 +4,9 @@ import type {
   AppError, BalanceCard, BulkResult, CommissionInput, Customer, CustomerInput, DashboardSummary, ErrorCode,
   FeeInput, LedgerEntry, LedgerView, ManualTxnInput, Money, Page, Period, PullRun, RawEmailSummary,
   RefundAlert, Transaction, TxnAction, TxnCounts, TxnFilter, TxnListResult, TxnPreview, TxnSort, AdjustmentInput, PayoutInput,
-  MailboxInput, ParseStatus,
+  MailboxInput, ParseStatus, PullRange,
 } from '@/lib/contract';
-import { creditDescription, halfUp, seed, type Db, type TxnRow } from './db';
+import { creditDescription, halfUp, ltr, seed, type Db, type TxnRow } from './db';
 
 let db: Db = seed();
 export function resetDb(next?: Partial<Db['status']>) {
@@ -331,12 +331,27 @@ function dashboard(period: Period): DashboardSummary {
 // ---------- pull ----------
 let runningPull: { run: PullRun; timer: ReturnType<typeof setInterval> } | null = null;
 
-function pullStart(mailboxId: number): PullRun {
+const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+function validateRange(r: PullRange) {
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  if (r.kind === 'last_days' && !(Number.isInteger(r.days) && r.days >= 1 && r.days <= 3650)) fail('invalid_range', 'عدد الأيام بين 1 و3650', 'range');
+  if (r.kind === 'between') {
+    if (!day.test(r.from) || !day.test(r.to)) fail('invalid_range', 'تاريخ غير صالح', 'range');
+    if (r.from > r.to) fail('invalid_range', 'تاريخ البداية بعد تاريخ النهاية', 'range');
+    if (r.to > localToday()) fail('invalid_range', 'لا يمكن السحب من تاريخ في المستقبل', 'range');
+  }
+}
+
+function pullStart(mailboxId: number, range: PullRange = { kind: 'new' }): PullRun {
   if (runningPull) fail('pull_running', 'يوجد سحب قيد التشغيل');
+  validateRange(range);
   const mb = db.mailboxes.find((m) => m.id === mailboxId) ?? fail('not_found', 'البريد غير موجود');
   if (!mb.isActive) fail('imap_disabled', 'هذا البريد موقوف');
   if (!mb.hasPassword) fail('imap_auth', 'لا توجد كلمة مرور تطبيق لهذا البريد');
-  const run: PullRun = { id: ++db.seq, mailboxId, mailboxLabel: mb.label, status: 'running', totalCount: 24, fetchedCount: 0, newTransactionsCount: 0, duplicateCount: 0, ignoredCount: 0, failedCount: 0, error: null, startedAt: nowIso(), finishedAt: null };
+  // a wider range reads more mail; the numbers are only there to make the progress bar believable
+  const total = range.kind === 'all' ? 64 : range.kind === 'last_days' ? Math.min(60, 8 + Math.ceil(range.days / 3)) : range.kind === 'between' ? 32 : 24;
+  const run: PullRun = { id: ++db.seq, mailboxId, mailboxLabel: mb.label, status: 'running', range, totalCount: total - (total % 4), fetchedCount: 0, newTransactionsCount: 0, duplicateCount: 0, ignoredCount: 0, failedCount: 0, error: null, startedAt: nowIso(), finishedAt: null };
   db.pullRuns.unshift(run);
   const timer = setInterval(() => {
     run.fetchedCount = Math.min(run.totalCount, run.fetchedCount + 4);
@@ -562,7 +577,7 @@ export function handle(cmd: string, a: Args = {}): unknown {
       const amt = a.amountText ? -parseAmount(a.amountText, al.originalTxn.currency) : al.suggestedReversalMinor;
       const r = getTxn(a.refundTxnId);
       r.refundHandled = true; r.status = 'excluded';
-      return addLedger({ customerId: al.customer.id, currency: al.originalTxn.currency, type: 'reversal', amountMinor: amt, transactionId: r.id, reference: r.paypalTxnId, description: `استرداد للمعاملة ${al.originalTxn.paypalTxnId}`, entryDate: nowIso().slice(0, 10) });
+      return addLedger({ customerId: al.customer.id, currency: al.originalTxn.currency, type: 'reversal', amountMinor: amt, transactionId: r.id, reference: r.paypalTxnId, description: `استرداد للمعاملة ${ltr(al.originalTxn.paypalTxnId)}`, entryDate: nowIso().slice(0, 10) });
     }
     case 'refund_dismiss': { const r = getTxn(a.refundTxnId); r.refundHandled = true; r.status = 'excluded'; return null; }
 
@@ -603,7 +618,7 @@ export function handle(cmd: string, a: Args = {}): unknown {
       db.mailboxes = db.mailboxes.filter((m) => m.id !== a.id);
       return null;
     }
-    case 'pull_start': return pullStart(a.mailboxId);
+    case 'pull_start': return pullStart(a.mailboxId, a.range ?? undefined);
     case 'pull_cancel': {
       if (runningPull && runningPull.run.id === a.runId) {
         clearInterval(runningPull.timer);

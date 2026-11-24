@@ -1,5 +1,5 @@
 // All interface text lives here (SPEC §2). Modern Standard Arabic, one register.
-import type { LedgerType, ParseStatus, PayoutMethod, TxnStatus, TxnType } from './contract';
+import type { LedgerType, ParseStatus, PayoutMethod, PullRange, TxnStatus, TxnType } from './contract';
 
 export const nav = {
   dashboard: 'لوحة التحكم',
@@ -51,3 +51,22 @@ export const txn = {
     history: 'سجل التغييرات', viewEmail: 'عرض الرسالة الأصلية', myNote: 'ملاحظتي', paypalId: 'رقم معاملة PayPal', mailbox: 'البريد',
   },
 };
+
+/** "آخر 7 أيام" / "آخر 30 يوماً": Arabic counted noun (3–10 plural, 11+ singular accusative). */
+export function daysLabel(n: number): string {
+  if (n === 1) return 'آخر يوم';
+  if (n === 2) return 'آخر يومين';
+  return n <= 10 ? `آخر ${n} أيام` : `آخر ${n} يوماً`;
+}
+
+/** Text form of a pull range. `between` keeps the dates LTR with isolates so the arrow stays put. */
+export function pullRangeLabel(r: PullRange | undefined | null, short = false): string {
+  const fresh = short ? 'الجديد' : 'الجديد منذ آخر سحب';
+  if (!r) return fresh;
+  switch (r.kind) {
+    case 'new': return fresh;
+    case 'last_days': return daysLabel(r.days);
+    case 'between': return `\u2066${r.from}\u2069 ← \u2066${r.to}\u2069`;
+    case 'all': return 'كل الرسائل';
+  }
+}
