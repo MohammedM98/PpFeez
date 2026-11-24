@@ -73,14 +73,6 @@ jobs:
           gh release view "v$version" --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) { $exists = $true }
           $global:LASTEXITCODE = 0
-          $publish = ($env:HAS_SIGNING_KEY -eq 'true') -and (-not $exists) -and
-                     ('${{ github.event_name }}' -eq 'push') -and ('${{ github.ref }}' -eq 'refs/heads/desktop')
-          "publish=$($publish.ToString().ToLower())" >> $env:GITHUB_OUTPUT
-          if ($env:HAS_SIGNING_KEY -ne 'true') {
-            Write-Output "::notice title=Unsigned build::TAURI_SIGNING_PRIVATE_KEY is not set: building the installer without updater signatures and without a release."
-          } elseif ($exists) {
-            Write-Output "::notice title=No release::Release v$version already exists; bump the version in src-tauri/tauri.conf.json to publish a new one."
-          }
           # Release notes: this version's section of docs/CHANGELOG.md.
           $notes = @(); $in = $false
           foreach ($line in Get-Content docs/CHANGELOG.md -Encoding utf8) {
@@ -88,6 +80,19 @@ jobs:
             if ($in) { $notes += $line }
           }
           $body = ($notes -join "`n").Trim()
+          # 0.1.0 has no updater, so it is never published; a release also needs its own
+          # CHANGELOG section (the rule for bumping the version, SPEC 6.9).
+          $releasable = ([version]$version -gt [version]'0.1.0') -and [bool]$body
+          $publish = ($env:HAS_SIGNING_KEY -eq 'true') -and (-not $exists) -and $releasable -and
+                     ('${{ github.event_name }}' -eq 'push') -and ('${{ github.ref }}' -eq 'refs/heads/desktop')
+          "publish=$($publish.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if ($env:HAS_SIGNING_KEY -ne 'true') {
+            Write-Output "::notice title=Unsigned build::TAURI_SIGNING_PRIVATE_KEY is not set: building the installer without updater signatures and without a release."
+          } elseif ($exists) {
+            Write-Output "::notice title=No release::Release v$version already exists; bump the version in src-tauri/tauri.conf.json to publish a new one."
+          } elseif (-not $releasable) {
+            Write-Output "::notice title=No release::Version $version is not released (must be above 0.1.0 and have a '## $version' section in docs/CHANGELOG.md)."
+          }
           if (-not $body) { $body = "PpFeez $version" }
           $delim = "EOF_$([guid]::NewGuid().ToString('N'))"
           "notes<<$delim" >> $env:GITHUB_OUTPUT

@@ -170,13 +170,13 @@ npm run tauri signer generate -- -w ~/.tauri/ppfeez.key
 ```
 
 1. **المفتاح الخاص** (محتوى الملف `ppfeez.key`) وكلمة مروره: أضفهما في GitHub ← Settings ← Secrets and variables ← Actions، باسمي `TAURI_SIGNING_PRIVATE_KEY` و`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. **لا ترسل المفتاح الخاص لأحد، ولا ترفعه إلى المستودع.**
-2. **المفتاح العام** (الملف `ppfeez.key.pub`): يوضع في `src-tauri/tauri.conf.json` مكان القيمة المؤقتة `PLACEHOLDER-…` في `plugins.updater.pubkey`.
+2. **المفتاح العام** (الملف `ppfeez.key.pub`) موضوع في `src-tauri/tauri.conf.json` تحت `plugins.updater.pubkey` (المعرّف `7786C0827D7B9E5E`). إن غيّرت المفتاحين فضع العام الجديد هناك.
 
 ### النشر
 
 بعد رفع رقم الإصدار في `src-tauri/tauri.conf.json` وإضافة قسمه في أعلى `docs/CHANGELOG.md`، ينشر workflow البناء Release باسم `v{الرقم}`، فيه ملف التثبيت و`latest.json`.
 
-- لا يُنشر شيء إن كان الإصدار موجوداً من قبل.
+- لا يُنشر شيء إن كان الإصدار موجوداً من قبل، ولا للإصدار `0.1.0`، ولا لإصدار بلا قسم في `CHANGELOG.md`.
 - لا يُنشر شيء إن لم يُضف السرّ، ويُبنى ملف التثبيت عادياً بلا توقيع.
 - يجب أن يبقى المستودع **عاماً** حتى يجد البرنامج التحديثات.
 - الإصدار `0.1.0` لا يحتوي المحدّث، لذلك يُثبَّت أول إصدار فيه يدوياً مرة واحدة، وما بعده تلقائي.

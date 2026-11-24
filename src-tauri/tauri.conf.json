@@ -57,7 +57,7 @@
       "endpoints": [
         "https://github.com/MohammedM98/PpFeez/releases/latest/download/latest.json"
       ],
-      "pubkey": "PLACEHOLDER-OWNER-MUST-PASTE-THE-UPDATER-PUBLIC-KEY-HERE (output of `npm run tauri signer generate`, public part only)",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc3ODZDMDgyN0Q3QjlFNUUKUldSZW5udDlnc0NHZC9KWDdzUm04VlZKM1FHOGJxR3hIQzkvRXh4QzMzc3FObXpWdmMzdDVZNEoK",
       "windows": {
         "installMode": "passive"
       }
