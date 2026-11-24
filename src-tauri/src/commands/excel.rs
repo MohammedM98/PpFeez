@@ -75,8 +75,8 @@ pub async fn open_path(app: AppHandle, state: State<'_, AppState>, path: PathBuf
 // ===== Customer Excel statement (SPEC 6.8.2) =====
 
 use ppfeez_core::excel::customer::{
-    CustomerExcel, CustomerExcelAdded, CustomerExcelCreated, CustomerExcelPreview, CustomerExcelSent, ItemRef,
-    UnexportedSummary,
+    CustomerExcel, CustomerExcelAdded, CustomerExcelCreated, CustomerExcelFile, CustomerExcelNewFile,
+    CustomerExcelPreview, CustomerExcelSent, ExcelStart, ItemRef, UnexportedSummary,
 };
 
 #[tauri::command]
@@ -127,9 +127,10 @@ pub async fn customer_excel_preview(
     state: State<'_, AppState>,
     customer_id: i64,
     items: Vec<ItemRef>,
+    file_id: Option<i64>,
 ) -> AppResult<CustomerExcelPreview> {
     state.core.guard()?;
-    state.core.customer_excel_preview(customer_id, &items)
+    state.core.customer_excel_preview(customer_id, &items, file_id)
 }
 
 #[tauri::command]
@@ -137,9 +138,10 @@ pub async fn customer_excel_add(
     state: State<'_, AppState>,
     customer_id: i64,
     items: Vec<ItemRef>,
+    file_id: Option<i64>,
 ) -> AppResult<CustomerExcelAdded> {
     state.core.guard()?;
-    state.core.customer_excel_add(customer_id, &items)
+    state.core.customer_excel_add(customer_id, &items, file_id)
 }
 
 /// SPEC 6.8.3: automatic sync of the customer's statement on / off.
@@ -158,10 +160,11 @@ pub async fn customer_excel_set_auto(
 pub async fn customer_excel_send_unexported(
     state: State<'_, AppState>,
     customer_id: i64,
+    file_id: Option<i64>,
 ) -> AppResult<CustomerExcelSent> {
     state.core.guard()?;
     let core = state.core.clone();
-    tauri::async_runtime::spawn_blocking(move || core.customer_excel_send_unexported(customer_id))
+    tauri::async_runtime::spawn_blocking(move || core.customer_excel_send_unexported(customer_id, file_id))
         .await
         .map_err(runtime)?
 }
@@ -172,4 +175,46 @@ pub async fn customer_excel_unexported_summary(state: State<'_, AppState>) -> Ap
     state.core.guard()?;
     let core = state.core.clone();
     tauri::async_runtime::spawn_blocking(move || core.customer_excel_unexported_summary()).await.map_err(runtime)?
+}
+
+// ===== Several files per customer (SPEC 6.8.4) =====
+
+#[tauri::command]
+pub async fn customer_excel_files(state: State<'_, AppState>, customer_id: i64) -> AppResult<Vec<CustomerExcelFile>> {
+    state.core.guard()?;
+    state.core.customer_excel_files(customer_id)
+}
+
+#[tauri::command]
+pub async fn customer_excel_new_file(
+    state: State<'_, AppState>,
+    customer_id: i64,
+    path: String,
+    start: ExcelStart,
+    make_current: bool,
+    label: Option<String>,
+) -> AppResult<CustomerExcelNewFile> {
+    state.core.guard()?;
+    let core = state.core.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        core.customer_excel_new_file(customer_id, &path, &start, make_current, label.as_deref())
+    })
+    .await
+    .map_err(runtime)?
+}
+
+#[tauri::command]
+pub async fn customer_excel_set_current(
+    state: State<'_, AppState>,
+    customer_id: i64,
+    file_id: i64,
+) -> AppResult<CustomerExcel> {
+    state.core.guard()?;
+    state.core.customer_excel_set_current(customer_id, file_id)
+}
+
+#[tauri::command]
+pub async fn customer_excel_remove_file(state: State<'_, AppState>, customer_id: i64, file_id: i64) -> AppResult<()> {
+    state.core.guard()?;
+    state.core.customer_excel_remove_file(customer_id, file_id)
 }

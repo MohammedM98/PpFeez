@@ -243,12 +243,12 @@ fn a_locked_file_keeps_the_line_pending_then_send_now_writes_it_once() {
     assert_eq!(h.core.txn_get(t).unwrap().excel_status, ExcelStatus::Pending);
     let link = h.core.customer_excel_get(c).unwrap().unwrap();
     assert_eq!((link.pending_count, link.last_error.map(|e| e.code)), (1, Some(ErrorCode::FileLocked)));
-    assert_eq!(h.core.customer_excel_send_unexported(c).unwrap_err().code, ErrorCode::FileLocked);
+    assert_eq!(h.core.customer_excel_send_unexported(c, None).unwrap_err().code, ErrorCode::FileLocked);
     assert!(keys(&path).is_empty());
 
     // Closed in Excel: "send now" writes it once; the background pass has nothing left.
     h.core.debug_set_excel_fault(None);
-    let r = h.core.customer_excel_send_unexported(c).unwrap();
+    let r = h.core.customer_excel_send_unexported(c, None).unwrap();
     assert_eq!((r.added, r.skipped_duplicates, r.still_pending), (1, 0, 0));
     assert_eq!(sync(&h), (0, 0, None));
     assert_eq!(keys(&path).len(), 1);
@@ -318,7 +318,7 @@ fn counts_filter_and_send_unexported_in_statement_order() {
     assert_eq!(summary.len(), 1);
     assert_eq!((summary[0].customer_id, summary[0].not_exported), (c.id, 4));
 
-    let r = h.core.customer_excel_send_unexported(c.id).unwrap();
+    let r = h.core.customer_excel_send_unexported(c.id, None).unwrap();
     assert_eq!((r.added, r.still_pending), (4, 0));
     let seqs: Vec<Data> = rows(&path).iter().map(|r| r[stmt::C_SEQ as usize].clone()).collect();
     assert_eq!(seqs, [1.0, 2.0, 3.0, 4.0].map(Data::Float).to_vec());
@@ -463,7 +463,7 @@ fn upgrade_from_0_5_0_tracking() {
     let h = open_in(dir);
     let conn = Connection::open(h.core.db_path()).unwrap();
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     let lines: Vec<(String, String, Option<i64>)> = conn
         .prepare("SELECT line_key, status, source_id FROM customer_excel_items ORDER BY line_key")
         .unwrap()
@@ -517,7 +517,7 @@ fn a_manual_add_is_written_in_statement_order_not_selection_order() {
         ItemRef { kind: ItemKind::Txn, id: t1 },
         ItemRef { kind: ItemKind::Txn, id: t2 },
     ];
-    assert_eq!(h.core.customer_excel_add(c.id, &items).unwrap().added, 4);
+    assert_eq!(h.core.customer_excel_add(c.id, &items, None).unwrap().added, 4);
     let written: Vec<String> = rows(&path).iter().map(|r| s(&r[stmt::C_SEQ as usize])).collect();
     assert_eq!(written, vec!["Float(1.0)", "Float(2.0)", "", "Float(3.0)"]);
     assert_eq!(keys(&path)[2], format!("U:{}", u.id));

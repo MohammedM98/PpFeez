@@ -94,13 +94,13 @@ fn create_add_and_the_spec_example() {
     assert!(String::from_utf8_lossy(&parts(&path)["docProps/custom.xml"]).contains("PpFeezCustomerId"));
 
     // The transfer, then a payout of 50.00: running balance 71.25 → 21.25.
-    let p = h.core.customer_excel_preview(c.id, &[item(ItemKind::Txn, t.id)]).unwrap();
+    let p = h.core.customer_excel_preview(c.id, &[item(ItemKind::Txn, t.id)], None).unwrap();
     assert_eq!((p.to_add.len(), p.duplicates.len()), (1, 0));
     assert_eq!(p.to_add[0].amount_minor, 7125);
-    let r = h.core.customer_excel_add(c.id, &[item(ItemKind::Txn, t.id)]).unwrap();
+    let r = h.core.customer_excel_add(c.id, &[item(ItemKind::Txn, t.id)], None).unwrap();
     assert_eq!((r.added, r.skipped_duplicates), (1, 0));
     let pay = h.core.ledger_add_payout(c.id, payout_input("50")).unwrap();
-    h.core.customer_excel_add(c.id, &[item(ItemKind::Ledger, pay.id)]).unwrap();
+    h.core.customer_excel_add(c.id, &[item(ItemKind::Ledger, pay.id)], None).unwrap();
 
     let d = data_rows(&path, "كشف USD");
     assert_eq!(d.len(), 2);
@@ -151,9 +151,9 @@ fn duplicates_come_from_the_file() {
     assert_eq!(created.added, 1, "existing approved transfer included");
 
     let items = [item(ItemKind::Txn, t.id)];
-    let p = h.core.customer_excel_preview(c.id, &items).unwrap();
+    let p = h.core.customer_excel_preview(c.id, &items, None).unwrap();
     assert_eq!((p.to_add.len(), p.duplicates.len()), (0, 1));
-    let r = h.core.customer_excel_add(c.id, &items).unwrap();
+    let r = h.core.customer_excel_add(c.id, &items, None).unwrap();
     assert_eq!((r.added, r.skipped_duplicates), (0, 1));
     assert_eq!(data_rows(&path, "كشف USD").len(), 1, "never added twice");
 
@@ -161,7 +161,7 @@ fn duplicates_come_from_the_file() {
     let conn = Connection::open(h.core.db_path()).unwrap();
     conn.execute("DELETE FROM customer_excel_items", []).unwrap();
     drop(conn);
-    assert_eq!(h.core.customer_excel_preview(c.id, &items).unwrap().duplicates.len(), 1);
+    assert_eq!(h.core.customer_excel_preview(c.id, &items, None).unwrap().duplicates.len(), 1);
 
     // The owner deletes the row from the file: it can be added again.
     let bytes = std::fs::read(&path).unwrap();
@@ -182,8 +182,8 @@ fn duplicates_come_from_the_file() {
         std::io::Write::write_all(&mut out, &data).unwrap();
     }
     std::fs::write(&path, out.finish().unwrap().into_inner()).unwrap();
-    assert_eq!(h.core.customer_excel_preview(c.id, &items).unwrap().to_add.len(), 1);
-    assert_eq!(h.core.customer_excel_add(c.id, &items).unwrap().added, 1);
+    assert_eq!(h.core.customer_excel_preview(c.id, &items, None).unwrap().to_add.len(), 1);
+    assert_eq!(h.core.customer_excel_add(c.id, &items, None).unwrap().added, 1);
 }
 
 #[test]
@@ -210,6 +210,7 @@ fn not_allowed_items_and_changed_after_excel() {
                 item(ItemKind::Ledger, credit),
                 item(ItemKind::Txn, t.id),
             ],
+            None,
         )
         .unwrap();
     assert_eq!(p.to_add.len(), 1);
@@ -218,11 +219,11 @@ fn not_allowed_items_and_changed_after_excel() {
     assert!(reasons[1].contains("ليست لهذا العميل"));
     assert!(reasons[2].contains("قيد اعتماد"));
 
-    h.core.customer_excel_add(c.id, &[item(ItemKind::Txn, t.id)]).unwrap();
+    h.core.customer_excel_add(c.id, &[item(ItemKind::Txn, t.id)], None).unwrap();
     h.core.txn_unapprove(t.id, "خطأ").unwrap();
     let back = h.core.txn_get(t.id).unwrap();
     assert!(!back.in_customer_excel && back.changed_after_excel);
-    assert_eq!(code(h.core.customer_excel_add(c.id, &[item(ItemKind::Txn, pending.id)])), ErrorCode::Validation);
+    assert_eq!(code(h.core.customer_excel_add(c.id, &[item(ItemKind::Txn, pending.id)], None)), ErrorCode::Validation);
 }
 
 #[test]
@@ -261,7 +262,7 @@ fn payouts_mark_their_transfers_and_new_currencies_get_a_sheet() {
             },
         )
         .unwrap();
-    h.core.customer_excel_add(c.id, &[item(ItemKind::Payout, p.id)]).unwrap();
+    h.core.customer_excel_add(c.id, &[item(ItemKind::Payout, p.id)], None).unwrap();
     let d = data_rows(&path, "كشف USD");
     assert_eq!(d.len(), 3);
     assert_eq!(s(&d[0][stmt::C_SENT as usize]), "نعم — دفعة 1", "transfer row updated");
@@ -274,7 +275,7 @@ fn payouts_mark_their_transfers_and_new_currencies_get_a_sheet() {
     // A EUR transfer: a new sheet with its own table in the same file.
     let e = h.manual("EUR", "50", Some("0"));
     h.core.txn_assign(e.id, c.id, None, true).unwrap();
-    let r = h.core.customer_excel_add(c.id, &[item(ItemKind::Txn, e.id)]).unwrap();
+    let r = h.core.customer_excel_add(c.id, &[item(ItemKind::Txn, e.id)], None).unwrap();
     assert_eq!(r.sheets, vec!["كشف EUR".to_string()]);
     let wb: Xlsx<_> = open_workbook(&path).unwrap();
     assert_eq!(wb.sheet_names(), vec!["كشف USD", "كشف EUR"]);
@@ -321,7 +322,7 @@ fn linking_checks_the_customer_and_delete_keeps_the_file() {
     assert_eq!(linked.path, path.display().to_string());
     assert!(h.core.customer_excel_set_default(a.id, true).unwrap().add_to_excel_by_default);
     assert_eq!(code(h.core.customer_excel_set_default(b.id, true)), ErrorCode::NoExportPath);
-    assert_eq!(code(h.core.customer_excel_add(b.id, &[])), ErrorCode::NoExportPath);
+    assert_eq!(code(h.core.customer_excel_add(b.id, &[], None)), ErrorCode::NoExportPath);
 
     h.core.customer_delete(a.id, "Ali").unwrap();
     assert!(path.exists(), "the file is never deleted");

@@ -554,7 +554,13 @@ fn clear_customer_extras(tx: &Connection, customer: Option<i64>) -> AppResult<()
         params![customer],
     )?;
     tx.execute(&format!("UPDATE payouts SET ledger_entry_id = NULL {filter}"), params![customer])?;
-    for table in ["customer_seq_counters", "customer_payout_defaults", "customer_excel_items", "customer_excel"] {
+    for table in [
+        "customer_seq_counters",
+        "customer_payout_defaults",
+        "customer_excel_items",
+        "customer_excel",
+        "customer_excel_files",
+    ] {
         tx.execute(&format!("DELETE FROM {table} {filter}"), params![customer])?;
     }
     Ok(())

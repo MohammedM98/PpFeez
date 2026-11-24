@@ -84,6 +84,47 @@ pub struct CustomerExcel {
     pub pending_count: i64,
     pub not_exported_count: i64,
     pub last_error: Option<AppError>,
+    /// SPEC 6.8.4: the current file (the counts are for it) and how many files the customer has.
+    pub current_file_id: i64,
+    pub files_count: i64,
+}
+
+/// SPEC 6.8.4: one of the customer's statement files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomerExcelFile {
+    pub id: i64,
+    pub path: String,
+    pub label: Option<String>,
+    pub is_current: bool,
+    pub exists: bool,
+    pub start_mode: String,
+    pub start_value: Option<String>,
+    pub exported_count: i64,
+    pub updated_at: Option<String>,
+    pub created_at: String,
+}
+
+/// SPEC 6.8.4: what a new file starts with.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExcelStart {
+    /// One "carried balance" row per currency, then only new movements (the default).
+    CarryBalance,
+    /// Every movement from the beginning.
+    All,
+    /// Balance carried from before the date, then the movements from it.
+    FromDate { date: String },
+    /// Balance carried from before transfer #seq (in each currency), then the movements from it.
+    FromSeq { seq: i64 },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomerExcelNewFile {
+    pub file: CustomerExcelFile,
+    pub added: i64,
+    pub sheets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -289,6 +330,11 @@ pub(crate) fn item_status(conn: &Connection, customer_id: i64, kind: ItemKind, i
 
 // ===== Keys =====
 
+/// Lines covered by a file's carried balance (SPEC 6.8.4): tracked as exported, never in the file.
+fn is_carried(key: &str) -> bool {
+    key.starts_with('~')
+}
+
 /// Key of a transfer line: the one already tracked for this approval, else `T:{PayPal id}:{credit}`.
 /// 0.5.0 wrote `T:{PayPal id}`; it still counts as this line when the transfer was approved once.
 fn txn_key(
@@ -353,6 +399,22 @@ fn entry_key(conn: &Connection, customer_id: i64, path: &str, e: &LedgerEntry) -
         Some(orig) => {
             let o = get_entry(conn, orig)?;
             let (target, legacy) = reversed_target(conn, &o)?;
+            // Reversing a line that is inside the file's carried balance (SPEC 6.8.4): `-~…` counts in
+            // the balance but not in the transfer / payout figures, whose rows are not in this file.
+            let original = if o.kind == LedgerType::Credit {
+                match o.transaction_id {
+                    Some(t) => tracked(conn, customer_id, path, ItemKind::Txn, t, Some(o.id))?,
+                    None => None,
+                }
+            } else if let Some(p) = o.payout_id {
+                tracked(conn, customer_id, path, ItemKind::Payout, p, None)?
+            } else {
+                tracked(conn, customer_id, path, ItemKind::Ledger, o.id, None)?
+            };
+            let target = match original {
+                Some(t) if is_carried(&t.line_key) => format!("-~{}", &target[1..]),
+                _ => target,
+            };
             Ok((format!("{target}:{}", e.id), vec![format!("{legacy}:{}", e.id)]))
         }
         None => Ok((format!("{}:{}", entry_prefix(conn, e)?, e.id), vec![])),
@@ -467,7 +529,7 @@ pub(crate) fn requeue(conn: &Connection, now: &str, customer_id: i64, kind: Item
     if !link.auto {
         return Ok(());
     }
-    if let Some(t) = tracked(conn, customer_id, &link.path, kind, item_id, None)? {
+    if let Some(t) = tracked(conn, customer_id, &link.path, kind, item_id, None)?.filter(|t| !is_carried(&t.line_key)) {
         conn.execute("UPDATE customer_excel_items SET status = 'pending' WHERE rowid = ?1", params![t.rowid])?;
         conn.execute("UPDATE customer_excel SET dirty = 1 WHERE customer_id = ?1", params![customer_id])?;
         let _ = now;
@@ -938,14 +1000,22 @@ impl Core {
         export_failed(format!("لم أجد ملف العميل في {path}. اربط ملفاً موجوداً أو أنشئ ملفاً جديداً"))
     }
 
-    /// Write the pending lines of a customer (all, or only `only`) to the linked file.
-    fn write_pending(&self, customer_id: i64, only: Option<&HashSet<String>>, order: Order) -> AppResult<WriteResult> {
+    /// Write the pending lines of a customer (all, or only `only`) to a file (default: the current one).
+    fn write_pending(
+        &self,
+        customer_id: i64,
+        target: Option<&str>,
+        only: Option<&HashSet<String>>,
+        order: Order,
+    ) -> AppResult<WriteResult> {
         let _writer = self.excel_write.lock().unwrap_or_else(|e| e.into_inner());
         let now = self.now_iso();
         let (link, customer, tracks, lines) = {
             let conn = self.conn();
-            let Some(link) = link_of(&conn, customer_id)? else {
-                return Err(AppError::new(ErrorCode::NoExportPath, "لا يوجد ملف Excel مرتبط بهذا العميل"));
+            let link = match target {
+                Some(p) => Link { path: p.to_string(), auto: false },
+                None => link_of(&conn, customer_id)?
+                    .ok_or_else(|| AppError::new(ErrorCode::NoExportPath, "لا يوجد ملف Excel مرتبط بهذا العميل"))?,
             };
             let customer = crate::customers::customer_ref(&conn, customer_id)?.name;
             let pending: Vec<Track> = {
@@ -1002,8 +1072,12 @@ impl Core {
                     )?;
                 }
                 tx.execute(
-                    "UPDATE customer_excel SET updated_at = ?1 WHERE customer_id = ?2",
-                    params![now, customer_id],
+                    "UPDATE customer_excel SET updated_at = ?1 WHERE customer_id = ?2 AND file_path = ?3",
+                    params![now, customer_id, link.path],
+                )?;
+                tx.execute(
+                    "UPDATE customer_excel_files SET updated_at = ?1 WHERE customer_id = ?2 AND file_path = ?3",
+                    params![now, customer_id, link.path],
                 )?;
                 crate::audit::log(
                     &tx,
@@ -1071,7 +1145,7 @@ impl Core {
 
     /// Automatic sync of one customer (event order).
     pub fn customer_excel_flush(&self, customer_id: i64) -> SyncEvent {
-        let r = self.write_pending(customer_id, None, Order::Events);
+        let r = self.write_pending(customer_id, None, None, Order::Events);
         let pending = {
             let conn = self.conn();
             link_of(&conn, customer_id)
@@ -1143,11 +1217,18 @@ fn link_dto(conn: &Connection, customer_id: i64) -> AppResult<Option<CustomerExc
     };
     let count = |status: &str| -> AppResult<i64> {
         Ok(conn.query_row(
-            "SELECT COUNT(*) FROM customer_excel_items WHERE customer_id = ?1 AND file_path = ?2 AND status = ?3",
+            "SELECT COUNT(*) FROM customer_excel_items WHERE customer_id = ?1 AND file_path = ?2 AND status = ?3
+               AND line_key NOT LIKE '~%'",
             params![customer_id, path, status],
             |r| r.get(0),
         )?)
     };
+    let (current_file_id, files_count): (i64, i64) = conn.query_row(
+        "SELECT COALESCE(MAX(CASE WHEN file_path = ?2 THEN id END), 0), COUNT(*) FROM customer_excel_files
+         WHERE customer_id = ?1",
+        params![customer_id, path],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
     let last_error: Option<AppError> = conn
         .query_row(
             "SELECT last_error FROM customer_excel_items WHERE customer_id = ?1 AND file_path = ?2
@@ -1167,6 +1248,8 @@ fn link_dto(conn: &Connection, customer_id: i64) -> AppResult<Option<CustomerExc
         add_to_excel_by_default: by_default != 0,
         auto_sync: auto != 0,
         last_error,
+        current_file_id,
+        files_count,
     }))
 }
 
@@ -1200,7 +1283,9 @@ impl Core {
             let e = get_entry(conn, id)?;
             let eligible = match e.reverses_entry_id {
                 None => true,
-                // A reversal belongs in the statement only when what it reverses is there.
+                // A reversal of a transfer's approval or of a linked payout belongs in the statement
+                // only when that line is there (an unapproved transfer / cancelled payout is not an
+                // item any more); a reversed entry is an item itself, so its reversal goes with it.
                 Some(o) => {
                     let orig = get_entry(conn, o)?;
                     let st = if orig.kind == LedgerType::Credit {
@@ -1211,9 +1296,10 @@ impl Core {
                     } else if let Some(p) = orig.payout_id {
                         tracked(conn, customer_id, path, ItemKind::Payout, p, None)?
                     } else {
-                        tracked(conn, customer_id, path, ItemKind::Ledger, o, None)?
+                        None
                     };
-                    st.is_some_and(|t| t.status == "exported")
+                    let plain = orig.kind != LedgerType::Credit && orig.payout_id.is_none();
+                    plain || st.is_some_and(|t| t.status == "exported")
                 }
             };
             if eligible {
@@ -1238,15 +1324,22 @@ impl Core {
         Ok(out)
     }
 
-    fn require_link(&self, customer_id: i64) -> AppResult<CustomerExcel> {
+    /// The file a manual add writes to: `file_id`, or the current file. It must exist on disk.
+    fn target_path(&self, customer_id: i64, file_id: Option<i64>) -> AppResult<String> {
         let conn = self.conn();
         crate::customers::customer_ref(&conn, customer_id)?;
-        let link = link_dto(&conn, customer_id)?
-            .ok_or_else(|| AppError::new(ErrorCode::NoExportPath, "لا يوجد ملف Excel مرتبط بهذا العميل"))?;
-        if !link.exists {
-            return Err(Self::missing_file(&link.path));
+        let path = match file_id {
+            Some(id) => file_path_of(&conn, customer_id, id)?,
+            None => {
+                link_of(&conn, customer_id)?
+                    .ok_or_else(|| AppError::new(ErrorCode::NoExportPath, "لا يوجد ملف Excel مرتبط بهذا العميل"))?
+                    .path
+            }
+        };
+        if !Path::new(&path).exists() {
+            return Err(Self::missing_file(&path));
         }
-        Ok(link)
+        Ok(path)
     }
 
     pub fn customer_excel_get(&self, customer_id: i64) -> AppResult<Option<CustomerExcel>> {
@@ -1296,18 +1389,15 @@ impl Core {
         let conn = self.conn();
         crate::customers::customer_ref(&conn, customer_id)?;
         conn.execute("DELETE FROM customer_excel WHERE customer_id = ?1", params![customer_id])?;
+        conn.execute("UPDATE customer_excel_files SET is_current = 0 WHERE customer_id = ?1", params![customer_id])?;
         crate::audit::log(&conn, &now, "customer_excel.unlink", "customer", Some(customer_id), json!({}))?;
         Ok(())
     }
 
     fn set_link(&self, customer_id: i64, path: &str) -> AppResult<()> {
         let conn = self.conn();
-        conn.execute(
-            "INSERT INTO customer_excel (customer_id, file_path, updated_at, add_by_default, auto_sync) VALUES (?1, ?2, ?3, 0, 1)
-             ON CONFLICT(customer_id) DO UPDATE SET file_path = excluded.file_path, updated_at = excluded.updated_at",
-            params![customer_id, path, self.now_iso()],
-        )?;
-        Ok(())
+        register_file(&conn, &self.now_iso(), customer_id, path, "all", None, None)?;
+        make_current(&conn, customer_id, path)
     }
 
     /// Link an existing statement; it must be one PpFeez created for this customer.
@@ -1342,36 +1432,11 @@ impl Core {
     ) -> AppResult<CustomerExcelCreated> {
         let path_s = validate_xlsx_path(path)?;
         let path = PathBuf::from(&path_s);
-        let (customer, mut currencies) = {
+        let (customer, currencies) = {
             let conn = self.conn();
-            let c = crate::customers::get(&conn, customer_id)?;
-            let mut stmt = conn.prepare(
-                "SELECT currency FROM ledger_entries WHERE customer_id = ?1
-                 UNION SELECT currency FROM paypal_transactions WHERE customer_id = ?1",
-            )?;
-            let cur: Vec<String> = stmt.query_map(params![customer_id], |r| r.get(0))?.collect::<Result<_, _>>()?;
-            (c, cur)
+            (crate::customers::get(&conn, customer_id)?, customer_currencies(&conn, customer_id)?)
         };
-        if currencies.is_empty() {
-            currencies.push("USD".into());
-        }
-        currencies.sort();
-        currencies.dedup();
-        let today = self.clock.today();
-        let f = super::model::Formats::new();
-        let mut wb = rust_xlsxwriter::Workbook::new();
-        for cur in &currencies {
-            super::model::render(&mut wb, &f, &stmt::sheet_model(&customer.name, cur, today, &[]))?;
-        }
-        let props = rust_xlsxwriter::DocProperties::new()
-            .set_title(format!("كشف حساب — {}", customer.name))
-            .set_custom_property(PROP_CUSTOMER, customer_id as i32);
-        wb.set_properties(&props);
-        let bytes = wb.save_to_buffer()?;
-        if path.exists() {
-            keep_previous(&path)?;
-        }
-        save_atomic(&bytes, &path)?;
+        self.save_new_workbook(customer_id, &customer.name, &currencies, &path)?;
         self.set_link(customer_id, &path_s)?;
         {
             let now = self.now_iso();
@@ -1387,7 +1452,7 @@ impl Core {
         }
         let mut sheets: Vec<String> = currencies.iter().map(|c| stmt::sheet_name(c)).collect();
         let added = if include_existing {
-            let r = self.customer_excel_send_unexported(customer_id)?;
+            let r = self.customer_excel_send_unexported(customer_id, None)?;
             r.added
         } else {
             0
@@ -1505,23 +1570,30 @@ impl Core {
     }
 
     /// What would be added, what is already in the file, and what cannot be added.
-    pub fn customer_excel_preview(&self, customer_id: i64, items: &[ItemRef]) -> AppResult<CustomerExcelPreview> {
-        let link = self.require_link(customer_id)?;
+    pub fn customer_excel_preview(
+        &self,
+        customer_id: i64,
+        items: &[ItemRef],
+        file_id: Option<i64>,
+    ) -> AppResult<CustomerExcelPreview> {
+        let path = self.target_path(customer_id, file_id)?;
         let (resolved, not_allowed) = {
             let conn = self.conn();
-            self.resolve_items(&conn, customer_id, &link.path, items)?
+            self.resolve_items(&conn, customer_id, &path, items)?
         };
         let mut currencies: Vec<String> = resolved.iter().map(|r| r.2.currency.clone()).collect();
         currencies.sort();
         currencies.dedup();
-        let bytes = Self::read_file(Path::new(&link.path))?;
+        let bytes = Self::read_file(Path::new(&path))?;
         let existing = stmt::existing(bytes, &currencies).map_err(layout_err)?;
         let mut to_add = vec![];
         let mut duplicates = vec![];
         let mut older = 0;
         for (_, _, line, preview) in resolved {
             let ex = existing.get(&line.currency);
-            if ex.is_some_and(|e| e.keys.contains(&line.key) || line.alt_keys.iter().any(|k| e.keys.contains(k))) {
+            if is_carried(&line.key)
+                || ex.is_some_and(|e| e.keys.contains(&line.key) || line.alt_keys.iter().any(|k| e.keys.contains(k)))
+            {
                 duplicates.push(preview);
             } else {
                 let serial = super::model::value_number(&V::Date(line.date), false).unwrap_or(0.0);
@@ -1540,13 +1612,14 @@ impl Core {
         customer_id: i64,
         path: &str,
         items: &[ItemRef],
-    ) -> AppResult<(HashSet<String>, Vec<NotAllowed>)> {
+    ) -> AppResult<(HashSet<String>, Vec<NotAllowed>, i64)> {
         let now = self.now_iso();
         let conn = self.conn();
         let (resolved, not_allowed) = self.resolve_items(&conn, customer_id, path, items)?;
         let tx = conn.unchecked_transaction()?;
         let mut keys = HashSet::new();
-        for (it, source, line, _) in &resolved {
+        // Lines covered by the file's carried balance are already in it (as that balance).
+        for (it, source, line, _) in resolved.iter().filter(|r| !is_carried(&r.2.key)) {
             let q = Queued {
                 key: &line.key,
                 kind: it.kind,
@@ -1559,36 +1632,46 @@ impl Core {
             keys.insert(line.key.clone());
         }
         tx.commit()?;
-        Ok((keys, not_allowed))
+        let carried = resolved.iter().filter(|r| is_carried(&r.2.key)).count() as i64;
+        Ok((keys, not_allowed, carried))
     }
 
     /// Add items to the linked statement (statement order); lines already in the file are skipped.
-    pub fn customer_excel_add(&self, customer_id: i64, items: &[ItemRef]) -> AppResult<CustomerExcelAdded> {
-        let link = self.require_link(customer_id)?;
-        let (keys, not_allowed) = self.queue_items(customer_id, &link.path, items)?;
-        if keys.is_empty() {
+    pub fn customer_excel_add(
+        &self,
+        customer_id: i64,
+        items: &[ItemRef],
+        file_id: Option<i64>,
+    ) -> AppResult<CustomerExcelAdded> {
+        let path = self.target_path(customer_id, file_id)?;
+        let (keys, not_allowed, carried) = self.queue_items(customer_id, &path, items)?;
+        if keys.is_empty() && carried == 0 {
             let reason = not_allowed.first().map(|n| n.reason_ar.clone()).unwrap_or_else(|| "لا شيء للإضافة".into());
             return Err(AppError::validation("items", reason));
         }
-        let w = self.write_pending(customer_id, Some(&keys), Order::Statement)?;
-        Ok(CustomerExcelAdded { path: link.path, added: w.added, skipped_duplicates: w.skipped, sheets: w.sheets })
+        let w = self.write_pending(customer_id, Some(&path), Some(&keys), Order::Statement)?;
+        Ok(CustomerExcelAdded { path, added: w.added, skipped_duplicates: w.skipped + carried, sheets: w.sheets })
     }
 
     /// SPEC 6.8.3: send everything not yet in the file (and what is pending), statement order.
-    pub fn customer_excel_send_unexported(&self, customer_id: i64) -> AppResult<CustomerExcelSent> {
-        let link = self.require_link(customer_id)?;
+    pub fn customer_excel_send_unexported(
+        &self,
+        customer_id: i64,
+        file_id: Option<i64>,
+    ) -> AppResult<CustomerExcelSent> {
+        let path = self.target_path(customer_id, file_id)?;
         let items = {
             let conn = self.conn();
-            self.untracked(&conn, customer_id, &link.path)?
+            self.untracked(&conn, customer_id, &path)?
         };
-        self.queue_items(customer_id, &link.path, &items)?;
-        let w = self.write_pending(customer_id, None, Order::Statement)?;
+        self.queue_items(customer_id, &path, &items)?;
+        let w = self.write_pending(customer_id, Some(&path), None, Order::Statement)?;
         let still: i64 = self.conn().query_row(
             "SELECT COUNT(*) FROM customer_excel_items WHERE customer_id = ?1 AND file_path = ?2 AND status = 'pending'",
-            params![customer_id, link.path],
+            params![customer_id, path],
             |r| r.get(0),
         )?;
-        Ok(CustomerExcelSent { path: link.path, added: w.added, skipped_duplicates: w.skipped, still_pending: still })
+        Ok(CustomerExcelSent { path, added: w.added, skipped_duplicates: w.skipped, still_pending: still })
     }
 
     /// For the dashboard: customers with lines not yet in their statement.
@@ -1645,7 +1728,7 @@ fn not_exported_count(conn: &Connection, customer_id: i64, path: &str) -> AppRes
                      (o.type = 'credit' AND i.item_kind = 'txn' AND i.item_id = o.paypal_transaction_id
                         AND (i.source_id = o.id OR i.source_id IS NULL))
                   OR (o.type <> 'credit' AND o.payout_id IS NOT NULL AND i.item_kind = 'payout' AND i.item_id = o.payout_id)
-                  OR (o.type <> 'credit' AND o.payout_id IS NULL AND i.item_kind = 'ledger' AND i.item_id = o.id)))))"
+                  )) OR (o.type <> 'credit' AND o.payout_id IS NULL)))"
     );
     Ok(conn.query_row(&sql, params![customer_id, path], |r| r.get(0))?)
 }
@@ -1669,4 +1752,392 @@ fn statement_self_check(bytes: &[u8], groups: &BTreeMap<String, Vec<Line>>) -> R
         }
     }
     Ok(())
+}
+
+// ===== Several files per customer (SPEC 6.8.4) =====
+
+/// The currencies a customer's statement has a sheet for.
+fn customer_currencies(conn: &Connection, customer_id: i64) -> AppResult<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT currency FROM ledger_entries WHERE customer_id = ?1
+         UNION SELECT currency FROM paypal_transactions WHERE customer_id = ?1 ORDER BY 1",
+    )?;
+    let mut cur: Vec<String> = stmt.query_map(params![customer_id], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    if cur.is_empty() {
+        cur.push("USD".into());
+    }
+    Ok(cur)
+}
+
+/// Add a file to the customer's list (or keep it, if already there).
+fn register_file(
+    conn: &Connection,
+    now: &str,
+    customer_id: i64,
+    path: &str,
+    start_mode: &str,
+    start_value: Option<&str>,
+    label: Option<&str>,
+) -> AppResult<i64> {
+    conn.execute(
+        "INSERT INTO customer_excel_files (customer_id, file_path, label, is_current, start_mode, start_value, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?6)
+         ON CONFLICT(customer_id, file_path) DO UPDATE SET label = COALESCE(excluded.label, customer_excel_files.label)",
+        params![customer_id, path, label, start_mode, start_value, now],
+    )?;
+    Ok(conn.query_row(
+        "SELECT id FROM customer_excel_files WHERE customer_id = ?1 AND file_path = ?2",
+        params![customer_id, path],
+        |r| r.get(0),
+    )?)
+}
+
+/// Make a listed file the current one: the target of automatic sync and of default adds.
+fn make_current(conn: &Connection, customer_id: i64, path: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE customer_excel_files SET is_current = (file_path = ?2) WHERE customer_id = ?1",
+        params![customer_id, path],
+    )?;
+    let updated: Option<String> = conn
+        .query_row(
+            "SELECT updated_at FROM customer_excel_files WHERE customer_id = ?1 AND file_path = ?2",
+            params![customer_id, path],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    conn.execute(
+        "INSERT INTO customer_excel (customer_id, file_path, updated_at, add_by_default, auto_sync) VALUES (?1, ?2, ?3, 0, 1)
+         ON CONFLICT(customer_id) DO UPDATE SET file_path = excluded.file_path, updated_at = excluded.updated_at",
+        params![customer_id, path, updated],
+    )?;
+    // Lines left pending in that file are written by the next background pass.
+    conn.execute(
+        "UPDATE customer_excel SET dirty = 1 WHERE customer_id = ?1 AND EXISTS (SELECT 1 FROM customer_excel_items
+           WHERE customer_id = ?1 AND file_path = ?2 AND status = 'pending')",
+        params![customer_id, path],
+    )?;
+    Ok(())
+}
+
+fn file_path_of(conn: &Connection, customer_id: i64, file_id: i64) -> AppResult<String> {
+    conn.query_row(
+        "SELECT file_path FROM customer_excel_files WHERE id = ?1 AND customer_id = ?2",
+        params![file_id, customer_id],
+        |r| r.get(0),
+    )
+    .optional()?
+    .ok_or_else(|| AppError::not_found("ملف Excel"))
+}
+
+fn file_dto(conn: &Connection, customer_id: i64, file_id: i64) -> AppResult<CustomerExcelFile> {
+    conn.query_row(
+        "SELECT f.id, f.file_path, f.label, f.is_current, f.start_mode, f.start_value, f.updated_at, f.created_at,
+           (SELECT COUNT(*) FROM customer_excel_items i WHERE i.customer_id = f.customer_id AND i.file_path = f.file_path
+              AND i.status = 'exported' AND i.line_key NOT LIKE '~%')
+         FROM customer_excel_files f WHERE f.id = ?1 AND f.customer_id = ?2",
+        params![file_id, customer_id],
+        |r| {
+            let path: String = r.get(1)?;
+            Ok(CustomerExcelFile {
+                id: r.get(0)?,
+                exists: Path::new(&path).exists(),
+                path,
+                label: r.get(2)?,
+                is_current: r.get::<_, i64>(3)? != 0,
+                start_mode: r.get(4)?,
+                start_value: r.get(5)?,
+                updated_at: r.get(6)?,
+                created_at: r.get(7)?,
+                exported_count: r.get(8)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or_else(|| AppError::not_found("ملف Excel"))
+}
+
+/// The line of a carried balance (one per currency, at the top of a new file).
+fn opening_line(currency: &str, balance_minor: i64, date: NaiveDate, label: String) -> Line {
+    let m = St::money(currency, false);
+    let amount = V::Num(super::to_number(balance_minor.abs(), currency));
+    let col = if balance_minor >= 0 { stmt::C_CREDIT } else { stmt::C_DEBIT };
+    let key = format!("B:{currency}");
+    Line {
+        key: key.clone(),
+        alt_keys: vec![],
+        currency: currency.to_string(),
+        date,
+        order: (date, 0),
+        cells: vec![
+            (stmt::C_DATE, Some(V::Date(date)), St::Date),
+            (stmt::C_LABEL, Some(V::Str(label)), St::Bold),
+            (col, Some(amount), m),
+            (stmt::C_KEY, Some(V::Str(key)), St::Text),
+        ],
+        fill: true,
+        marks: vec![],
+    }
+}
+
+impl Core {
+    /// A new, empty statement (one sheet per currency) saved at `path`.
+    fn save_new_workbook(&self, customer_id: i64, name: &str, currencies: &[String], path: &Path) -> AppResult<()> {
+        let today = self.clock.today();
+        let f = super::model::Formats::new();
+        let mut wb = rust_xlsxwriter::Workbook::new();
+        for cur in currencies {
+            super::model::render(&mut wb, &f, &stmt::sheet_model(name, cur, today, &[]))?;
+        }
+        let props = rust_xlsxwriter::DocProperties::new()
+            .set_title(format!("كشف حساب — {name}"))
+            .set_custom_property(PROP_CUSTOMER, customer_id as i32);
+        wb.set_properties(&props);
+        let bytes = wb.save_to_buffer()?;
+        if path.exists() {
+            keep_previous(path)?;
+        }
+        save_atomic(&bytes, path)
+    }
+
+    /// The tracking key of a ledger entry's line, as in a statement file.
+    fn entry_line_ref(&self, conn: &Connection, e: &LedgerEntry) -> AppResult<(ItemKind, i64, Option<i64>, String)> {
+        if e.kind == LedgerType::Credit {
+            if let Some(t) = e.transaction_id {
+                let paypal: String =
+                    conn.query_row("SELECT paypal_txn_id FROM paypal_transactions WHERE id = ?1", params![t], |r| {
+                        r.get(0)
+                    })?;
+                return Ok((ItemKind::Txn, t, Some(e.id), format!("T:{paypal}:{}", e.id)));
+            }
+        }
+        if let Some(p) = e.payout_id {
+            return Ok((ItemKind::Payout, p, None, format!("P:{p}")));
+        }
+        let (key, _) = entry_key(conn, e.customer_id, "", e)?;
+        Ok((ItemKind::Ledger, e.id, None, key))
+    }
+
+    /// Record the entries before the cutoff as covered by the file's carried balance; returns the
+    /// balance per currency and the date of each currency's opening row.
+    fn carry_into(
+        &self,
+        conn: &Connection,
+        customer_id: i64,
+        path: &str,
+        start: &ExcelStart,
+    ) -> AppResult<BTreeMap<String, (i64, NaiveDate)>> {
+        let now = self.now_iso();
+        let today = self.clock.today();
+        let entries: Vec<LedgerEntry> = {
+            let mut stmt =
+                conn.prepare("SELECT id FROM ledger_entries WHERE customer_id = ?1 ORDER BY entry_date, id")?;
+            let ids: Vec<i64> = stmt.query_map(params![customer_id], |r| r.get(0))?.collect::<Result<_, _>>()?;
+            ids.into_iter().map(|id| get_entry(conn, id)).collect::<AppResult<_>>()?
+        };
+        // Cutoff per currency: entries strictly before (date, id) are carried.
+        let mut cutoff: BTreeMap<String, (String, i64)> = BTreeMap::new();
+        match start {
+            ExcelStart::All => return Ok(BTreeMap::new()),
+            ExcelStart::CarryBalance => {}
+            ExcelStart::FromDate { date } => {
+                let d = crate::ledger::validate_date(date)?;
+                for cur in customer_currencies(conn, customer_id)? {
+                    cutoff.insert(cur, (d.clone(), 0));
+                }
+            }
+            ExcelStart::FromSeq { seq } => {
+                let mut stmt = conn.prepare(
+                    "SELECT t.currency, c.entry_date, c.id FROM paypal_transactions t
+                     JOIN ledger_entries c ON c.paypal_transaction_id = t.id AND c.type = 'credit'
+                       AND NOT EXISTS (SELECT 1 FROM ledger_entries r WHERE r.reverses_entry_id = c.id)
+                     WHERE t.customer_id = ?1 AND t.customer_seq = ?2 AND t.status = 'approved'",
+                )?;
+                for r in stmt.query_map(params![customer_id, seq], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))? {
+                    let (cur, date, id): (String, String, i64) = r?;
+                    cutoff.insert(cur, (date, id));
+                }
+                if cutoff.is_empty() {
+                    return Err(AppError::validation("start", format!("لا توجد حوالة معتمدة برقم #{seq}")));
+                }
+            }
+        }
+        let mut balances: BTreeMap<String, (i64, NaiveDate)> = BTreeMap::new();
+        for cur in customer_currencies(conn, customer_id)? {
+            let date = cutoff.get(&cur).and_then(|(d, _)| crate::clock::parse_date(d)).unwrap_or(today);
+            balances.insert(cur, (0, date));
+        }
+        let mut seen = HashSet::new();
+        for e in entries {
+            let before = match cutoff.get(&e.currency) {
+                Some((d, id)) => (e.entry_date.as_str(), e.id) < (d.as_str(), *id),
+                // Transfer #seq does not exist in this currency: carry all of it.
+                None => true,
+            };
+            if !before {
+                continue;
+            }
+            balances.entry(e.currency.clone()).or_insert((0, today)).0 += e.amount_minor;
+            let (kind, item_id, source, key) = self.entry_line_ref(conn, &e)?;
+            let key = format!("~{key}");
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO customer_excel_items (customer_id, file_path, line_key, item_kind, item_id, source_id,
+                   currency, status, added_at, exported_at, data)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'exported', ?8, ?8, '{\"carried\":true}')",
+                params![customer_id, path, key, kind.as_str(), item_id, source, e.currency, now],
+            )?;
+        }
+        Ok(balances)
+    }
+
+    /// SPEC 6.8.4: the customer's statement files, current first.
+    pub fn customer_excel_files(&self, customer_id: i64) -> AppResult<Vec<CustomerExcelFile>> {
+        let conn = self.conn();
+        crate::customers::customer_ref(&conn, customer_id)?;
+        let ids: Vec<i64> = {
+            let mut stmt = conn.prepare(
+                "SELECT id FROM customer_excel_files WHERE customer_id = ?1 ORDER BY is_current DESC, created_at DESC, id DESC",
+            )?;
+            let v = stmt.query_map(params![customer_id], |r| r.get(0))?.collect::<Result<_, _>>()?;
+            v
+        };
+        ids.into_iter().map(|id| file_dto(&conn, customer_id, id)).collect()
+    }
+
+    /// SPEC 6.8.4: start a new statement file for the customer.
+    pub fn customer_excel_new_file(
+        &self,
+        customer_id: i64,
+        path: &str,
+        start: &ExcelStart,
+        make_current_file: bool,
+        label: Option<&str>,
+    ) -> AppResult<CustomerExcelNewFile> {
+        let path_s = validate_xlsx_path(path)?;
+        let label = label.map(str::trim).filter(|l| !l.is_empty());
+        let (customer, currencies) = {
+            let conn = self.conn();
+            let c = crate::customers::get(&conn, customer_id)?;
+            let listed: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM customer_excel_files WHERE customer_id = ?1 AND file_path = ?2)",
+                params![customer_id, path_s],
+                |r| r.get(0),
+            )?;
+            if listed {
+                return Err(AppError::validation("path", "هذا الملف من ملفات العميل؛ اختر اسماً جديداً"));
+            }
+            (c, customer_currencies(&conn, customer_id)?)
+        };
+        if let ExcelStart::FromDate { date } = start {
+            crate::ledger::validate_date(date)?;
+        }
+        let (mode, value) = match start {
+            ExcelStart::CarryBalance => ("carry_balance", None),
+            ExcelStart::All => ("all", None),
+            ExcelStart::FromDate { date } => ("from_date", Some(date.clone())),
+            ExcelStart::FromSeq { seq } => ("from_seq", Some(seq.to_string())),
+        };
+        // Check what the start needs before creating anything.
+        {
+            let conn = self.conn();
+            let tx = conn.unchecked_transaction()?;
+            self.carry_into(&tx, customer_id, &path_s, start)?;
+            // Rolled back: this was only the check.
+        }
+        let path = PathBuf::from(&path_s);
+        self.save_new_workbook(customer_id, &customer.name, &currencies, &path)?;
+        let now = self.now_iso();
+        let (file_id, balances) = {
+            let conn = self.conn();
+            let tx = conn.unchecked_transaction()?;
+            let id = register_file(&tx, &now, customer_id, &path_s, mode, value.as_deref(), label)?;
+            let balances = self.carry_into(&tx, customer_id, &path_s, start)?;
+            crate::audit::log(
+                &tx,
+                &now,
+                "customer_excel.new_file",
+                "customer",
+                Some(customer_id),
+                json!({ "path": path_s, "start": mode, "startValue": value, "makeCurrent": make_current_file }),
+            )?;
+            tx.commit()?;
+            (id, balances)
+        };
+        if !balances.is_empty() {
+            let lines: Vec<Line> = balances
+                .iter()
+                .map(|(cur, (minor, date))| {
+                    let text = match start {
+                        ExcelStart::FromDate { date } => format!("رصيد مرحّل قبل {date}"),
+                        ExcelStart::FromSeq { seq } => format!("رصيد مرحّل قبل الحوالة #{seq}"),
+                        _ => "رصيد مرحّل من الملف السابق".to_string(),
+                    };
+                    opening_line(cur, *minor, *date, text)
+                })
+                .collect();
+            let _writer = self.excel_write.lock().unwrap_or_else(|e| e.into_inner());
+            self.write_lines(&path_s, &customer.name, lines.iter().collect())?;
+        }
+        let sent = self.customer_excel_send_unexported(customer_id, Some(file_id))?;
+        if make_current_file {
+            let conn = self.conn();
+            make_current(&conn, customer_id, &path_s)?;
+        }
+        let conn = self.conn();
+        Ok(CustomerExcelNewFile {
+            file: file_dto(&conn, customer_id, file_id)?,
+            added: sent.added,
+            sheets: currencies.iter().map(|c| stmt::sheet_name(c)).collect(),
+        })
+    }
+
+    /// SPEC 6.8.4: make another of the customer's files the current one.
+    pub fn customer_excel_set_current(&self, customer_id: i64, file_id: i64) -> AppResult<CustomerExcel> {
+        let now = self.now_iso();
+        let conn = self.conn();
+        crate::customers::customer_ref(&conn, customer_id)?;
+        let path = file_path_of(&conn, customer_id, file_id)?;
+        let tx = conn.unchecked_transaction()?;
+        make_current(&tx, customer_id, &path)?;
+        crate::audit::log(
+            &tx,
+            &now,
+            "customer_excel.set_current",
+            "customer",
+            Some(customer_id),
+            json!({ "path": path }),
+        )?;
+        tx.commit()?;
+        link_dto(&conn, customer_id)?.ok_or_else(|| AppError::internal("link vanished"))
+    }
+
+    /// SPEC 6.8.4: remove a file from the customer's list (the file itself stays on disk).
+    pub fn customer_excel_remove_file(&self, customer_id: i64, file_id: i64) -> AppResult<()> {
+        let now = self.now_iso();
+        let conn = self.conn();
+        crate::customers::customer_ref(&conn, customer_id)?;
+        let path = file_path_of(&conn, customer_id, file_id)?;
+        if link_of(&conn, customer_id)?.is_some_and(|l| l.path == path) {
+            return Err(AppError::invalid_transition("هذا هو الملف الحالي؛ اجعل ملفاً آخر هو الحالي أولاً"));
+        }
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM customer_excel_items WHERE customer_id = ?1 AND file_path = ?2",
+            params![customer_id, path],
+        )?;
+        tx.execute("DELETE FROM customer_excel_files WHERE id = ?1", params![file_id])?;
+        crate::audit::log(
+            &tx,
+            &now,
+            "customer_excel.remove_file",
+            "customer",
+            Some(customer_id),
+            json!({ "path": path }),
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
 }

@@ -149,6 +149,10 @@ pub fn run() {
             commands::excel::customer_excel_set_auto,
             commands::excel::customer_excel_send_unexported,
             commands::excel::customer_excel_unexported_summary,
+            commands::excel::customer_excel_files,
+            commands::excel::customer_excel_new_file,
+            commands::excel::customer_excel_set_current,
+            commands::excel::customer_excel_remove_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building PpFeez");

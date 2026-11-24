@@ -678,11 +678,13 @@ fn customer_excel_group() {
             "pendingCount",
             "notExportedCount",
             "lastError",
+            "currentFileId",
+            "filesCount",
         ],
     );
     let items: Vec<ItemRef> = serde_json::from_value(json!([{ "kind": "txn", "id": t.id }])).unwrap();
     let p = assert_keys(
-        &h.core.customer_excel_preview(c.id, &items).unwrap(),
+        &h.core.customer_excel_preview(c.id, &items, None).unwrap(),
         &["toAdd", "duplicates", "notAllowed", "olderThanLastRow"],
     );
     let first = p["toAdd"][0].as_object().unwrap();
@@ -690,9 +692,66 @@ fn customer_excel_group() {
     k.sort_unstable();
     assert_eq!(k, vec!["amountMinor", "currency", "date", "id", "kind", "labelAr"]);
     assert_eq!(p["toAdd"][0]["kind"], json!("txn"));
-    assert_keys(&h.core.customer_excel_add(c.id, &items).unwrap(), &["path", "added", "skippedDuplicates", "sheets"]);
+    assert_keys(
+        &h.core.customer_excel_add(c.id, &items, None).unwrap(),
+        &["path", "added", "skippedDuplicates", "sheets"],
+    );
     let cust = serde_json::to_value(h.core.customer_get(c.id).unwrap()).unwrap();
     assert!(cust["excel"]["path"].is_string());
     let txn = serde_json::to_value(h.core.txn_get(t.id).unwrap()).unwrap();
     assert_eq!(txn["inCustomerExcel"], json!(true));
+
+    // SPEC 6.8.4: the customer's files.
+    use ppfeez_core::excel::customer::ExcelStart;
+    let start: ExcelStart = serde_json::from_value(json!({ "kind": "from_seq", "seq": 1 })).unwrap();
+    let path2 = h.dir.path().join("ali-2027.xlsx");
+    let nf = assert_keys(
+        &h.core.customer_excel_new_file(c.id, &path2.display().to_string(), &start, true, Some("2027")).unwrap(),
+        &["file", "added", "sheets"],
+    );
+    let file_keys = [
+        "id",
+        "path",
+        "label",
+        "isCurrent",
+        "exists",
+        "startMode",
+        "startValue",
+        "exportedCount",
+        "updatedAt",
+        "createdAt",
+    ];
+    let mut k: Vec<&str> = nf["file"].as_object().unwrap().keys().map(String::as_str).collect();
+    k.sort_unstable();
+    let mut want = file_keys.to_vec();
+    want.sort_unstable();
+    assert_eq!(k, want);
+    assert_eq!((nf["file"]["startMode"].clone(), nf["file"]["startValue"].clone()), (json!("from_seq"), json!("1")));
+    for kind in [
+        json!({ "kind": "carry_balance" }),
+        json!({ "kind": "all" }),
+        json!({ "kind": "from_date", "date": "2026-11-01" }),
+    ] {
+        serde_json::from_value::<ExcelStart>(kind).unwrap();
+    }
+    let files = h.core.customer_excel_files(c.id).unwrap();
+    assert_eq!(files.len(), 2);
+    assert_keys(&files[0], &file_keys);
+    assert_keys(
+        &h.core.customer_excel_set_current(c.id, files[1].id).unwrap(),
+        &[
+            "path",
+            "updatedAt",
+            "exists",
+            "addToExcelByDefault",
+            "autoSync",
+            "exportedCount",
+            "pendingCount",
+            "notExportedCount",
+            "lastError",
+            "currentFileId",
+            "filesCount",
+        ],
+    );
+    h.core.customer_excel_remove_file(c.id, nf["file"]["id"].as_i64().unwrap()).unwrap();
 }

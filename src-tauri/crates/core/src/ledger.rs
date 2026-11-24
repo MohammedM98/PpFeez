@@ -281,7 +281,7 @@ pub fn get_entry(conn: &Connection, id: i64) -> AppResult<LedgerEntry> {
     Ok(e)
 }
 
-fn validate_date(s: &str) -> AppResult<String> {
+pub(crate) fn validate_date(s: &str) -> AppResult<String> {
     parse_date(s).map(date_str).ok_or_else(|| AppError::validation("entryDate", "التاريخ غير صالح (YYYY-MM-DD)"))
 }
 
