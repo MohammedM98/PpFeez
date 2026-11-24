@@ -61,6 +61,13 @@ for (const theme of ['dark', 'light'] as const) {
     await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-48-excel-destination.png` });
     await add.getByRole('button', { name: 'إضافة سطر واحد' }).click();
     await expect(toast(page, 'أُضيف سطر واحد إلى ملف العميل')).toBeVisible();
+    // the row's tooltip lists the files it went to, fetched when it opens
+    await row(page, '#7').locator('[data-excel] button').hover();
+    const tip = page.getByRole('tooltip');
+    await expect(tip).toContainText('الملفات التي صُدّرت إليها');
+    await expect(tip).toContainText('كشف حساب - هشام الزعبي');
+    await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-49-excel-row-files.png` });
+    await page.mouse.move(5, 5);
 
     // back to the previous file as current: its own export state shows (#7 is in it now)
     await menu(page, /ملفات العميل/);

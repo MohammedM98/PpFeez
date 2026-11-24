@@ -1019,6 +1019,14 @@ export function handle(cmd: string, a: Args = {}): unknown {
       if (f) { db.customerFiles[a.customerId] = db.customerFiles[a.customerId].filter((x) => x !== f); makeCurrent(a.customerId, f); }
       return excelView(a.customerId);
     }
+    case 'customer_excel_item_files': {
+      // the files this row was really written to (not lines covered by a carried balance), oldest export first
+      const all = [...(db.customerFiles[a.customerId] ?? []), ...(db.customerExcel[a.customerId] ? [db.customerExcel[a.customerId]] : [])];
+      return all.flatMap((f) => {
+        const it = f.items.find((i) => i.kind === a.item?.kind && i.id === a.item?.id && i.status === 'exported' && !i.covered);
+        return it ? [{ fileId: f.id, label: f.label, path: f.path, exportedAt: it.exportedAt ?? f.updatedAt ?? nowIso() }] : [];
+      }).sort((x, y) => (x.exportedAt < y.exportedAt ? -1 : 1));
+    }
     case 'customer_excel_remove_file': {
       if (db.customerExcel[a.customerId]?.id === a.fileId) fail('invalid_transition', 'لا يُزال الملف الحالي. اجعل ملفاً آخر هو الحالي أولاً.');
       db.customerFiles[a.customerId] = (db.customerFiles[a.customerId] ?? []).filter((x) => x.id !== a.fileId);

@@ -200,6 +200,9 @@ export const api = {
     call<{ file: CustomerExcelFile; added: number; sheets: string[] }>('customer_excel_new_file', { customerId, path, start, makeCurrent, label }),
   customerExcelSetCurrent: (customerId: number, fileId: number) => call<CustomerExcel>('customer_excel_set_current', { customerId, fileId }),
   customerExcelRemoveFile: (customerId: number, fileId: number) => call<null>('customer_excel_remove_file', { customerId, fileId }),
+  /** the files a statement row was written to, oldest first (for its tooltip, fetched when it opens) */
+  customerExcelItemFiles: (customerId: number, item: CustomerExcelItemRef) =>
+    call<{ fileId: number; label: string | null; path: string; exportedAt: string }[]>('customer_excel_item_files', { customerId, item }),
 };
 
 export const events = {

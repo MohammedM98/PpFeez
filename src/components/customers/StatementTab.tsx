@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
+import { MenuTrigger, Menu, MenuItem, Popover, Tooltip, TooltipTrigger, Button as RacButton } from 'react-aria-components';
 import { Check, ChevronDown, ChevronUp, Download, FileSpreadsheet, MoreHorizontal, Printer, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
 import type { Customer, CustomerExcelItemRef, ExcelStatus, LedgerEntry, Payout, PayoutSelection, Period, StatementFilter, StatementRow, Transaction, TxnAction } from '@/lib/contract';
@@ -17,6 +17,7 @@ import { Checkbox, Select } from '@/components/ui/Field';
 import { DateRangePicker } from '@/components/ui/DateFields';
 import { HeadLabel, SELECT_W, TableFrame, TotalsCell, TotalsTable, sumWidths } from '@/components/ui/Table';
 import { Trunc } from '@/components/ui/Trunc';
+import { DateTime } from '@/components/ui/DateTime';
 import { toast } from '@/components/ui/Toast';
 import { cx } from '@/components/ui/cx';
 import { DetailPanel } from '@/components/transactions/DetailPanel';
@@ -104,14 +105,47 @@ export function SummaryBar({ customerId, currency }: { customerId: number; curre
 }
 
 /** ✓ صُدّرت / ⏳ بانتظار التصدير / — لم تُصدَّر (SPEC 6.8.3): an icon and words, never the colour alone. */
-function ExcelCell({ status, excel }: { status: ExcelStatus; excel: Customer['excel'] }) {
+/** The files a row went to, fetched when its tooltip opens and kept for the session (SPEC 6.8.4). */
+function ItemFiles({ customerId, item }: { customerId: number; item: CustomerExcelItemRef }) {
+  const q = useQuery({
+    queryKey: ['customer_excel_item_files', customerId, item.kind, item.id],
+    queryFn: () => api.customerExcelItemFiles(customerId, item),
+    staleTime: Infinity,
+  });
+  if (!q.data) return <span className="text-fg-3">…</span>;
+  if (!q.data.length) return null;
+  return (
+    <ul className="mt-1 flex flex-col gap-0.5">
+      {q.data.map((f) => (
+        <li key={f.fileId} className="num text-[12px] text-fg-2">
+          {f.label || f.path.split(/[\\/]/).pop()!.replace(/\.xlsx$/i, '')} · <DateTime iso={f.exportedAt} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** ✓ صُدّرت / ⏳ بانتظار التصدير / — لم تُصدَّر (SPEC 6.8.3): an icon and words, never the colour alone. */
+function ExcelCell({ status, excel, customerId, item }: { status: ExcelStatus; excel: Customer['excel']; customerId: number; item: CustomerExcelItemRef }) {
   if (!excel) return <td />;
   const v = {
     exported: { icon: '✓', text: 'صُدّرت', cls: 'text-pos', title: excel.filesCount > 1 ? 'صُدّرت إلى الملف الحالي' : 'في ملف العميل' },
     pending: { icon: '⏳', text: 'بانتظار', cls: 'text-warn', title: `بانتظار التصدير${excel.lastError ? `: ${excelWhy(excel.lastError)}` : ''}` },
-    not_exported: { icon: '—', text: 'لم تُصدَّر', cls: 'text-fg-3', title: 'ليست في ملف العميل. حدّدها ثم «إضافة إلى ملف العميل» أو اضغط E' },
+    not_exported: { icon: '—', text: 'لم تُصدَّر', cls: 'text-fg-3', title: excel.filesCount > 1 ? 'ليست في الملف الحالي' : 'ليست في ملف العميل. حدّدها ثم «إضافة إلى ملف العميل» أو اضغط E' },
   }[status];
-  return <td data-excel={status} title={v.title}><span className={cx('inline-flex items-center gap-1 text-[12.5px]', v.cls)}><span aria-hidden>{v.icon}</span>{v.text}</span></td>;
+  return (
+    <td data-excel={status}>
+      <TooltipTrigger delay={300}>
+        <RacButton aria-label={`${v.text}: ${v.title}`} className={cx('inline-flex items-center gap-1 rounded-[4px] text-[12.5px] outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus', v.cls)}>
+          <span aria-hidden>{v.icon}</span>{v.text}
+        </RacButton>
+        <Tooltip placement="top" className="max-w-72 rounded-card border border-line bg-surface px-3 py-2 text-[12.5px] text-fg shadow-(--shadow-float)">
+          <div>{v.title}</div>
+          {excel.filesCount > 1 && <><div className="mt-1 text-fg-3">الملفات التي صُدّرت إليها:</div><ItemFiles customerId={customerId} item={item} /></>}
+        </Tooltip>
+      </TooltipTrigger>
+    </td>
+  );
 }
 
 function SentCell({ t, onPayout }: { t: Transaction; onPayout: (id: number) => void }) {
@@ -394,7 +428,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                     <td className="text-[13px] text-fg-3"><div dir="ltr" className="num truncate text-right" title={t.paypalTxnId}>{t.paypalTxnId}</div></td>
                     <td>{t.matched ? <span className="inline-flex items-center gap-1 text-[13px] text-pos"><Check className="size-3.5" strokeWidth={2.2} />مطابق</span> : <span className="text-fg-3">—</span>}</td>
                     <td><Trunc className="text-[13px] text-fg-2">{t.note ?? ''}</Trunc></td>
-                    <ExcelCell status={t.excelStatus} excel={customer.excel} />
+                    <ExcelCell status={t.excelStatus} excel={customer.excel} customerId={customer.id} item={{ kind: 'txn', id: t.id }} />
                     <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                       <MenuTrigger>
                         <Button variant="quiet" size="icon" aria-label="إجراءات الحوالة"><MoreHorizontal /></Button>
@@ -437,7 +471,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                     <td className="text-[13px] text-fg-3">{p.details.reference && <div dir="ltr" className="num truncate text-right" title={p.details.reference}>{p.details.reference}</div>}</td>
                     <td className="text-fg-3">—</td>
                     <td><Trunc className="text-[13px] text-fg-2">{p.details.note ?? ''}</Trunc></td>
-                    {p.status === 'sent' ? <ExcelCell status={p.excelStatus} excel={customer.excel} /> : <td />}
+                    {p.status === 'sent' ? <ExcelCell status={p.excelStatus} excel={customer.excel} customerId={customer.id} item={{ kind: 'payout', id: p.id }} /> : <td />}
                     <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                       <MenuTrigger>
                         <Button variant="quiet" size="icon" aria-label="إجراءات الدفعة"><MoreHorizontal /></Button>
@@ -478,7 +512,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                   <td className="text-[13px] text-fg-3">{e.reference && <div dir="ltr" className="truncate text-right" title={e.reference}>{e.reference}</div>}</td>
                   <td className="text-fg-3">—</td>
                   <td />
-                  <ExcelCell status={e.excelStatus} excel={customer.excel} />
+                  <ExcelCell status={e.excelStatus} excel={customer.excel} customerId={customer.id} item={{ kind: 'ledger', id: e.id }} />
                   <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                     <MenuTrigger>
                       <Button variant="quiet" size="icon" aria-label="إجراءات القيد"><MoreHorizontal /></Button>

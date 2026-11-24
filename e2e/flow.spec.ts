@@ -427,7 +427,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.getByRole('radio', { name: /إضافة الجديد/ })).toBeChecked();
     await page.getByRole('button', { name: 'تحديث ملف Excel' }).click();
     await expect(page.getByText('حُدّث ملف Excel')).toBeVisible();
-    await expect(page.getByText(/أُضيفت .*جديدة، وحُدّث صفّان/)).toBeVisible();
+    await expect(page.getByText(/أُضيفت .*جديد.*، وحُدّث صفّان/)).toBeVisible();
     await page.locator('#excel').evaluate((el) => el.scrollIntoView({ block: 'center' }));
     await shot('31-excel-mode');
 
