@@ -92,7 +92,7 @@ export type Customer = {
 export type CustomerInput = {
   name: string; phone?: string | null; defaultCommissionBps: number; notes?: string | null; isActive?: boolean;
 };
-// customers_list({ search?: string, active?: boolean }): Customer[]
+// customers_list({ search?: string, active?: boolean, hasPending?: boolean }): Customer[]
 // customer_get({ id }): Customer
 // customer_create({ input: CustomerInput }): Customer          throws duplicate (field: name)
 // customer_update({ id, input: CustomerInput }): Customer
@@ -183,6 +183,12 @@ export type TxnPreview = {        // معاينة بلا حفظ
 export type HistoryItem = { id: number; action: string; labelAr: string; details: Record<string, unknown>; createdAt: IsoDate };
 
 // txn_list({ filter: TxnFilter, sort: TxnSort, page: number, pageSize: number }): TxnListResult
+//   الوارد (SPEC §6.3): filter.status = 'unassigned' | 'excluded' بلا customerId. صفحة العميل: customerId + status = 'pending_approval' | 'approved'.
+export type TxnLocation =
+  | { kind: 'inbox' } | { kind: 'excluded' }
+  | { kind: 'customer'; customerId: number; customerName: string; status: 'pending_approval' | 'approved' };
+export type TxnSearchHit = { txn: Transaction; location: TxnLocation };
+// txn_search_all({ query: string, limit?: number }): TxnSearchHit[]   // كل الحالات؛ رقم المعاملة، المرسل، الإيميل، الملاحظة، أو مبلغ ("71.25")
 // txn_counts({ filter: Omit<TxnFilter,'status'> }): TxnCounts
 // txn_get({ id }): Transaction
 // txn_history({ id }): HistoryItem[]
