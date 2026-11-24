@@ -162,10 +162,18 @@ function AssignDialog({ txn, ids, move, onClose, onBulk }: { txn?: Transaction; 
     const name = customer.name;
     if (txn) {
       const approved = approve && canApprove;
-      const r = await run(async () => {
-        if (move) await api.txnUnassign(txn.id);
-        return api.txnAssign(txn.id, customerId, c.input, approved);
-      });
+      if (move) {
+        // two calls (SPEC 6.5): if the second fails the transaction is simply back in the inbox
+        const off = await run(() => api.txnUnassign(txn.id));
+        if (!off.ok) return;
+        const on = await run(() => api.txnAssign(txn.id, customerId, c.input), undefined, { quiet: () => true });
+        if (!on.ok) {
+          onClose();
+          toast.error(`لم تُنقل إلى ${name}: ${on.error.messageAr}`, 'أُلغي تخصيصها وهي الآن في الوارد، ولم يتغيّر أي مبلغ. خصّصها من هناك.');
+          return;
+        }
+      }
+      const r = move ? { ok: true as const } : await run(() => api.txnAssign(txn.id, customerId, c.input, approved));
       if (!r.ok) return;
       onClose();
       toast.action(approved ? `اعتُمدت ونُقلت إلى ${name}` : `نُقلت إلى ${name}`, [
