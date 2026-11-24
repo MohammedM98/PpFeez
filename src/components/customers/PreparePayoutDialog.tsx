@@ -116,7 +116,9 @@ export function PreparePayoutDialog({ customer, currency, initial, onClose }: { 
       return;
     }
     setStep('form');
-    const field = r.error.field ?? (r.error.code === 'invalid_amount' ? 'amount' : 'form');
+    // the core names the amount field amountText; transfer problems (txnIds, held, unapproved) show under the preview
+    const f = r.error.field;
+    const field = f === 'amountText' || r.error.code === 'invalid_amount' ? 'amount' : f === 'overlap' || f === 'difference_reason' || f === 'matched' ? f : 'overlap';
     setErrors({ [field]: r.error.messageAr });
   };
 
@@ -178,6 +180,17 @@ export function PreparePayoutDialog({ customer, currency, initial, onClose }: { 
                     <bdi dir="ltr" className="num text-right text-fg-3">{formatDateTime(t.occurredAt).slice(0, 10)}</bdi>
                     <Trunc className="min-w-0 text-fg">{t.payerName || t.payerEmail}</Trunc>
                     <Amount minor={t.customerAmountMinor} currency={currency} showCurrency={false} className="font-medium" />
+                  </li>
+                ))}
+              </ul>
+            )}
+            {p.returned.length > 0 && (
+              <ul className="divide-y divide-line rounded-card border border-line bg-neg-soft/40" aria-label="مرتجعات تُخصم">
+                {p.returned.map((e) => (
+                  <li key={e.id} className="grid grid-cols-[88px_1fr_auto] items-center gap-3 px-3 py-1.5 text-[13px]">
+                    <bdi dir="ltr" className="num text-right text-fg-3">{e.entryDate}</bdi>
+                    <Trunc className="min-w-0 text-fg">{e.description}</Trunc>
+                    <Amount minor={e.amountMinor} currency={currency} showCurrency={false} className="font-medium text-neg" />
                   </li>
                 ))}
               </ul>

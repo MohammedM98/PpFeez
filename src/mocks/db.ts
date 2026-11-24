@@ -204,6 +204,8 @@ export function seed(): Db {
   const p1 = hisham.slice(0, 3), p2 = hisham.slice(3, 5);
   for (const t of p1) t.matched = true;
   const p1Entry = push({ customerId: 8, currency: 'USD', type: 'payout', amountMinor: -due(p1), transactionId: null, reversesEntryId: null, payoutMethod: 'usdt', reference: '0x7c2f19e4a0b38d55a1f2c09e4b7d9a41', description: 'دفعة 1 (1-3)', entryDate: dayStr(20) });
+  // a return after the first payout: a partial PayPal refund to Ava Collins, deducted from the next payout (SPEC 4.8)
+  push({ customerId: 8, currency: 'USD', type: 'adjustment', amountMinor: -2000, transactionId: null, reversesEntryId: null, payoutMethod: null, reference: '8HZ37RET', description: 'مرتجع: استرداد جزئي لـ Ava Collins', entryDate: dayStr(9) });
   const payouts: PayoutRow[] = [
     { id: 1, customerId: 8, currency: 'USD', seq: 1, status: 'sent', amountMinor: due(p1), dueMinor: due(p1), date: dayStr(20), rangeLabel: '(1-3)',
       details: { method: 'usdt', platform: 'Binance', network: 'TRC20', destination: 'TQx7mWn2r8VbP3kJd9sHe4L1aZc6Yk9Lm', reference: '0x7c2f19e4a0b38d55a1f2c09e4b7d9a41', note: null },

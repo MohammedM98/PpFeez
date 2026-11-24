@@ -562,11 +562,13 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(prep.getByLabel('تنبيهات')).toContainText('مدفوعة سابقاً في الدفعة 1: #3');
     await expect(prep.getByLabel('تنبيهات')).toContainText('مدفوعة سابقاً في الدفعة 2: #4، #5');
     await expect(prep).toContainText('(6-7)');
+    // an unsettled return (negative line) is deducted from the payout
+    await expect(prep.getByLabel('مرتجعات تُخصم')).toContainText('مرتجع: استرداد جزئي لـ Ava Collins');
 
     // all unpaid (the default): #6-8; the "matched" box is required; a different amount needs a reason
     await prep.getByRole('radio', { name: 'كل غير المدفوع' }).click({ force: true });
     await expect(prep).toContainText('(6-8)');
-    await expect(prep).toContainText('775.70');
+    await expect(prep).toContainText('755.70');
     await prep.getByRole('button', { name: 'متابعة' }).click();
     await expect(prep).toContainText('راجع الحوالات وأكّد أنها مطابقة');
     await prep.getByRole('checkbox', { name: 'راجعتُ الحوالات وهي مطابقة' }).check({ force: true });
@@ -577,7 +579,7 @@ for (const theme of ['dark', 'light'] as const) {
     await shot('38-prepare-payout');
     await prep.getByRole('button', { name: 'متابعة' }).click();
     const confirm = page.getByRole('dialog');
-    await expect(confirm).toContainText('-775.70');
+    await expect(confirm).toContainText('-755.70');
     await confirm.getByRole('button', { name: 'تم الإرسال' }).click();
     await expect(page.getByText('أُرسلت الدفعة 3 (6-8)')).toBeVisible();
     await expect(page.getByRole('row').filter({ hasText: 'Noah Bennett' })).toContainText('نعم — دفعة 3');

@@ -394,10 +394,15 @@ function payoutPrepare(customerId: number, currency: string, sel: PayoutSelectio
   const held = found.filter((t) => !payoutOf(t.id) && t.holdStatus !== null);
   const included = found.filter((t) => !payoutOf(t.id) && t.holdStatus === null);
   const gross = sumOf(included, (t) => t.grossMinor), net = sumOf(included, (t) => t.netMinor), commission = sumOf(included, (t) => t.commissionMinor);
+  // returns (negative lines) not yet settled by a payout are deducted from the next one
+  const settled = new Set(livePayouts().flatMap((p) => p.ledgerIds));
+  const returned = db.ledger.filter((e) => e.customerId === customerId && e.currency === currency && e.type === 'adjustment' && e.amountMinor < 0
+    && e.description.startsWith('مرتجع') && e.reversedByEntryId === null && !settled.has(e.id));
+  const returns = returned.reduce((n, e) => n + e.amountMinor, 0);
   return {
-    included: included.map(view), returned: [], alreadyPaid, excludedHeld: held.map(view), missingSeqs,
-    foundCount: found.length, countedCount: included.length, returnedCount: 0,
-    grossMinor: gross, netPaypalMinor: net, commissionMinor: commission, dueMinor: sumOf(included, (t) => t.customerAmountMinor),
+    included: included.map(view), returned: returned.map((e) => withRunning(e)), alreadyPaid, excludedHeld: held.map(view), missingSeqs,
+    foundCount: found.length, countedCount: included.length, returnedCount: returned.length,
+    grossMinor: gross, netPaypalMinor: net, commissionMinor: commission, dueMinor: sumOf(included, (t) => t.customerAmountMinor) + returns,
     rangeLabel: rangeLabelOf(included.map((t) => t.customerSeq!)),
   };
 }
@@ -419,7 +424,8 @@ function payoutCreate(a: Args): Payout {
   if (overlap.length) fail('validation', `مدفوعة سابقاً في الدفعة ${overlap[0][1]!.seq}`, 'overlap');
   const rows = ids.map(getTxn);
   if (rows.some((t) => t.customerId !== a.customerId || t.currency !== a.currency || t.status !== 'approved')) fail('invalid_transition', 'كل حوالات الدفعة يجب أن تكون معتمدة لهذا العميل وبهذه العملة');
-  const dueMinor = sumOf(rows, (t) => t.customerAmountMinor);
+  const returnedIds: number[] = a.returnedEntryIds ?? [];
+  const dueMinor = sumOf(rows, (t) => t.customerAmountMinor) + db.ledger.filter((e) => returnedIds.includes(e.id)).reduce((n, e) => n + e.amountMinor, 0);
   let amountMinor = dueMinor;
   if (a.amountText?.trim()) {
     const m = amountTextToMinor2(String(a.amountText).replace(/,/g, '').trim());
