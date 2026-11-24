@@ -545,7 +545,8 @@ for (const theme of ['dark', 'light'] as const) {
     await page.goto(`/?theme=${theme}#/customers/8`);
     const summary = page.getByRole('region', { name: 'ملخص USD' });
     await expect(summary).toContainText('غير مدفوع');
-    await expect(summary).toContainText('3 حوالات');
+    // a recorded (draft) payout only reserves its transfers: #4-8 are still not paid
+    await expect(summary).toContainText('5 حوالات');
     const p1 = page.locator('tr[data-kind=payout]').filter({ hasText: 'دفعة 1' });
     await expect(p1).toContainText('695.09');
     await expect(p1).toContainText('تم الإرسال');
@@ -583,7 +584,7 @@ for (const theme of ['dark', 'light'] as const) {
     await confirm.getByRole('button', { name: 'تم الإرسال' }).click();
     await expect(page.getByText('أُرسلت الدفعة 3 (6-8)')).toBeVisible();
     await expect(page.getByRole('row').filter({ hasText: 'Noah Bennett' })).toContainText('نعم — دفعة 3');
-    await expect(summary).toContainText('0 حوالة');
+    await expect(summary).toContainText('حوالتان');
 
     // the recorded payout 2 is confirmed as sent; then payout 1 is cancelled: its transfers are unpaid again
     const p2 = page.locator('tr[data-kind=payout]').filter({ hasText: 'دفعة 2' });

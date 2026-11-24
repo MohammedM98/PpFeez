@@ -455,7 +455,7 @@ function customerSummary(customerId: number, currency: string): CustomerSummary 
     .reduce((n, e) => n - e.amountMinor, 0);
   return {
     currency, netCompletedMinor: sumOf(approved, (t) => t.customerAmountMinor), sentMinor: sent, remainingMinor: balanceOf(customerId, currency),
-    notPaidCount: approved.filter((t) => !payoutOf(t.id)).length, grossBeforeCommissionMinor: sumOf(approved, (t) => t.netMinor),
+    notPaidCount: approved.filter((t) => payoutOf(t.id)?.status !== 'sent').length, grossBeforeCommissionMinor: sumOf(approved, (t) => t.netMinor),
     commissionMinor: sumOf(approved, (t) => t.commissionMinor), txnCount: approved.length,
     paidCount: approved.filter((t) => payoutOf(t.id)?.status === 'sent').length,
   };
@@ -506,14 +506,13 @@ function excelView(customerId: number): CustomerExcel | null {
 
 type ExcelLine = CustomerExcelPreview['toAdd'][number];
 function excelLine(customerId: number, ref: CustomerExcelItemRef): ExcelLine | CustomerExcelPreview['notAllowed'][number] {
-  // the preview types only know txn/ledger: a payout is reported by its id under 'ledger' (contract note sent)
   if (ref.kind === 'payout') {
     const p = db.payouts.find((x) => x.id === ref.id);
-    if (!p || p.customerId !== customerId) return { kind: 'ledger', id: ref.id, reasonAr: 'دفعة عميل آخر' };
-    if (p.status !== 'sent') return { kind: 'ledger', id: ref.id, reasonAr: p.status === 'draft' ? 'الدفعة مسجلة ولم تُرسل بعد' : 'الدفعة ملغاة' };
-    return { kind: 'ledger', id: p.id, date: p.date, labelAr: `دفعة ${p.seq} ${p.rangeLabel}`, currency: p.currency, amountMinor: -p.amountMinor };
+    if (!p || p.customerId !== customerId) return { kind: 'payout', id: ref.id, reasonAr: 'دفعة عميل آخر' };
+    if (p.status !== 'sent') return { kind: 'payout', id: ref.id, reasonAr: p.status === 'draft' ? 'الدفعة مسجلة ولم تُرسل بعد' : 'الدفعة ملغاة' };
+    return { kind: 'payout', id: p.id, date: p.date, labelAr: `دفعة ${p.seq} ${p.rangeLabel}`, currency: p.currency, amountMinor: -p.amountMinor };
   }
-  const r = { kind: ref.kind as 'txn' | 'ledger', id: ref.id };
+  const r = { kind: ref.kind, id: ref.id };
   if (ref.kind === 'txn') {
     const t = db.txns.find((x) => x.id === ref.id);
     if (!t) return { ...r, reasonAr: 'المعاملة غير موجودة' };
