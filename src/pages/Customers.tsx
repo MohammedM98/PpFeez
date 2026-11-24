@@ -18,6 +18,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { TextField } from '@/components/ui/TextField';
 import { Trunc } from '@/components/ui/Trunc';
 import { cx } from '@/components/ui/cx';
+import { DangerConfirm, deletedToast } from '@/components/ui/DangerConfirm';
 
 type ActiveFilter = 'active' | 'inactive' | 'all';
 
@@ -43,6 +44,7 @@ export function CustomersPage() {
   const [q, setQ] = useState('');
   const [active, setActive] = useState<ActiveFilter>('active');
   const [editing, setEditing] = useState<Customer | 'new' | null>(null);
+  const [deleting, setDeleting] = useState<Customer | null>(null);
   const { run } = useAction();
   useEffect(() => { const t = setTimeout(() => setQ(search), 200); return () => clearTimeout(t); }, [search]);
 
@@ -54,6 +56,7 @@ export function CustomersPage() {
   const onMenu = (c: Customer, k: Key) => {
     if (k === 'ledger') navigate(`/customers/${c.id}`);
     if (k === 'edit') setEditing(c);
+    if (k === 'delete') setDeleting(c);
     if (k === 'toggle') void run(() => api.customerSetActive(c.id, !c.isActive), c.isActive ? `عُطّل ${c.name}` : `فُعّل ${c.name}`);
   };
 
@@ -105,6 +108,7 @@ export function CustomersPage() {
                         <MenuItem id="ledger" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">فتح الدفتر</MenuItem>
                         <MenuItem id="edit" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">تعديل</MenuItem>
                         <MenuItem id="toggle" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">{c.isActive ? 'تعطيل' : 'تفعيل'}</MenuItem>
+                        <MenuItem id="delete" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm text-neg outline-none data-[focused]:bg-raised">حذف العميل</MenuItem>
                       </Menu>
                     </Popover>
                   </MenuTrigger>
@@ -117,6 +121,7 @@ export function CustomersPage() {
       <p className="mt-3 text-[12.5px] text-fg-3">لا يُحذف عميل له معاملات أو قيود؛ يُعطَّل فيختفي من قوائم التخصيص ويبقى دفتره</p>
 
       {editing && <CustomerDialog customer={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+      {deleting && <DeleteCustomerDialog customer={deleting} onClose={() => setDeleting(null)} />}
     </div>
   );
 }
@@ -165,5 +170,44 @@ export function CustomerDialog({ customer, onClose, onCreated }: { customer: Cus
         <TextField label="ملاحظات" multiline value={notes} onChange={setNotes} className="col-span-2" />
       </div>
     </Dialog>
+  );
+}
+
+/** SPEC 4.7: deletes the customer and their whole ledger; their transactions return to unassigned. */
+export function DeleteCustomerDialog({ customer, onClose, onDeleted }: { customer: Customer; onClose: () => void; onDeleted?: () => void }) {
+  const preview = useQuery({ queryKey: ['customer_delete_preview', customer.id], queryFn: () => api.customerDeletePreview(customer.id), staleTime: 0 });
+  const [mismatch, setMismatch] = useState<string>();
+  const { run, pending } = useAction();
+  const p = preview.data;
+  return (
+    <DangerConfirm title={`حذف ${customer.name}`} confirmLabel="حذف العميل ودفتره" pending={pending} isLoading={!p} backup="auto" withReason={false}
+      onClose={onClose}
+      typeToConfirm={{ label: <>اكتب اسم العميل للتأكيد: <b className="font-medium text-fg">{customer.name}</b></>, expected: customer.name, error: mismatch }}
+      onConfirm={async () => {
+        setMismatch(undefined);
+        const r = await run(() => api.customerDelete(customer.id, customer.name), undefined, { quiet: (e) => e.code === 'confirm_mismatch' });
+        if (r.ok) { deletedToast(`حُذف ${customer.name}`, r.value.backup); onClose(); onDeleted?.(); }
+        else if (r.error.code === 'confirm_mismatch') setMismatch(r.error.messageAr);
+      }}>
+      {p && (
+        <div className="flex flex-col gap-3 text-sm">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-1.5 rounded-card bg-raised/60 px-4 py-3">
+            <dt className="text-fg-3">معاملاته</dt><dd><span className="num">{p.assignedCount}</span>{p.approvedCount > 0 && <>، منها <span className="num">{p.approvedCount}</span> معتمدة</>}</dd>
+            <dt className="text-fg-3">قيود دفتره</dt><dd className="num">{p.ledgerEntryCount}</dd>
+            <dt className="text-fg-3">أرصدته</dt><dd><BalanceChips c={{ balances: p.balances }} /></dd>
+          </dl>
+          <ul className="list-disc space-y-1 ps-5 text-fg-2">
+            <li className="text-neg">يُحذف دفتره بالكامل، وتختفي أرصدته من لوحة التحكم.</li>
+            {p.assignedCount > 0 && <li>معاملاته لا تُحذف: ترجع «غير مخصّصة» ويمكن تخصيصها لعميل آخر.</li>}
+          </ul>
+          {customer.isActive && (
+            <div className="flex items-center justify-between gap-3 rounded-card border border-line px-4 py-3">
+              <span className="text-fg-2">تريد إخفاءه فقط؟ التعطيل يبقي دفتره وأرصدته.</span>
+              <Button size="sm" variant="secondary" onPress={async () => { const r = await run(() => api.customerSetActive(customer.id, false), `عُطّل ${customer.name}`); if (r.ok) onClose(); }}>تعطيل بدلاً من ذلك</Button>
+            </div>
+          )}
+        </div>
+      )}
+    </DangerConfirm>
   );
 }

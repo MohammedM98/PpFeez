@@ -6,7 +6,7 @@ import type {
   RefundAlert, Transaction, TxnAction, TxnCounts, TxnFilter, TxnListResult, TxnPreview, TxnSort, AdjustmentInput, PayoutInput,
   MailboxInput, ParseStatus, PullRange,
 } from '@/lib/contract';
-import { creditDescription, halfUp, ltr, seed, type Db, type TxnRow } from './db';
+import { creditDescription, halfUp, ltr, seed, type Db, type LedgerRow, type TxnRow } from './db';
 
 let db: Db = seed();
 export function resetDb(next?: Partial<Db['status']>) {
@@ -39,18 +39,18 @@ function customerName(id: number | null) {
 }
 
 function allowedActions(t: TxnRow): TxnAction[] {
-  if (t.type !== 'payment') return t.status === 'excluded' ? ['include', 'edit_note'] : ['exclude', 'edit_note'];
+  if (t.type !== 'payment') return t.status === 'excluded' ? ['include', 'edit_note', 'delete'] : ['exclude', 'edit_note', 'delete'];
   const review: TxnAction[] = t.needsReview ? ['confirm_review', 'edit_details'] : [];
   switch (t.status) {
-    case 'unassigned': return [...review, 'assign', 'set_fee', ...(t.needsReview ? [] : ['edit_details' as const]), 'exclude', 'edit_note'];
+    case 'unassigned': return [...review, 'assign', 'set_fee', ...(t.needsReview ? [] : ['edit_details' as const]), 'exclude', 'edit_note', 'delete'];
     case 'pending_approval': {
       const a: TxnAction[] = [...review, 'set_fee', 'set_commission'];
       if (!t.needsReview && t.holdStatus !== 'pending_echeck' && t.feeMinor !== null && (t.customerAmountMinor ?? 0) > 0) a.push('approve');
-      a.push('unassign', 'edit_note');
+      a.push('unassign', 'edit_note', 'delete');
       return a;
     }
-    case 'approved': return ['unapprove', 'edit_note'];
-    case 'excluded': return ['include', 'edit_note'];
+    case 'approved': return ['unapprove', 'edit_note', 'delete'];
+    case 'excluded': return ['include', 'edit_note', 'delete'];
   }
 }
 
@@ -223,8 +223,20 @@ function unapprove(id: number, reason: string) {
 }
 
 // ---------- ledger ----------
-function addLedger(e: Partial<LedgerEntry> & Pick<LedgerEntry, 'customerId' | 'currency' | 'type' | 'amountMinor' | 'description' | 'entryDate'>): LedgerEntry {
-  const entry: LedgerEntry = {
+/** SPEC 4.7: payouts, adjustments and their manual reversals can be deleted; credits are managed from the transaction. */
+function deletability(e: LedgerRow): Pick<LedgerEntry, 'deletable' | 'notDeletableReasonAr'> {
+  if (e.type === 'credit') return { deletable: false, notDeletableReasonAr: 'قيد اعتماد: يُدار من المعاملة (إلغاء الاعتماد أو حذف المعاملة)' };
+  if (e.transactionId !== null) return { deletable: false, notDeletableReasonAr: 'مرتبط بمعاملة: يُدار منها' };
+  if (e.reversesEntryId !== null) {
+    const orig = db.ledger.find((x) => x.id === e.reversesEntryId);
+    if (orig?.type === 'credit') return { deletable: false, notDeletableReasonAr: 'قيد إلغاء اعتماد: يُدار من المعاملة' };
+  }
+  return { deletable: true, notDeletableReasonAr: null };
+}
+const asEntry = (e: LedgerRow, running = e.runningBalanceMinor): LedgerEntry => ({ ...e, runningBalanceMinor: running, ...deletability(e) });
+
+function addLedger(e: Partial<LedgerRow> & Pick<LedgerRow, 'customerId' | 'currency' | 'type' | 'amountMinor' | 'description' | 'entryDate'>): LedgerEntry {
+  const entry: LedgerRow = {
     id: ++db.seq, runningBalanceMinor: 0, transactionId: null, reversesEntryId: null, reversedByEntryId: null,
     payoutMethod: null, reference: null, createdAt: nowIso(), ...e,
   };
@@ -238,13 +250,13 @@ function ordered(customerId: number, currency: string) {
     .sort((a, b) => (a.entryDate === b.entryDate ? a.id - b.id : a.entryDate < b.entryDate ? -1 : 1));
 }
 
-function withRunning(entry: LedgerEntry): LedgerEntry {
+function withRunning(entry: LedgerRow): LedgerEntry {
   let bal = 0;
   for (const e of ordered(entry.customerId, entry.currency)) {
     bal += e.amountMinor;
-    if (e.id === entry.id) return { ...e, runningBalanceMinor: bal };
+    if (e.id === entry.id) return asEntry(e, bal);
   }
-  return entry;
+  return asEntry(entry);
 }
 
 function balanceOf(customerId: number, currency: string) {
@@ -269,7 +281,7 @@ function entries(customerId: number, currency: string, period?: Period): LedgerV
     bal += e.amountMinor;
     if (period?.from && e.entryDate < period.from) { opening = bal; continue; }
     if (period?.to && e.entryDate > period.to) continue;
-    out.push({ ...e, runningBalanceMinor: bal });
+    out.push(asEntry(e, bal));
   }
   const closing = out.length ? out[out.length - 1].runningBalanceMinor : opening;
   return { openingBalanceMinor: opening, entries: out, closingBalanceMinor: closing };
@@ -306,6 +318,43 @@ function refundAlerts(): RefundAlert[] {
   return out;
 }
 
+// ---------- delete helpers (SPEC 4.7) ----------
+function takeBackup() {
+  if (!db.settings.backupDir) return null;
+  const f = { path: `${db.settings.backupDir}\\ppfeez-${nowIso().slice(0, 19).replace(/[:T]/g, '-')}-before-delete.db`, createdAt: nowIso(), sizeBytes: 1_490_944 };
+  db.backups.unshift(f);
+  return f;
+}
+
+/** An entry and its reversal pair, both ways. */
+function entryGroup(e: LedgerRow): LedgerRow[] {
+  const pair = e.reversedByEntryId !== null ? db.ledger.find((x) => x.id === e.reversedByEntryId) : undefined;
+  return pair ? [e, pair] : [e];
+}
+
+function effectsOf(entries: LedgerRow[]) {
+  const m = new Map<string, { customerId: number; customerName: string; currency: string; balanceDeltaMinor: number }>();
+  for (const e of entries) {
+    const k = `${e.customerId}|${e.currency}`;
+    const x = m.get(k) ?? { customerId: e.customerId, customerName: db.customers.find((c) => c.id === e.customerId)?.name ?? '—', currency: e.currency, balanceDeltaMinor: 0 };
+    x.balanceDeltaMinor -= e.amountMinor;
+    m.set(k, x);
+  }
+  return [...m.values()].filter((x) => x.balanceDeltaMinor !== 0);
+}
+
+function resetPreview(s: { transactions: boolean; customers: boolean; mailboxes: boolean; settings: boolean }) {
+  const notes: string[] = [];
+  if (s.customers && !s.transactions) notes.push('المعاملات تبقى وترجع كلها غير مخصّصة');
+  if (s.transactions) notes.push('يُعاد السحب من بداية كل بريد في المرة القادمة');
+  if (s.mailboxes) notes.push('تُحذف كلمات مرور التطبيقات من خزنة ويندوز');
+  if (s.settings) notes.push('الإعدادات تعود للافتراضي ويظهر معالج الإعداد. كلمة القفل تبقى');
+  return {
+    transactions: s.transactions ? db.txns.length : 0, rawEmails: s.transactions ? db.emails.length : 0, pullRuns: s.transactions ? db.pullRuns.length : 0,
+    customers: s.customers ? db.customers.length : 0, ledgerEntries: s.customers ? db.ledger.length : 0, mailboxes: s.mailboxes ? db.mailboxes.length : 0, notes,
+  };
+}
+
 // ---------- PayPal domains (SPEC 5.6) ----------
 const domainOf = (addr: string) => (addr.split('@')[1] ?? '').toLowerCase();
 
@@ -328,7 +377,18 @@ function reparse(ids: number[]): BulkResult {
   for (const id of ids) {
     const e = db.emails.find((x) => x.id === id);
     if (!e) { res.failed.push({ id, code: 'not_found', messageAr: 'الرسالة غير موجودة' }); continue; }
-    if (e.parseReason === 'unknown_paypal_domain' && trusted(domainOf(e.fromAddr))) {
+    if (e.parseReason === 'deleted_by_user') {
+      const tid = Math.max(0, ...db.txns.map((t) => t.id)) + 1;
+      db.txns.push({
+        id: tid, source: 'email', paypalTxnId: `RE${String(e.id).padStart(5, '0')}PARSED${tid}`, relatedTxnId: null, type: 'payment',
+        payerName: e.subject.replace(/^.*from /, '') || null, payerEmail: null, payerNote: null, currency: 'USD', grossMinor: 10000, feeMinor: null, netMinor: null,
+        feeIsEstimated: false, occurredAt: e.receivedAt, status: 'unassigned', customerId: null, commissionMode: null, commissionBps: null, commissionMinor: null,
+        customerAmountMinor: null, assignedAt: null, approvedAt: null, note: null, mailboxId: 1, rawEmailId: e.id, refundHandled: false,
+        needsReview: false, reviewReasonAr: null, holdStatus: null,
+      });
+      Object.assign(e, { parseStatus: 'parsed', parseReason: null, parseReasonAr: null, transactionId: tid });
+      res.ok.push(id);
+    } else if (e.parseReason === 'unknown_paypal_domain' && trusted(domainOf(e.fromAddr))) {
       const tid = Math.max(...db.txns.map((t) => t.id)) + 1;
       db.txns.push({
         id: tid, source: 'email', paypalTxnId: `9EG${String(tid).padStart(3, '0')}41KT77210${id % 10}`, relatedTxnId: null, type: 'payment',
@@ -729,6 +789,82 @@ export function handle(cmd: string, a: Args = {}): unknown {
     case 'email_set_ignored': { const e = db.emails.find((x) => x.id === a.id)!; e.parseStatus = 'ignored'; e.parseReasonAr = 'تجاهلها المدير'; e.parseReason = 'manual'; return null; }
 
     // backup
+    // ---------- delete (SPEC 4.7) ----------
+    case 'txn_delete_preview': {
+      const rows = (a.ids as number[]).map(getTxn);
+      const entries = db.ledger.filter((e) => e.transactionId !== null && rows.some((t) => t.id === e.transactionId) || rows.some((t) => db.ledger.some((c) => c.transactionId === t.id && c.id === e.reversesEntryId)));
+      return { count: rows.length, approvedCount: rows.filter((t) => t.status === 'approved').length, ledgerEntryCount: entries.length, effects: effectsOf(entries) };
+    }
+    case 'txn_delete': {
+      const ids = a.ids as number[];
+      const backup = ids.length > 1 ? takeBackup() : null;
+      const res: BulkResult = { ok: [], failed: [] };
+      for (const id of ids) {
+        const t = db.txns.find((x) => x.id === id);
+        if (!t) { res.failed.push({ id, code: 'not_found', messageAr: 'المعاملة غير موجودة' }); continue; }
+        const credits = db.ledger.filter((e) => e.transactionId === id).map((e) => e.id);
+        db.ledger = db.ledger.filter((e) => !credits.includes(e.id) && !(e.reversesEntryId !== null && credits.includes(e.reversesEntryId)));
+        db.txns = db.txns.filter((x) => x.id !== id);
+        const em = db.emails.find((e) => e.transactionId === id);
+        if (em) Object.assign(em, { parseStatus: 'ignored', parseReason: 'deleted_by_user', parseReasonAr: 'حُذفت يدوياً', transactionId: null });
+        res.ok.push(id);
+      }
+      return { ...res, backup };
+    }
+    case 'customer_delete_preview': {
+      const c = db.customers.find((x) => x.id === a.id) ?? fail('not_found', 'العميل غير موجود');
+      const own = db.txns.filter((t) => t.customerId === c.id);
+      return { assignedCount: own.length, approvedCount: own.filter((t) => t.status === 'approved').length, ledgerEntryCount: db.ledger.filter((e) => e.customerId === c.id).length, balances: customerView(c).balances };
+    }
+    case 'customer_delete': {
+      const c = db.customers.find((x) => x.id === a.id) ?? fail('not_found', 'العميل غير موجود');
+      if (a.confirmName !== c.name) fail('confirm_mismatch', 'الاسم لا يطابق اسم العميل', 'confirmName');
+      const backup = takeBackup();
+      for (const t of db.txns.filter((x) => x.customerId === c.id)) {
+        Object.assign(t, { status: 'unassigned', customerId: null, commissionMode: null, commissionBps: null, commissionMinor: null, customerAmountMinor: null, assignedAt: null, approvedAt: null });
+        log(t, 'unassigned', `أُلغي التخصيص بحذف العميل ${c.name}`);
+      }
+      db.ledger = db.ledger.filter((e) => e.customerId !== c.id);
+      db.customers = db.customers.filter((x) => x.id !== c.id);
+      return { backup };
+    }
+    case 'ledger_delete_preview': {
+      const e = db.ledger.find((x) => x.id === a.entryId) ?? fail('not_found', 'القيد غير موجود');
+      const group = entryGroup(e);
+      const before = balanceOf(e.customerId, e.currency);
+      return { entries: group.map((x) => withRunning(x)), balanceBeforeMinor: before, balanceAfterMinor: before - group.reduce((s, x) => s + x.amountMinor, 0) };
+    }
+    case 'ledger_delete_entry': {
+      const e = db.ledger.find((x) => x.id === a.entryId) ?? fail('not_found', 'القيد غير موجود');
+      const d = deletability(e);
+      if (!d.deletable) fail('not_deletable', d.notDeletableReasonAr ?? 'لا يمكن حذف هذا القيد');
+      const backup = takeBackup();
+      const ids = entryGroup(e).map((x) => x.id);
+      db.ledger = db.ledger.filter((x) => !ids.includes(x.id));
+      // deleting a reversal alone makes the original active again
+      for (const x of db.ledger) if (x.reversedByEntryId !== null && ids.includes(x.reversedByEntryId)) x.reversedByEntryId = null;
+      return { backup };
+    }
+    case 'data_reset_preview': return resetPreview(a.scope);
+    case 'data_reset': {
+      if (a.confirmText !== 'حذف') fail('confirm_mismatch', 'اكتب «حذف» للتأكيد', 'confirmText');
+      if (!db.settings.backupDir) fail('backup_failed', 'اختر مجلد النسخ الاحتياطي أولاً: النسخة إلزامية قبل الحذف');
+      const backup = takeBackup()!;
+      const s = a.scope as { transactions: boolean; customers: boolean; mailboxes: boolean; settings: boolean };
+      if (s.transactions) { db.txns = []; db.emails = []; db.pullRuns = []; db.history = []; for (const m of db.mailboxes) { m.lastUid = 0; m.lastPulledAt = null; } }
+      if (s.customers) {
+        db.ledger = []; db.customers = [];
+        for (const t of db.txns) Object.assign(t, { status: t.status === 'excluded' ? 'excluded' : 'unassigned', customerId: null, commissionMode: null, commissionBps: null, commissionMinor: null, customerAmountMinor: null, assignedAt: null, approvedAt: null });
+      }
+      if (s.mailboxes) db.mailboxes = [];
+      if (s.settings) {
+        const keep = { backupDir: db.settings.backupDir, builtinPaypalDomains: db.settings.builtinPaypalDomains };
+        db.settings = { ...seed().settings, ...keep, onboardingDone: false };
+        db.status.onboardingDone = false;
+      }
+      return { backup };
+    }
+
     case 'backup_now': {
       if (!db.settings.backupDir) fail('backup_failed', 'اختر مجلد النسخ الاحتياطي أولاً');
       const f = { path: `${db.settings.backupDir}\\ppfeez-${nowIso().slice(0, 16).replace(/[:T]/g, '-')}.db`, createdAt: nowIso(), sizeBytes: 1_490_944 };

@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test';
 // 500.00 gross, 15.00 fee → 485.00 net; 20% commission = 97.00 → 388.00 to the customer;
 // after a 100.00 payout the remaining balance is 288.00 USD.
 
-const shot = (page: Page, theme: string, name: string) => page.screenshot({ path: `e2e/screenshots/${theme}-${name}.png` });
+const shot = (page: Page, theme: string, name: string) => page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-${name}.png` });
 
 for (const theme of ['dark', 'light'] as const) {
   test(`create → assign → approve → payout (${theme})`, async ({ page }) => {
@@ -115,15 +115,15 @@ for (const theme of ['dark', 'light'] as const) {
     }
     await expect(dialog).toContainText('تاريخ البداية بعد تاريخ النهاية');
     await expect(dialog.getByRole('button', { name: 'بدء السحب' })).toBeDisabled();
-    await page.screenshot({ path: `e2e/screenshots/${theme}-8-pull-range-invalid.png` });
+    await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-8-pull-range-invalid.png` });
 
     // last 7 days runs and the progress bar names the range
     await dialog.getByText('آخر 7 أيام').click();
-    await page.screenshot({ path: `e2e/screenshots/${theme}-9-pull-range.png` });
+    await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-9-pull-range.png` });
     await dialog.getByRole('button', { name: 'بدء السحب' }).click();
     await expect(page.getByRole('progressbar')).toBeVisible();
     await expect(page.getByRole('status').filter({ has: page.getByRole('progressbar') })).toContainText('آخر 7 أيام');
-    await page.screenshot({ path: `e2e/screenshots/${theme}-10-pull-progress.png` });
+    await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-10-pull-progress.png` });
     await expect(page.getByText(/انتهى السحب من Gmail الرئيسي \(آخر 7 أيام\)/)).toBeVisible({ timeout: 20_000 });
 
     // the run is recorded with its range in the pull history
@@ -144,7 +144,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(dialog).toContainText('يتوفر إصدار جديد');
     await expect(dialog).toContainText('0.2.0');
     await expect(dialog).toContainText('اختيار نطاق السحب');
-    await page.screenshot({ path: `e2e/screenshots/${theme}-11-update.png` });
+    await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-11-update.png` });
     await dialog.getByRole('button', { name: 'لاحقاً' }).click();
     await expect(dialog).toBeHidden();
 
@@ -180,7 +180,7 @@ for (const theme of ['dark', 'light'] as const) {
     await panel.getByRole('button', { name: 'تأكيد البيانات' }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'البيانات صحيحة' }).click();
     await expect(panel).not.toContainText('تحتاج مراجعة قبل الاعتماد');
-    await page.screenshot({ path: `e2e/screenshots/${theme}-12-review-confirmed.png` });
+    await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-12-review-confirmed.png` });
 
     // trust an unknown PayPal domain from Messages → Ignored; its emails are re-parsed
     await page.goto(`/?theme=${theme}#/emails?tab=ignored`);
@@ -189,7 +189,7 @@ for (const theme of ['dark', 'light'] as const) {
     const trust = page.getByRole('dialog');
     await expect(trust).toContainText('paypal.com.eg');
     await expect(trust).toContainText('رسالتان متجاهلتان');
-    await page.screenshot({ path: `e2e/screenshots/${theme}-13-trust-domain.png` });
+    await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-13-trust-domain.png` });
     await trust.getByRole('button', { name: 'الوثوق وإعادة التحليل' }).click();
     await expect(page.getByText('أصبح paypal.com.eg موثوقاً')).toBeVisible();
 
@@ -207,7 +207,7 @@ for (const theme of ['dark', 'light'] as const) {
     await page.getByRole('dialog').getByText('كل الرسائل').click();
     await page.getByRole('button', { name: 'بدء السحب' }).click();
     await expect(page.locator('header').first()).toContainText('لم تُوجد رسائل من PayPal في هذه الفترة', { timeout: 10_000 });
-    await page.screenshot({ path: `e2e/screenshots/${theme}-14-empty-pull.png` });
+    await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-14-empty-pull.png` });
     expect(errors).toEqual([]);
   });
 }
@@ -227,7 +227,7 @@ for (const theme of ['dark', 'light'] as const) {
       s.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await expect(currency).toHaveText(/كل العملات/);
-    await page.screenshot({ path: `e2e/screenshots/${theme}-15-empty-db.png` });
+    await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-15-empty-db.png` });
 
     // choosing a currency by hand still works, and back to all
     await currency.click();
@@ -237,5 +237,102 @@ for (const theme of ['dark', 'light'] as const) {
     await eur.click();
     await page.getByRole('option', { name: 'كل العملات' }).click();
     await expect(page.locator('main').getByRole('button', { name: /كل العملات/ })).toBeVisible();
+  });
+}
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`0.3.0 delete transactions, entries, customers and reset (${theme})`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    const shot = (n: string) => page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-${n}.png` });
+
+    // 1. approved transaction: the preview shows the balance change, then the balance moves
+    await page.goto(`/?theme=${theme}#/transactions?tab=approved`);
+    const row = page.getByRole('row').filter({ hasText: 'Noah Smith' });
+    await row.getByRole('button', { name: 'إجراءات' }).click();
+    await page.getByRole('menuitem', { name: 'حذف' }).click();
+    const del = page.getByRole('dialog');
+    await expect(del).toContainText('سيُحذف قيد واحد من دفاتر العملاء');
+    await expect(del).toContainText('رصيد علي حسن');
+    await expect(del).toContainText('-231.38');
+    await shot('16-delete-approved');
+    await del.getByRole('button', { name: 'حذف نهائياً' }).click();
+    await expect(page.getByText('حُذفت المعاملة')).toBeVisible();
+    await expect(row).toHaveCount(0);
+
+    // 2. bulk delete from the selection bar takes a backup first
+    await page.getByRole('tab', { name: /غير مخصّصة/ }).click();
+    await page.getByRole('row').filter({ hasText: 'Marta Nowak' }).getByRole('checkbox').check({ force: true });
+    await page.getByRole('row').filter({ hasText: 'Lucas Brown' }).getByRole('checkbox').check({ force: true });
+    await page.getByRole('toolbar', { name: 'إجراءات جماعية' }).getByRole('button', { name: 'حذف' }).click();
+    await expect(page.getByRole('dialog')).toContainText('تُؤخذ نسخة احتياطية قبل الحذف');
+    await page.getByRole('dialog').getByRole('button', { name: 'حذف نهائياً' }).click();
+    await expect(page.getByText('حُذفت 2 معاملة')).toBeVisible();
+    await expect(page.getByText(/before-delete\.db/).first()).toBeVisible();
+
+    // 3. ledger: a credit shows why it cannot be deleted; a payout is deleted with balance before/after
+    // navigate inside the app: a reload would reset the in-memory mock database
+    await page.getByRole('link', { name: 'العملاء' }).click();
+    await page.getByRole('row').filter({ hasText: 'أحمد يلماز' }).getByRole('rowheader').click();
+    await page.getByRole('tab', { name: 'دفتر USD' }).click();
+    const credit = page.getByRole('row').filter({ hasText: 'اعتماد' }).first();
+    await credit.getByRole('button', { name: 'إجراءات القيد' }).click();
+    await expect(page.getByRole('menu')).toContainText('قيد اعتماد');
+    await page.keyboard.press('Escape');
+    const payout = page.getByRole('row').filter({ hasText: 'دفعة نقدية في المكتب' });
+    await payout.getByRole('button', { name: 'إجراءات القيد' }).click();
+    await page.getByRole('menuitem', { name: 'حذف القيد' }).click();
+    const entry = page.getByRole('dialog');
+    await expect(entry).toContainText('الرصيد الآن');
+    await expect(entry).toContainText('22.01');
+    await expect(entry).toContainText('72.01');
+    await shot('17-delete-entry');
+    await entry.getByRole('button', { name: 'حذف نهائياً' }).click();
+    await expect(page.getByText('حُذف القيد')).toBeVisible();
+    await expect(page.locator('tfoot')).toContainText('72.01');
+
+    // 4. customer: disabled until the exact name is typed; transactions go back to unassigned
+    await page.getByRole('button', { name: 'حذف العميل' }).click();
+    const cust = page.getByRole('dialog');
+    await expect(cust).toContainText('ترجع «غير مخصّصة»');
+    const confirm = cust.getByRole('button', { name: 'حذف العميل ودفتره' });
+    await expect(confirm).toBeDisabled();
+    await cust.getByRole('textbox', { name: /اكتب اسم العميل/ }).fill('أحمد');
+    await expect(confirm).toBeDisabled();
+    await cust.getByRole('textbox', { name: /اكتب اسم العميل/ }).fill('أحمد يلماز');
+    await shot('18-delete-customer');
+    await confirm.click();
+    await expect(page.getByRole('heading', { name: 'العملاء' })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'أحمد يلماز' })).toHaveCount(0);
+    await page.getByRole('link', { name: 'المعاملات' }).click();
+    await expect(page.getByRole('row').filter({ hasText: 'Website hosting' })).toContainText('غير مخصّصة');
+
+    // 5. deleted transactions stay out of the list; re-parse brings one back
+    await page.getByRole('link', { name: 'الرسائل' }).click();
+    await page.getByRole('tab', { name: /متجاهلة/ }).click();
+    const gone = page.getByRole('row').filter({ hasText: 'حُذفت يدوياً' }).first();
+    await expect(gone).toBeVisible();
+    await gone.getByRole('button', { name: 'إجراءات' }).click();
+    await page.getByRole('menuitem', { name: 'إعادة التحليل' }).click();
+    await expect(page.getByText(/أُعيد تحليل 1 رسالة بنجاح/)).toBeVisible();
+
+    // 6. start fresh: live preview, typed confirmation, then the backup path
+    await page.getByRole('link', { name: 'الإعدادات' }).click();
+    await page.getByRole('button', { name: 'حذف البيانات…' }).click();
+    const reset = page.getByRole('dialog');
+    await expect(reset).toContainText('سيُحذف');
+    await expect(reset).toContainText('معاملة');
+    const go = reset.getByRole('button', { name: 'حذف ما اخترته' });
+    await expect(go).toBeDisabled();
+    await reset.getByRole('textbox', { name: /للتأكيد/ }).fill('حذف');
+    await shot('19-reset');
+    await go.click();
+    const result = page.getByRole('dialog');
+    await expect(result).toContainText('حُذفت البيانات');
+    await expect(result).toContainText('before-delete.db');
+    await result.getByRole('button', { name: 'تم' }).click();
+    await page.getByRole('link', { name: 'المعاملات' }).click();
+    await expect(page.getByText('لا معاملات بهذا الفلتر')).toBeVisible();
+    expect(errors).toEqual([]);
   });
 }

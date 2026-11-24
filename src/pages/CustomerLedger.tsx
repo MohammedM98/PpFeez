@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, TabPanel, MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
-import { ArrowRight, Download, FileSpreadsheet, HandCoins, MoreHorizontal, Pencil, Printer, Scale } from 'lucide-react';
+import { ArrowRight, Download, FileSpreadsheet, HandCoins, MoreHorizontal, Pencil, Printer, Scale, Trash2 } from 'lucide-react';
 import { toast } from '@/components/ui/Toast';
 import { api, native } from '@/lib/api';
 import type { BalanceCard, Customer, LedgerEntry, PayoutMethod, Period } from '@/lib/contract';
@@ -24,7 +24,8 @@ import { ConfirmMoney } from '@/components/ui/ConfirmMoney';
 import { cx } from '@/components/ui/cx';
 import { TransactionsView } from '@/components/transactions/TransactionsView';
 import { CURRENCIES } from '@/components/transactions/TxnActions';
-import { CustomerDialog } from './Customers';
+import { CustomerDialog, DeleteCustomerDialog } from './Customers';
+import { DangerConfirm, deletedToast } from '@/components/ui/DangerConfirm';
 
 const tabCls = ({ isSelected }: { isSelected: boolean }) => cx(
   'relative -mb-px flex h-10 cursor-default items-center gap-2 px-3 text-sm outline-none transition-colors duration-150',
@@ -60,6 +61,7 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
   const [preset, setPreset] = useState<PeriodPreset>('all');
   const [custom, setCustom] = useState<Period>({});
   const [reversing, setReversing] = useState<LedgerEntry | null>(null);
+  const [deleting, setDeleting] = useState<LedgerEntry | null>(null);
   const [flash, setFlash] = useState<number | null>(null);
   const period = preset === 'custom' ? custom : presetPeriod(preset);
   const view = useQuery({ queryKey: ['ledger_entries', customer.id, currency, period], queryFn: () => api.ledgerEntries(customer.id, currency, period.from || period.to ? period : undefined) });
@@ -134,17 +136,21 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
                   <td className="text-end font-medium"><Amount minor={e.runningBalanceMinor} currency={currency} showCurrency={false} className={e.runningBalanceMinor < 0 ? 'text-neg' : ''} /></td>
                   <td className="max-w-[160px] truncate text-[13px] text-fg-3">{e.reference ? <bdi dir="ltr">{e.reference}</bdi> : ''}</td>
                   <td className="pe-2">
-                    {(e.transactionId !== null || (!reversed && e.reversesEntryId === null)) && (
-                      <MenuTrigger>
-                        <Button variant="quiet" size="icon" aria-label="إجراءات القيد"><MoreHorizontal /></Button>
-                        <Popover placement="bottom end" className="min-w-44 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                          <Menu className="outline-none" onAction={(k) => (k === 'txn' ? navigate(`/transactions?detail=${e.transactionId}`) : setReversing(e))}>
-                            {e.transactionId !== null && <MenuItem id="txn" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">فتح المعاملة</MenuItem>}
-                            {!reversed && e.reversesEntryId === null && <MenuItem id="reverse" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm text-neg outline-none data-[focused]:bg-raised">عكس القيد</MenuItem>}
-                          </Menu>
-                        </Popover>
-                      </MenuTrigger>
-                    )}
+                    <MenuTrigger>
+                      <Button variant="quiet" size="icon" aria-label="إجراءات القيد"><MoreHorizontal /></Button>
+                      <Popover placement="bottom end" className="w-60 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
+                        <Menu className="outline-none" disabledKeys={['no-delete']}
+                          onAction={(k) => (k === 'txn' ? navigate(`/transactions?detail=${e.transactionId}`) : k === 'delete' ? setDeleting(e) : setReversing(e))}>
+                          {e.transactionId !== null && <MenuItem id="txn" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">فتح المعاملة</MenuItem>}
+                          {!reversed && e.reversesEntryId === null && <MenuItem id="reverse" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">عكس القيد</MenuItem>}
+                          {e.deletable
+                            ? <MenuItem id="delete" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm text-neg outline-none data-[focused]:bg-raised">حذف القيد</MenuItem>
+                            : <MenuItem id="no-delete" textValue="لا يمكن حذفه" className="flex cursor-default flex-col rounded-[6px] px-2.5 py-1.5 text-[12.5px] leading-snug text-fg-3 outline-none">
+                                <span className="text-fg-2">لا يمكن حذفه</span>{e.notDeletableReasonAr}
+                              </MenuItem>}
+                        </Menu>
+                      </Popover>
+                    </MenuTrigger>
                   </td>
                 </tr>
               );
@@ -163,7 +169,43 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
         </table>
       </div>
       {reversing && <ReverseDialog entry={reversing} onClose={() => setReversing(null)} />}
+      {deleting && <DeleteEntryDialog entry={deleting} onClose={() => setDeleting(null)} />}
     </div>
+  );
+}
+
+/** SPEC 4.7: a payout or adjustment (with its reversal pair); shows the balance before and after. */
+function DeleteEntryDialog({ entry, onClose }: { entry: LedgerEntry; onClose: () => void }) {
+  const preview = useQuery({ queryKey: ['ledger_delete_preview', entry.id], queryFn: () => api.ledgerDeletePreview(entry.id), staleTime: 0 });
+  const { run, pending } = useAction();
+  const p = preview.data;
+  return (
+    <DangerConfirm title={p && p.entries.length > 1 ? 'حذف القيد وعكسه' : 'حذف القيد'} confirmLabel="حذف نهائياً" pending={pending} isLoading={!p} backup="auto" onClose={onClose}
+      onConfirm={async (reason) => {
+        const r = await run(() => api.ledgerDeleteEntry(entry.id, reason || undefined));
+        if (r.ok) { deletedToast(p && p.entries.length > 1 ? 'حُذف القيد وعكسه' : 'حُذف القيد', r.value.backup); onClose(); }
+      }}>
+      {p && (
+        <div className="flex flex-col gap-3 text-sm">
+          <ul className="divide-y divide-line rounded-card border border-line">
+            {p.entries.map((e) => (
+              <li key={e.id} className="flex items-center gap-3 px-4 py-2.5">
+                <bdi dir="ltr" className="num text-[13px] text-fg-3">{e.entryDate}</bdi>
+                <Badge tone={e.type === 'reversal' ? 'neg' : e.type === 'payout' ? 'neutral' : 'outline'}>{ledgerType[e.type]}</Badge>
+                <span className="min-w-0 flex-1 truncate text-fg-2">{e.description}</span>
+                <Amount minor={e.amountMinor} currency={e.currency} tone="signed" />
+              </li>
+            ))}
+          </ul>
+          {p.entries.length > 1 && <p className="text-[13px] text-fg-3">القيد معكوس، فيُحذف معه قيد عكسه.</p>}
+          <div className="flex items-center justify-around rounded-card bg-raised/60 px-4 py-3 text-center">
+            <div><div className="text-[12.5px] text-fg-3">الرصيد الآن</div><Amount minor={p.balanceBeforeMinor} currency={entry.currency} className="text-[17px] font-medium" /></div>
+            <span className="text-fg-3" aria-hidden>←</span>
+            <div><div className="text-[12.5px] text-fg-3">بعد الحذف</div><Amount minor={p.balanceAfterMinor} currency={entry.currency} className={cx('text-[17px] font-medium', p.balanceAfterMinor < 0 && 'text-neg')} /></div>
+          </div>
+        </div>
+      )}
+    </DangerConfirm>
   );
 }
 
@@ -265,7 +307,8 @@ export function CustomerLedgerPage() {
   const customer = useQuery({ queryKey: ['customer', customerId], queryFn: () => api.customerGet(customerId) });
   const cards = useQuery({ queryKey: ['ledger_balances', customerId], queryFn: () => api.ledgerBalances(customerId) });
   const [tab, setTab] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<'payout' | 'adjustment' | 'edit' | null>(null);
+  const [dialog, setDialog] = useState<'payout' | 'adjustment' | 'edit' | 'delete' | null>(null);
+  const navigate = useNavigate();
   const currencies = cards.data?.map((c) => c.currency) ?? [];
   useEffect(() => { if (tab === null && cards.data) setTab(cards.data[0]?.currency ?? 'txns'); }, [cards.data, tab]);
 
@@ -286,6 +329,7 @@ export function CustomerLedgerPage() {
           {c.pendingCount > 0 && <>، <span className="text-accent-ink">{c.pendingCount} بانتظار الموافقة</span></>}
         </>}
         actions={<>
+          <Button variant="quiet" className="text-neg data-[hovered]:text-neg" onPress={() => setDialog('delete')}><Trash2 />حذف العميل</Button>
           <Button variant="quiet" onPress={() => setDialog('edit')}><Pencil />تعديل</Button>
           <Button variant="secondary" onPress={() => setDialog('adjustment')}><Scale />قيد تسوية</Button>
           <Button variant="primary" onPress={() => setDialog('payout')}><HandCoins />تسجيل دفعة</Button>
@@ -308,6 +352,7 @@ export function CustomerLedgerPage() {
         <MoneyEntryDialog kind={dialog} customer={c} currencies={allCurrencies} defaultCurrency={activeCurrency} onClose={() => setDialog(null)} />
       )}
       {dialog === 'edit' && <CustomerDialog customer={c} onClose={() => setDialog(null)} />}
+      {dialog === 'delete' && <DeleteCustomerDialog customer={c} onClose={() => setDialog(null)} onDeleted={() => navigate('/customers')} />}
     </div>
   );
 }

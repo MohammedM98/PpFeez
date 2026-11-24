@@ -17,6 +17,7 @@ export type ErrorCode =
   | 'customer_inactive' | 'duplicate'
   | 'already_reversed' | 'has_dependents'
   | 'imap_auth' | 'imap_connect' | 'imap_disabled' | 'pull_running' | 'invalid_range'
+  | 'not_deletable' | 'confirm_mismatch'
   | 'backup_failed' | 'restore_failed'
   | 'file_locked' | 'no_export_path' | 'export_failed'
   | 'internal';
@@ -96,6 +97,8 @@ export type CustomerInput = {
 // customer_create({ input: CustomerInput }): Customer          throws duplicate (field: name)
 // customer_update({ id, input: CustomerInput }): Customer
 // customer_set_active({ id, active: boolean }): Customer
+// customer_delete_preview({ id }): { assignedCount: number; approvedCount: number; ledgerEntryCount: number; balances: Money[] }   // SPEC §4.7
+// customer_delete({ id, confirmName: string }): { backup: BackupFile | null }        throws confirm_mismatch
 
 // ===== المعاملات =====
 export type TxnStatus = 'unassigned' | 'pending_approval' | 'approved' | 'excluded';
@@ -135,7 +138,7 @@ export type Transaction = {
 };
 export type TxnAction =
   | 'assign' | 'unassign' | 'set_fee' | 'set_commission' | 'approve'
-  | 'unapprove' | 'exclude' | 'include' | 'edit_note' | 'confirm_review' | 'edit_details';
+  | 'unapprove' | 'exclude' | 'include' | 'edit_note' | 'confirm_review' | 'edit_details' | 'delete';
 export type TxnFilter = {
   status?: TxnStatus | 'all';
   search?: string;               // المرسل، الإيميل، رقم المعاملة، ملاحظة المرسل
@@ -195,6 +198,9 @@ export type HistoryItem = { id: number; action: string; labelAr: string; details
 // txn_set_note({ id, note: string | null }): Transaction
 // txn_edit_details({ id, input: { payerName?: string; payerEmail?: string; currency?: Currency; grossText?: string; occurredAt?: string } }): Transaction  // فقط needsReview أو غير مخصّصة
 // txn_confirm_review({ id }): Transaction                    // يزيل needsReview
+export type DeleteEffect = { customerId: number; customerName: string; currency: Currency; balanceDeltaMinor: Minor }; // سالب = ينقص رصيده
+// txn_delete_preview({ ids }): { count: number; approvedCount: number; ledgerEntryCount: number; effects: DeleteEffect[] }   // SPEC §4.7
+// txn_delete({ ids, reason?: string }): BulkResult & { backup: BackupFile | null }
 // txn_bulk({ action: 'assign'|'approve'|'unassign'|'exclude', ids: number[], customerId?: number, commission?: CommissionInput }): BulkResult
 
 // ===== الدفتر =====
@@ -210,6 +216,8 @@ export type LedgerEntry = {
   transactionId: number | null;
   reversesEntryId: number | null;
   reversedByEntryId: number | null; // إن كان معكوساً => اعرضه مشطوباً
+  deletable: boolean;               // SPEC §4.7
+  notDeletableReasonAr: string | null;
   payoutMethod: PayoutMethod | null;
   reference: string | null;
   description: string;
@@ -232,6 +240,8 @@ export type RefundAlert = {
 // ledger_add_payout({ customerId, input: PayoutInput }): LedgerEntry   throws validation (code 'validation', field 'overdraw') إن تجاوزت الرصيد بلا confirmOverdraw
 // ledger_add_adjustment({ customerId, input: AdjustmentInput }): LedgerEntry
 // ledger_reverse_entry({ entryId, reason }): LedgerEntry               throws already_reversed
+// ledger_delete_preview({ entryId }): { entries: LedgerEntry[]; balanceBeforeMinor: Minor; balanceAfterMinor: Minor }  // entries = القيد وزوجه إن وُجد
+// ledger_delete_entry({ entryId, reason?: string }): { backup: BackupFile | null }   throws not_deletable
 // ledger_export_csv({ customerId, currency, period?, path }): void     // path من نافذة الحفظ (plugin-dialog)
 // ledger_statement({ customerId, currency, period? }): { customer: Customer; view: LedgerView; generatedAt: IsoDate } // للطباعة/PDF من الواجهة
 // refund_alerts(): RefundAlert[]
@@ -292,6 +302,12 @@ export type BackupFile = { path: string; createdAt: IsoDate; sizeBytes: number }
 // backup_now(): BackupFile           throws backup_failed (مثلاً لا مجلد محدد)
 // backup_list(): BackupFile[]
 // backup_restore({ path }): void      // يأخذ نسخة من الحالية ثم يعيد تشغيل التطبيق
+
+// ===== بدء من جديد (SPEC §4.7) =====
+export type ResetScope = { transactions: boolean; customers: boolean; mailboxes: boolean; settings: boolean };
+export type ResetPreview = { transactions: number; rawEmails: number; pullRuns: number; customers: number; ledgerEntries: number; mailboxes: number; notes: string[] };
+// data_reset_preview({ scope: ResetScope }): ResetPreview
+// data_reset({ scope: ResetScope, confirmText: string }): { backup: BackupFile }   // confirmText يجب أن يكون "حذف"; throws confirm_mismatch | backup_failed
 
 // ===== Excel (SPEC §6.8) =====
 export type ExcelExportResult = { path: string; sheets: number; rows: number; exportedAt: IsoDate };

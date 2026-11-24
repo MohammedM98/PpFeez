@@ -21,7 +21,9 @@ export function commissionHint(t: Transaction) {
 }
 
 export function DetailPanel({ id, onClose }: { id: number; onClose: () => void }) {
-  const { data: t } = useQuery({ queryKey: ['txn', id], queryFn: () => api.txnGet(id) });
+  const { data: t, isError } = useQuery({ queryKey: ['txn', id], queryFn: () => api.txnGet(id) });
+  // deleted while open (here or from the bulk bar): close instead of showing an empty panel
+  useEffect(() => { if (isError) onClose(); }, [isError, onClose]);
   const { data: history } = useQuery({ queryKey: ['txn_history', id], queryFn: () => api.txnHistory(id) });
   const actions = useTxnActions();
   const [emailOpen, setEmailOpen] = useState(false);
@@ -126,7 +128,7 @@ export function DetailPanel({ id, onClose }: { id: number; onClose: () => void }
             <Popover placement="top end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
               <Menu className="outline-none" onAction={(k) => actions.act(k as TxnAction, t)}>
                 {rest.map((a) => (
-                  <MenuItem key={a} id={a} className={`flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised ${a === 'unapprove' ? 'text-neg' : ''}`}>{actionLabel[a]}</MenuItem>
+                  <MenuItem key={a} id={a} className={`flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised ${a === 'unapprove' || a === 'delete' ? 'text-neg' : ''}`}>{actionLabel[a]}</MenuItem>
                 ))}
               </Menu>
             </Popover>

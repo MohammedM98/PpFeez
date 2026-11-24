@@ -153,7 +153,9 @@ export function EmailsPage() {
                           <span className="whitespace-nowrap">{e.parseReasonAr ?? 'نطاق PayPal غير معروف'}</span>
                           <Button size="sm" variant="secondary" className="h-7" onPress={() => setTrusting(domainFor(e))}>الوثوق بهذا النطاق</Button>
                         </span>
-                      : <span className={cx('text-[13px]', tab === 'failed' ? 'text-warn' : 'text-fg-2')}>{e.parseReasonAr ?? e.parseReason ?? '—'}</span>}
+                      : e.parseReason === 'deleted_by_user'
+                        ? <span className="text-[13px] text-fg-2" title="إعادة التحليل تعيدها معاملة غير مخصّصة">حُذفت يدوياً <span className="text-fg-3">(إعادة التحليل تعيدها)</span></span>
+                        : <span className={cx('text-[13px]', tab === 'failed' ? 'text-warn' : 'text-fg-2')}>{e.parseReasonAr ?? e.parseReason ?? '—'}</span>}
                 </Cell>
                 <Cell className="whitespace-nowrap text-[13px] text-fg-3">{e.mailboxLabel}</Cell>
                 <Cell className="w-12 pe-2">

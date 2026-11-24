@@ -10,13 +10,14 @@ import type {
   LedgerView, Mailbox, MailboxInput, ManualTxnInput, Page, PayoutInput, Period, PullRun,
   RawEmail, RawEmailSummary, ParseStatus, RefundAlert, Settings, Transaction, TxnCounts,
   TxnFilter, TxnListResult, TxnPreview, TxnSort, Currency, ExcelExportResult, PullRange,
+  DeleteEffect, ResetScope, ResetPreview, Money,
 } from './contract';
 
 const KNOWN_CODES = new Set<ErrorCode>([
   'locked', 'wrong_password', 'too_many_attempts', 'not_found', 'validation', 'invalid_amount',
   'invalid_transition', 'fee_required', 'commission_exceeds_net', 'customer_inactive', 'duplicate',
   'already_reversed', 'has_dependents', 'imap_auth', 'imap_connect', 'imap_disabled', 'pull_running', 'invalid_range',
-  'backup_failed', 'restore_failed', 'file_locked', 'no_export_path', 'export_failed', 'internal',
+  'backup_failed', 'restore_failed', 'not_deletable', 'confirm_mismatch', 'file_locked', 'no_export_path', 'export_failed', 'internal',
 ]);
 
 export class ApiError extends Error implements AppError {
@@ -135,6 +136,16 @@ export const api = {
   backupNow: () => call<BackupFile>('backup_now'),
   backupList: () => call<BackupFile[]>('backup_list'),
   backupRestore: (path: string) => call<void>('backup_restore', { path }),
+
+  // delete (SPEC 4.7)
+  txnDeletePreview: (ids: number[]) => call<{ count: number; approvedCount: number; ledgerEntryCount: number; effects: DeleteEffect[] }>('txn_delete_preview', { ids }),
+  txnDelete: (ids: number[], reason?: string) => call<BulkResult & { backup: BackupFile | null }>('txn_delete', { ids, reason }),
+  customerDeletePreview: (id: number) => call<{ assignedCount: number; approvedCount: number; ledgerEntryCount: number; balances: Money[] }>('customer_delete_preview', { id }),
+  customerDelete: (id: number, confirmName: string) => call<{ backup: BackupFile | null }>('customer_delete', { id, confirmName }),
+  ledgerDeletePreview: (entryId: number) => call<{ entries: LedgerEntry[]; balanceBeforeMinor: number; balanceAfterMinor: number }>('ledger_delete_preview', { entryId }),
+  ledgerDeleteEntry: (entryId: number, reason?: string) => call<{ backup: BackupFile | null }>('ledger_delete_entry', { entryId, reason }),
+  dataResetPreview: (scope: ResetScope) => call<ResetPreview>('data_reset_preview', { scope }),
+  dataReset: (scope: ResetScope, confirmText: string) => call<{ backup: BackupFile }>('data_reset', { scope, confirmText }),
 
   // excel (SPEC 6.8)
   excelSetPath: (path: string) => call<Settings>('excel_set_path', { path }),

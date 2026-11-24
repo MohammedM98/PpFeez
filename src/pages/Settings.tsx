@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { MenuTrigger, Menu, MenuItem, Popover, type Key } from 'react-aria-components';
 import { FileSpreadsheet, FolderOpen, HardDriveDownload, MoreHorizontal, Plus, RefreshCw, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
-import type { BackupFile, Mailbox, Settings as SettingsT, Theme } from '@/lib/contract';
+import type { BackupFile, Mailbox, ResetScope, Settings as SettingsT, Theme } from '@/lib/contract';
 import { amountTextToMinor2, bpsToPercentText, formatMinor, percentTextToBps } from '@/lib/money';
 import { useTheme } from '@/lib/theme';
 import { useAction } from '@/lib/useAction';
@@ -15,6 +15,8 @@ import { Select } from '@/components/ui/Field';
 import { Segmented } from '@/components/ui/Segmented';
 import { TextField } from '@/components/ui/TextField';
 import { Dialog } from '@/components/ui/Dialog';
+import { DangerConfirm } from '@/components/ui/DangerConfirm';
+import { Checkbox } from '@/components/ui/Field';
 import { DateTime } from '@/components/ui/DateTime';
 import { Trunc } from '@/components/ui/Trunc';
 import { cx } from '@/components/ui/cx';
@@ -26,7 +28,7 @@ import { useExcelUpdate } from '@/components/settings/useExcelUpdate';
 
 const SECTIONS = [
   ['mail', 'البريد'], ['pulls', 'سجل السحب'], ['fees', 'العمولة والرسوم'], ['excel', 'ملف Excel'],
-  ['backup', 'النسخ الاحتياطي'], ['security', 'الأمان'], ['appearance', 'المظهر'], ['about', 'حول'],
+  ['backup', 'النسخ الاحتياطي'], ['security', 'الأمان'], ['appearance', 'المظهر'], ['data', 'البيانات'], ['about', 'حول'],
 ] as const;
 
 function Section({ id, title, description, actions, children }: { id: string; title: string; description?: ReactNode; actions?: ReactNode; children: ReactNode }) {
@@ -283,8 +285,8 @@ function BackupSection({ s }: { s: SettingsT }) {
       <div className="mt-4">
         <div className="mb-2 text-[13px] text-fg-3">آخر النسخ</div>
         <ul className="divide-y divide-line rounded-ctl border border-line">
-          {backups.data?.slice(0, 6).map((b) => (
-            <li key={b.path} className="flex items-center gap-4 px-4 py-2 text-sm">
+          {backups.data?.slice(0, 6).map((b, i) => (
+            <li key={`${b.path}-${i}`} className="flex items-center gap-4 px-4 py-2 text-sm">
               <DateTime iso={b.createdAt} className="text-fg-2" />
               <Trunc className="min-w-0 flex-1 text-[12.5px] text-fg-3">{b.path}</Trunc>
               <bdi dir="ltr" className="num text-[12.5px] text-fg-3">{sizeText(b.sizeBytes)}</bdi>
@@ -346,6 +348,75 @@ function AppearanceSection() {
   );
 }
 
+// ------------------------------------------------------------------ data: start fresh (SPEC 4.7)
+const SCOPES: { key: keyof ResetScope; label: string; hint: string }[] = [
+  { key: 'transactions', label: 'المعاملات والرسائل وسجل السحب', hint: 'يُعاد السحب من بداية كل بريد' },
+  { key: 'customers', label: 'العملاء والدفاتر', hint: 'كل الأرصدة والقيود' },
+  { key: 'mailboxes', label: 'حسابات البريد وكلمات مرورها', hint: 'تُحذف من خزنة ويندوز أيضاً' },
+  { key: 'settings', label: 'الإعدادات', hint: 'تعود للافتراضي. كلمة القفل تبقى' },
+];
+
+function DataSection() {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [scope, setScope] = useState<ResetScope>({ transactions: true, customers: true, mailboxes: false, settings: false });
+  const [done, setDone] = useState<BackupFile | null>(null);
+  const [mismatch, setMismatch] = useState<string>();
+  const { run, pending } = useAction();
+  const any = Object.values(scope).some(Boolean);
+  const preview = useQuery({ queryKey: ['data_reset_preview', scope], queryFn: () => api.dataResetPreview(scope), enabled: open && any, staleTime: 0 });
+  const p = preview.data;
+  const counts = p ? [
+    ['معاملة', p.transactions], ['رسالة', p.rawEmails], ['عملية سحب', p.pullRuns], ['عميل', p.customers], ['قيد', p.ledgerEntries], ['بريد', p.mailboxes],
+  ].filter(([, n]) => (n as number) > 0) as [string, number][] : [];
+
+  return (
+    <Section id="data" title="البيانات" description="حذف كل البيانات أو جزء منها للبدء من جديد">
+      <Row label="حذف البيانات" hint="تُؤخذ نسخة احتياطية إلزامية أولاً، ويمكن الاستعادة منها">
+        <Button size="sm" variant="secondary" className="text-neg" onPress={() => { setMismatch(undefined); setOpen(true); }}>حذف البيانات…</Button>
+      </Row>
+      {open && (
+        <DangerConfirm title="حذف البيانات" confirmLabel="حذف ما اخترته" pending={pending} isLoading={!any || !p} backup="required" withReason={false}
+          onClose={() => setOpen(false)}
+          typeToConfirm={{ label: <>اكتب <b className="font-medium text-fg">حذف</b> للتأكيد</>, expected: 'حذف', error: mismatch }}
+          onConfirm={async () => {
+            const r = await run(() => api.dataReset(scope, 'حذف'), undefined, { quiet: (e) => e.code === 'confirm_mismatch' });
+            if (r.ok) { setOpen(false); setDone(r.value.backup); await qc.invalidateQueries(); }
+            else if (r.error.code === 'confirm_mismatch') setMismatch(r.error.messageAr);
+          }}>
+          <div className="flex flex-col gap-2">
+            <span className="text-[13px] text-fg-2">ما الذي يُحذف؟</span>
+            {SCOPES.map((o) => (
+              <Checkbox key={o.key} isSelected={scope[o.key]} onChange={(v) => setScope({ ...scope, [o.key]: v })}>
+                <span className="text-fg">{o.label}</span><span className="text-[12.5px] text-fg-3">{o.hint}</span>
+              </Checkbox>
+            ))}
+          </div>
+          {any && p && (
+            <div className="rounded-card bg-neg-soft px-4 py-3 text-sm">
+              <p className="font-medium text-neg">
+                سيُحذف: {counts.length ? counts.map(([w, n], i) => <span key={w}>{i > 0 && '، '}<span className="num">{n}</span> {w}</span>) : 'لا شيء موجود في هذه الخيارات'}
+              </p>
+              {p.notes.length > 0 && <ul className="mt-1.5 list-disc space-y-0.5 ps-5 text-fg-2">{p.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+            </div>
+          )}
+          {!any && <p className="text-sm text-fg-3">اختر شيئاً واحداً على الأقل</p>}
+        </DangerConfirm>
+      )}
+      {done && (
+        <Dialog isOpen onOpenChange={(o) => !o && setDone(null)} title="حُذفت البيانات" width="md"
+          footer={<Button variant="primary" onPress={() => { setDone(null); void qc.invalidateQueries({ queryKey: ['app_status'] }); }}>تم</Button>}>
+          <div className="flex flex-col gap-3 text-sm text-fg-2">
+            <p>أُخذت نسخة احتياطية قبل الحذف:</p>
+            <div className="rounded-card bg-raised/60 px-4 py-3"><Trunc className="text-fg">{done.path}</Trunc></div>
+            <p>للتراجع: الإعدادات ← النسخ الاحتياطي ← «استعادة» بجانب هذه النسخة.</p>
+          </div>
+        </Dialog>
+      )}
+    </Section>
+  );
+}
+
 function AboutSection({ s }: { s: SettingsT }) {
   const status = useQuery({ queryKey: ['app_status'], queryFn: api.appStatus });
   const { run } = useAction();
@@ -396,6 +467,7 @@ export function SettingsPage() {
             <BackupSection s={s} />
             <SecuritySection s={s} />
             <AppearanceSection />
+            <DataSection />
             <AboutSection s={s} />
           </div>
         )}

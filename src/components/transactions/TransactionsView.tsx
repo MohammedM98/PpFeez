@@ -158,6 +158,7 @@ export function TransactionsView({ customerId, exportSlot }: { customerId?: numb
           <Button size="sm" variant="quiet" onPress={() => actions.open({ kind: 'bulk_approve', rows: selectedRows })}>اعتماد</Button>
           <Button size="sm" variant="quiet" onPress={() => actions.bulk('unassign', selectedRows)}>إلغاء التخصيص</Button>
           <Button size="sm" variant="quiet" onPress={() => actions.bulk('exclude', selectedRows)}>استبعاد</Button>
+          <Button size="sm" variant="quiet" className="text-neg" onPress={() => actions.open({ kind: 'delete', rows: selectedRows })}>حذف</Button>
           <Button size="icon" variant="quiet" aria-label="إلغاء التحديد" className="ms-auto" onPress={() => setSelected(new Set())}><X /></Button>
         </div>
       )}
@@ -223,7 +224,7 @@ export function TransactionsView({ customerId, exportSlot }: { customerId?: numb
                       <Popover placement="bottom end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
                         <Menu className="outline-none" onAction={(k) => (k === 'detail' ? openDetail(t.id) : actions.act(k as TxnAction, t))}>
                           {t.allowedActions.map((a) => (
-                            <MenuItem key={a} id={a} className={cx('flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised', a === 'unapprove' && 'text-neg')}>{actionLabel[a]}</MenuItem>
+                            <MenuItem key={a} id={a} className={cx('flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised', (a === 'unapprove' || a === 'delete') && 'text-neg')}>{actionLabel[a]}</MenuItem>
                           ))}
                           <MenuItem id="detail" className="flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm text-fg-2 outline-none data-[focused]:bg-raised">عرض التفاصيل <CornerDownLeft className="ms-auto size-3.5" /></MenuItem>
                         </Menu>

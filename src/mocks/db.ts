@@ -12,6 +12,8 @@ export type TxnRow = Omit<Transaction, 'customer' | 'mailbox' | 'refundedBy' | '
   refundHandled: boolean; // refund alert confirmed or dismissed
 };
 export type CustomerRow = Omit<Customer, 'balances' | 'pendingCount'>;
+/** Stored entry; deletable/notDeletableReasonAr are computed when read (SPEC 4.7). */
+export type LedgerRow = Omit<LedgerEntry, 'deletable' | 'notDeletableReasonAr'>;
 
 export type Db = {
   status: AppStatus;
@@ -20,7 +22,7 @@ export type Db = {
   settings: Settings;
   customers: CustomerRow[];
   txns: TxnRow[];
-  ledger: LedgerEntry[];
+  ledger: LedgerRow[];
   history: (HistoryItem & { txnId: number })[];
   mailboxes: (Omit<Mailbox, 'running'> & { password: string | null })[];
   pullRuns: PullRun[];
@@ -136,10 +138,10 @@ export function seed(): Db {
   ];
   const txns = T.map(mkTxn);
 
-  const ledger: LedgerEntry[] = [];
+  const ledger: LedgerRow[] = [];
   let lid = 0;
-  const push = (e: Omit<LedgerEntry, 'id' | 'runningBalanceMinor' | 'reversedByEntryId' | 'createdAt'> & { createdAt?: string }) => {
-    const entry: LedgerEntry = { ...e, id: ++lid, runningBalanceMinor: 0, reversedByEntryId: null, createdAt: e.createdAt ?? daysAgo(0) };
+  const push = (e: Omit<LedgerRow, 'id' | 'runningBalanceMinor' | 'reversedByEntryId' | 'createdAt'> & { createdAt?: string }) => {
+    const entry: LedgerRow = { ...e, id: ++lid, runningBalanceMinor: 0, reversedByEntryId: null, createdAt: e.createdAt ?? daysAgo(0) };
     ledger.push(entry);
     return entry;
   };

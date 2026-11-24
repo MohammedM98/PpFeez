@@ -15,6 +15,7 @@ import { DatePicker } from '@/components/ui/DateFields';
 import { Amount } from '@/components/ui/Amount';
 import { ConfirmMoney } from '@/components/ui/ConfirmMoney';
 import { toast } from '@/components/ui/Toast';
+import { DangerConfirm, deletedToast } from '@/components/ui/DangerConfirm';
 import { Breakdown, fromTxn } from './bits';
 import { usePreview } from './usePreview';
 
@@ -23,7 +24,7 @@ export const CURRENCIES = ['USD', 'EUR', 'TRY', 'GBP', 'SAR', 'AED', 'CAD', 'AUD
 export const actionLabel: Record<TxnAction, string> = {
   assign: 'تخصيص لعميل', unassign: 'إلغاء التخصيص', set_fee: 'تعديل الرسوم', set_commission: 'تعديل العمولة',
   approve: 'اعتماد', unapprove: 'إلغاء الاعتماد', exclude: 'استبعاد', include: 'إرجاع', edit_note: 'تعديل الملاحظة',
-  confirm_review: 'تأكيد البيانات', edit_details: 'تعديل البيانات',
+  confirm_review: 'تأكيد البيانات', edit_details: 'تعديل البيانات', delete: 'حذف',
 };
 
 type Open =
@@ -31,6 +32,7 @@ type Open =
   | { kind: 'manual'; rawEmailId?: number; prefill?: { payerName?: string; occurredAt?: string } }
   | { kind: 'bulk_assign'; ids: number[] }
   | { kind: 'bulk_approve'; rows: Transaction[] }
+  | { kind: 'delete'; rows: Transaction[] }
   | { kind: 'bulk_result'; title: string; result: BulkResult; rows: Transaction[] };
 
 type Ctx = { open: (o: Open) => void; act: (a: TxnAction, t: Transaction) => void; bulk: (a: 'unassign' | 'exclude', rows: Transaction[]) => void };
@@ -54,6 +56,7 @@ export function TxnActionsHost({ children }: { children: ReactNode }) {
         case 'edit_note': return setState({ kind: 'note', txn: t });
         case 'confirm_review': return setState({ kind: 'confirm_review', txn: t });
         case 'edit_details': return setState({ kind: 'edit_details', txn: t });
+        case 'delete': return setState({ kind: 'delete', rows: [t] });
         case 'unassign': return void run(() => api.txnUnassign(t.id), 'أُلغي التخصيص');
         case 'exclude': return void run(() => api.txnSetExcluded(t.id, true), 'استُبعدت المعاملة');
         case 'include': return void run(() => api.txnSetExcluded(t.id, false), 'أُرجعت المعاملة إلى غير المخصّصة');
@@ -79,6 +82,7 @@ export function TxnActionsHost({ children }: { children: ReactNode }) {
       {state?.kind === 'edit_details' && <EditDetailsDialog txn={state.txn} onClose={close} />}
       {state?.kind === 'manual' && <ManualDialog rawEmailId={state.rawEmailId} prefill={state.prefill} onClose={close} />}
       {state?.kind === 'bulk_approve' && <BulkApproveDialog rows={state.rows} onClose={close} onDone={(res) => reportBulk('الاعتماد', res, state.rows, setState)} />}
+      {state?.kind === 'delete' && <DeleteTxnsDialog rows={state.rows} onClose={close} onFailed={(res) => setState({ kind: 'bulk_result', title: 'الحذف', result: res, rows: state.rows })} />}
       {state?.kind === 'bulk_result' && <BulkResultDialog title={state.title} result={state.result} rows={state.rows} onClose={close} />}
     </TxnActionsCtx.Provider>
   );
@@ -286,6 +290,49 @@ function UnapproveDialog({ txn, onClose }: { txn: Transaction; onClose: () => vo
 }
 
 // ---------------------------------------------------------------- note
+// ---------------------------------------------------------------- delete (SPEC 4.7)
+function DeleteTxnsDialog({ rows, onClose, onFailed }: { rows: Transaction[]; onClose: () => void; onFailed: (r: BulkResult) => void }) {
+  const ids = rows.map((r) => r.id);
+  const preview = useQuery({ queryKey: ['txn_delete_preview', ids], queryFn: () => api.txnDeletePreview(ids), staleTime: 0 });
+  const { run, pending } = useAction();
+  const p = preview.data;
+  const one = rows.length === 1 ? rows[0] : null;
+  return (
+    <DangerConfirm title={one ? 'حذف المعاملة' : `حذف ${rows.length} معاملة`} confirmLabel="حذف نهائياً" pending={pending} isLoading={!p}
+      backup={rows.length > 1 ? 'auto' : 'none'} onClose={onClose}
+      onConfirm={async (reason) => {
+        const r = await run(() => api.txnDelete(ids, reason || undefined));
+        if (!r.ok) return;
+        if (r.value.failed.length) onFailed(r.value);
+        else { deletedToast(one ? 'حُذفت المعاملة' : `حُذفت ${r.value.ok.length} معاملة`, r.value.backup); onClose(); }
+      }}>
+      {one && (
+        <div className="rounded-card bg-raised/60 px-4 py-3 text-sm">
+          <bdi className="text-fg">{one.payerName ?? '—'}</bdi>{' '}<Amount minor={one.grossMinor} currency={one.currency} />
+          <div className="text-[12.5px] text-fg-3"><bdi dir="ltr" className="num">{one.paypalTxnId}</bdi></div>
+        </div>
+      )}
+      {p && p.approvedCount > 0 && (
+        <div className="rounded-card bg-neg-soft px-4 py-3 text-sm">
+          <p className="font-medium text-neg">
+            {one ? 'المعاملة معتمدة' : `${p.approvedCount} منها معتمدة`}: سيُحذف {p.ledgerEntryCount === 1 ? 'قيد واحد' : `${p.ledgerEntryCount} قيود`} من دفاتر العملاء
+          </p>
+          <ul className="mt-2 flex flex-col gap-1 text-fg-2">
+            {p.effects.map((e) => (
+              <li key={`${e.customerId}-${e.currency}`} className="flex items-center justify-between gap-3">
+                <span>رصيد {e.customerName}</span>
+                <Amount minor={e.balanceDeltaMinor} currency={e.currency} className={e.balanceDeltaMinor < 0 ? 'text-neg' : 'text-pos'} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {p && p.approvedCount === 0 && <p className="text-sm text-fg-2">{one ? 'المعاملة غير معتمدة، فلا تتغيّر أي أرصدة.' : 'لا معاملة معتمدة بينها، فلا تتغيّر أي أرصدة.'}</p>}
+      <p className="text-[13px] text-fg-3">لا تعود في السحب التالي. رسالتها الأصلية تبقى في «الرسائل ← متجاهلة» ويمكن إعادتها بإعادة التحليل.</p>
+    </DangerConfirm>
+  );
+}
+
 // ---------------------------------------------------------------- review (SPEC 5.3)
 function ConfirmReviewDialog({ txn, onClose, onEdit }: { txn: Transaction; onClose: () => void; onEdit: () => void }) {
   const { run, pending } = useAction();
