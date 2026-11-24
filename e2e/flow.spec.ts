@@ -412,3 +412,36 @@ for (const theme of ['dark', 'light'] as const) {
     expect(errors).toEqual([]);
   });
 }
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`Excel append mode and a one-time rewrite (${theme})`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    const shot = (n: string) => page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-${n}.png` });
+
+    // default: add what is new and keep the owner's edits; the result says how many rows
+    await page.goto(`/?theme=${theme}#/settings`);
+    await page.getByRole('link', { name: 'ملف Excel' }).click();
+    await expect(page.getByRole('radio', { name: /إضافة الجديد/ })).toBeChecked();
+    await page.getByRole('button', { name: 'تحديث ملف Excel' }).click();
+    await expect(page.getByText('حُدّث ملف Excel')).toBeVisible();
+    await expect(page.getByText(/أُضيفت .*جديدة، وحُدّث صفّان/)).toBeVisible();
+    await page.locator('#excel').evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    await shot('31-excel-mode');
+
+    // a column the program writes to was renamed: nothing is written; rewrite once after a confirm
+    await page.goto(`/?theme=${theme}&excelLayout=1#/settings`);
+    await page.reload();
+    await page.getByRole('button', { name: 'تحديث ملف Excel' }).click();
+    const layout = page.getByRole('dialog');
+    await expect(layout).toContainText('لم أجد عمود «العميل» في ورقة المعاملات');
+    await shot('32-excel-layout');
+    await layout.getByRole('button', { name: 'إعادة كتابة كاملة لهذه المرة' }).click();
+    await expect(page.getByRole('dialog')).toContainText('.previous.xlsx');
+    await page.getByRole('dialog').getByRole('button', { name: 'إعادة الكتابة' }).click();
+    await expect(page.getByText('أُعيدت كتابة ملف Excel')).toBeVisible();
+    // only that one time: the chosen mode is still append
+    await expect(page.getByRole('radio', { name: /إضافة الجديد/ })).toBeChecked();
+    expect(errors).toEqual([]);
+  });
+}

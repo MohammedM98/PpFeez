@@ -17,7 +17,7 @@ const KNOWN_CODES = new Set<ErrorCode>([
   'locked', 'wrong_password', 'too_many_attempts', 'not_found', 'validation', 'invalid_amount',
   'invalid_transition', 'fee_required', 'commission_exceeds_net', 'customer_inactive', 'duplicate',
   'already_reversed', 'has_dependents', 'imap_auth', 'imap_connect', 'imap_disabled', 'pull_running', 'invalid_range',
-  'backup_failed', 'restore_failed', 'not_deletable', 'confirm_mismatch', 'file_locked', 'no_export_path', 'export_failed', 'internal',
+  'backup_failed', 'restore_failed', 'not_deletable', 'confirm_mismatch', 'file_locked', 'no_export_path', 'excel_layout', 'export_failed', 'internal',
 ]);
 
 export class ApiError extends Error implements AppError {

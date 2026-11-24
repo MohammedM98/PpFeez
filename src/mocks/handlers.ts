@@ -10,8 +10,19 @@ import { decimalsOf, formatMinor } from '@/lib/money';
 import { creditDescription, halfUp, ltr, seed, type Db, type LedgerRow, type TxnRow } from './db';
 
 let db: Db = seed();
+// Excel append mode (SPEC 6.8.1): which PayPal ids the main file already has, and rows changed since
+// the last update (the seed's file was written yesterday, before the last few changes)
+let excelExported = new Set<string>();
+let excelUpdates = 0;
+function seedExcel() {
+  excelExported = new Set(db.txns.filter((t) => t.occurredAt < daysAgoIso(1)).map((t) => t.paypalTxnId));
+  excelUpdates = 2;
+}
+const daysAgoIso = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
+seedExcel();
 export function resetDb(next?: Partial<Db['status']>) {
   db = seed();
+  seedExcel();
   if (next) Object.assign(db.status, next);
 }
 export function getDb() {
@@ -905,8 +916,25 @@ export function handle(cmd: string, a: Args = {}): unknown {
     case 'excel_update': {
       if (!db.settings.excelExportPath) fail('no_export_path', 'اختر مسار ملف Excel أولاً');
       if (new URLSearchParams(location.search).get('excelLocked') === '1') fail('file_locked', 'أغلق الملف في Excel ثم أعد المحاولة');
+      const rows = db.txns.length + db.ledger.length + db.customers.length + 8;
+      // SPEC 6.8.1 append mode: new transactions are added, existing rows only get the program's columns
+      if (db.settings.excelMode === 'append') {
+        // ?excelLayout=1: the owner renamed a column the program writes to
+        if (new URLSearchParams(location.search).get('excelLayout') === '1') fail('excel_layout', 'لم أجد عمود «العميل» في ورقة المعاملات. أعد العنوان كما كان أو اختر «إعادة كتابة كاملة».');
+        const created = !db.settings.excelLastExportedAt;
+        const fresh = db.txns.filter((t) => !excelExported.has(t.paypalTxnId));
+        if (created) for (const t of db.txns) excelExported.add(t.paypalTxnId);
+        const added = created ? 0 : fresh.length;
+        for (const t of fresh) excelExported.add(t.paypalTxnId);
+        const updated = created ? 0 : excelUpdates;
+        excelUpdates = 0;
+        db.settings.excelLastExportedAt = nowIso();
+        return { path: db.settings.excelExportPath, sheets: 4, rows, exportedAt: db.settings.excelLastExportedAt, added, updated, created };
+      }
+      for (const t of db.txns) excelExported.add(t.paypalTxnId);
+      excelUpdates = 0;
       db.settings.excelLastExportedAt = nowIso();
-      return { path: db.settings.excelExportPath, sheets: 4, rows: db.txns.length + db.ledger.length + db.customers.length + 8, exportedAt: db.settings.excelLastExportedAt, added: 3, updated: 2, created: false };
+      return { path: db.settings.excelExportPath, sheets: 4, rows, exportedAt: db.settings.excelLastExportedAt, added: 0, updated: 0, created: false };
     }
     case 'excel_export_transactions': return { path: a.path, sheets: 1, rows: txnList(a.filter ?? {}, a.sort, 1, 100000).total + 1, exportedAt: nowIso(), added: 0, updated: 0, created: true };
     case 'excel_export_ledger': return { path: a.path, sheets: a.currency ? 1 : balances(a.customerId).length, rows: db.ledger.filter((e) => e.customerId === a.customerId).length, exportedAt: nowIso(), added: 0, updated: 0, created: true };

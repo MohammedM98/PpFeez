@@ -118,6 +118,7 @@ function ExcelCard() {
       ) : (
         <p className="mt-1 text-[12.5px] text-fg-3">لم يُختر ملف بعد. <Link to="/settings" className="text-accent-ink hover:underline">اختره من الإعدادات</Link></p>
       )}
+      {excel.dialog}
     </div>
   );
 }

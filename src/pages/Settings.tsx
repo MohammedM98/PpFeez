@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { MenuTrigger, Menu, MenuItem, Popover, type Key } from 'react-aria-components';
+import { MenuTrigger, Menu, MenuItem, Popover, Radio, RadioGroup, type Key } from 'react-aria-components';
 import { FileSpreadsheet, FolderOpen, HardDriveDownload, MoreHorizontal, Plus, RefreshCw, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
 import type { BackupFile, Mailbox, ResetScope, Settings as SettingsT, Theme } from '@/lib/contract';
@@ -252,6 +252,12 @@ function FeesSection({ s }: { s: SettingsT }) {
 }
 
 // ------------------------------------------------------------------ excel
+type ExcelMode = SettingsT['excelMode'];
+const EXCEL_MODES: { id: ExcelMode; label: string; hint: string }[] = [
+  { id: 'append', label: 'إضافة الجديد (يحفظ تعديلاتك)', hint: 'يضيف المعاملات الجديدة ويحدّث أعمدة البرنامج فقط؛ ملاحظاتك وألوانك وأعمدتك وأوراقك تبقى' },
+  { id: 'rewrite', label: 'إعادة كتابة كاملة', hint: 'يُنشئ الملف من جديد في كل تحديث؛ ما كتبته فيه يضيع (نسخة سابقة تُحفظ بجانبه)' },
+];
+
 function ExcelSection({ s }: { s: SettingsT }) {
   const { run } = useAction();
   const excel = useExcelUpdate();
@@ -260,7 +266,7 @@ function ExcelSection({ s }: { s: SettingsT }) {
     if (path) await run(() => api.excelSetPath(path), 'حُفظ مسار الملف');
   };
   return (
-    <Section id="excel" title="ملف Excel" description="ملف واحد يُعاد كتابته بأحدث البيانات: الملخص، المعاملات، العملاء، الدفتر. للقراءة فقط، لا يُستورد منه شيء"
+    <Section id="excel" title="ملف Excel" description="ملف واحد بأحدث البيانات: الملخص، المعاملات، العملاء، الدفتر. لا يُستورد منه شيء إلى البرنامج"
       actions={s.excelExportPath && <>
         <Button size="sm" variant="secondary" onPress={() => void run(() => api.openPath(s.excelExportPath!))}><FileSpreadsheet />فتح الملف</Button>
         <Button size="sm" variant="primary" isPending={excel.pending} onPress={() => void excel.update()}><RefreshCw />تحديث ملف Excel</Button>
@@ -269,9 +275,25 @@ function ExcelSection({ s }: { s: SettingsT }) {
         {s.excelExportPath ? <Trunc className="max-w-[360px] text-[13px] text-fg-2">{s.excelExportPath}</Trunc> : <span className="text-[13px] text-fg-3">لم يُختر</span>}
         <Button size="sm" variant="secondary" onPress={choose}>{s.excelExportPath ? 'تغيير' : 'اختيار ملف'}</Button>
       </Row>
+      <div className="flex flex-col gap-2 border-b border-line py-3">
+        <span className="text-sm text-fg">طريقة التحديث</span>
+        <RadioGroup aria-label="طريقة تحديث ملف Excel" value={s.excelMode} className="grid grid-cols-2 gap-2"
+          onChange={(v) => void run(() => api.updateSettings({ excelMode: v as ExcelMode }), v === 'append' ? 'التحديث يضيف الجديد ويحفظ تعديلاتك' : 'التحديث يعيد كتابة الملف كاملاً')}>
+          {EXCEL_MODES.map((m) => (
+            <Radio key={m.id} value={m.id} className={({ isSelected }) => cx(
+              'flex cursor-default flex-col gap-0.5 rounded-ctl border px-3.5 py-2.5 outline-none transition-colors duration-150',
+              'data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-1 data-[focus-visible]:outline-focus',
+              isSelected ? 'border-accent bg-accent-soft' : 'border-line hover:border-line-strong')}>
+              <span className="text-sm text-fg">{m.label}</span>
+              <span className="text-[12.5px] leading-snug text-fg-3">{m.hint}</span>
+            </Radio>
+          ))}
+        </RadioGroup>
+      </div>
       <Row label="تحديث الملف عند إغلاق البرنامج" hint="مع النسخة الاحتياطية، وفشله لا يمنع الإغلاق">
         <Switch isSelected={s.excelUpdateOnClose} isDisabled={!s.excelExportPath} onChange={(v) => void run(() => api.updateSettings({ excelUpdateOnClose: v }), 'حُفظ')} aria-label="تحديث عند الإغلاق" />
       </Row>
+      {excel.dialog}
     </Section>
   );
 }
