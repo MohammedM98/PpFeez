@@ -110,6 +110,14 @@ fn a_new_file_with_carried_balance_starts_with_the_balance_then_only_new_rows() 
     let link = h.core.customer_excel_get(c).unwrap().unwrap();
     assert_eq!((link.current_file_id, link.files_count, link.path.clone()), (file, 2, new.display().to_string()));
     assert_eq!(counts(&h, c), (0, 0, 0), "everything is in the carried balance");
+    assert!(
+        h.core
+            .customer_excel_item_files(c, ItemRef { kind: ItemKind::Txn, id: t2 })
+            .unwrap()
+            .iter()
+            .all(|f| f.file_id != file),
+        "a carried line is not a row of the new file"
+    );
     assert_eq!(h.core.txn_get(t2).unwrap().excel_status, ExcelStatus::Exported);
 
     // New movements go to the new file only; the old file is not touched.
@@ -221,6 +229,23 @@ fn manual_adds_choose_the_file_and_duplicates_are_per_file() {
     assert_eq!(r.added, 1);
     assert_eq!(keys(&new, "USD").len(), 3);
     assert_eq!(keys(&old, "USD").len(), 2);
+
+    // Tooltip: every file the row was written to.
+    let files = |kind, id| -> Vec<i64> {
+        h.core.customer_excel_item_files(c, ItemRef { kind, id }).unwrap().iter().map(|f| f.file_id).collect()
+    };
+    assert_eq!(files(ItemKind::Txn, t1), vec![old_id, new_id]);
+    assert_eq!(files(ItemKind::Txn, t2), vec![old_id, new_id]);
+    // Its approval credit in the ledger is the same row.
+    let credit = h
+        .core
+        .ledger_entries(c, "USD", None)
+        .unwrap()
+        .entries
+        .into_iter()
+        .find(|e| e.transaction_id == Some(t2))
+        .unwrap();
+    assert_eq!(files(ItemKind::Ledger, credit.id), vec![old_id, new_id]);
 }
 
 #[test]

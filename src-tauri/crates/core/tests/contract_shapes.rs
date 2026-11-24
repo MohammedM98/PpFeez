@@ -754,4 +754,8 @@ fn customer_excel_group() {
         ],
     );
     h.core.customer_excel_remove_file(c.id, nf["file"]["id"].as_i64().unwrap()).unwrap();
+    let item: ItemRef = serde_json::from_value(json!({ "kind": "txn", "id": t.id })).unwrap();
+    let f = h.core.customer_excel_item_files(c.id, item).unwrap();
+    assert_eq!(f.len(), 1);
+    assert_keys(&f[0], &["fileId", "label", "path", "exportedAt"]);
 }

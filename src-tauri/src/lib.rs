@@ -153,6 +153,7 @@ pub fn run() {
             commands::excel::customer_excel_new_file,
             commands::excel::customer_excel_set_current,
             commands::excel::customer_excel_remove_file,
+            commands::excel::customer_excel_item_files,
         ])
         .build(tauri::generate_context!())
         .expect("error while building PpFeez");

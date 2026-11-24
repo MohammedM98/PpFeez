@@ -76,7 +76,7 @@ pub async fn open_path(app: AppHandle, state: State<'_, AppState>, path: PathBuf
 
 use ppfeez_core::excel::customer::{
     CustomerExcel, CustomerExcelAdded, CustomerExcelCreated, CustomerExcelFile, CustomerExcelNewFile,
-    CustomerExcelPreview, CustomerExcelSent, ExcelStart, ItemRef, UnexportedSummary,
+    CustomerExcelPreview, CustomerExcelSent, ExcelStart, ItemFile, ItemRef, UnexportedSummary,
 };
 
 #[tauri::command]
@@ -217,4 +217,14 @@ pub async fn customer_excel_set_current(
 pub async fn customer_excel_remove_file(state: State<'_, AppState>, customer_id: i64, file_id: i64) -> AppResult<()> {
     state.core.guard()?;
     state.core.customer_excel_remove_file(customer_id, file_id)
+}
+
+#[tauri::command]
+pub async fn customer_excel_item_files(
+    state: State<'_, AppState>,
+    customer_id: i64,
+    item: ItemRef,
+) -> AppResult<Vec<ItemFile>> {
+    state.core.guard()?;
+    state.core.customer_excel_item_files(customer_id, item)
 }

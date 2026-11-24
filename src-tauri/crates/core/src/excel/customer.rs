@@ -119,6 +119,16 @@ pub enum ExcelStart {
     FromSeq { seq: i64 },
 }
 
+/// SPEC 6.8.4: a file a statement row was written to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemFile {
+    pub file_id: i64,
+    pub label: Option<String>,
+    pub path: String,
+    pub exported_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomerExcelNewFile {
@@ -2139,5 +2149,36 @@ impl Core {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// SPEC 6.8.4: the files a statement row was written to (for the tooltip, on demand). Lines
+    /// covered by a carried balance are not rows of the file, so they are not listed.
+    pub fn customer_excel_item_files(&self, customer_id: i64, item: ItemRef) -> AppResult<Vec<ItemFile>> {
+        let conn = self.conn();
+        crate::customers::customer_ref(&conn, customer_id)?;
+        // A credit entry is its transfer's line; a linked payout's entry is the payout's line.
+        let (kind, id, source): (&str, i64, Option<i64>) = match item.kind {
+            ItemKind::Txn => ("txn", item.id, None),
+            ItemKind::Payout => ("payout", item.id, None),
+            ItemKind::Reversal => return Ok(vec![]),
+            ItemKind::Ledger => match get_entry(&conn, item.id) {
+                Ok(e) if e.kind == LedgerType::Credit && e.transaction_id.is_some() => {
+                    ("txn", e.transaction_id.unwrap_or_default(), Some(e.id))
+                }
+                Ok(e) if e.payout_id.is_some() => ("payout", e.payout_id.unwrap_or_default(), None),
+                _ => ("ledger", item.id, None),
+            },
+        };
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.label, f.file_path, MAX(i.exported_at) FROM customer_excel_items i
+             JOIN customer_excel_files f ON f.customer_id = i.customer_id AND f.file_path = i.file_path
+             WHERE i.customer_id = ?1 AND i.item_kind = ?2 AND i.item_id = ?3 AND (?4 IS NULL OR i.source_id = ?4)
+               AND i.status = 'exported' AND i.line_key NOT LIKE '~%' AND i.exported_at IS NOT NULL
+             GROUP BY f.id ORDER BY MAX(i.exported_at), f.id",
+        )?;
+        let rows = stmt.query_map(params![customer_id, kind, id, source], |r| {
+            Ok(ItemFile { file_id: r.get(0)?, label: r.get(1)?, path: r.get(2)?, exported_at: r.get(3)? })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 }
