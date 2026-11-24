@@ -80,6 +80,8 @@ export type Settings = {
   excelLastExportedAt: IsoDate | null;
   excelUpdateOnClose: boolean;
   excelMode: 'append' | 'rewrite';    // SPEC §6.8.1، افتراضي 'append'
+  excelRecentFiles: string[];         // SPEC §6.8.2، آخر 5 ملفات (القلب يحدّثها)
+  excelAppendColumns: ExcelColumn[];  // آخر اختيار أعمدة لورقة جديدة
   autoCheckUpdates: boolean;          // SPEC §6.9، افتراضي true
   extraPaypalDomains: string[];       // SPEC §5.6، نطاقات يضيفها المدير
   builtinPaypalDomains: string[];     // للقراءة فقط (update_settings يتجاهله)
@@ -355,6 +357,25 @@ export type ExcelExportResult = { path: string; sheets: number; rows: number; ex
 // excel_update(): ExcelExportResult                     // append (افتراضي): يضيف الجديد ويحدّث أعمدة البرنامج ويحفظ تعديلات المدير؛ rewrite: إعادة كتابة   throws no_export_path | file_locked | excel_layout | export_failed
 // excel_export_transactions({ filter: TxnFilter, sort: TxnSort, path }): ExcelExportResult
 // excel_export_ledger({ customerId, currency?: Currency, period?: Period, path }): ExcelExportResult  // بلا currency => ورقة لكل عملة
+
+// ===== إضافة معاملات مختارة إلى أي ملف (SPEC §6.8.2) =====
+export type ExcelColumn =
+  | 'date' | 'paypalTxnId' | 'type' | 'payerName' | 'payerEmail' | 'payerNote' | 'currency'
+  | 'gross' | 'fee' | 'net' | 'customer' | 'commissionPct' | 'commission' | 'customerAmount'
+  | 'status' | 'mailbox' | 'note';
+export type ExcelSheetInfo = {
+  name: string;
+  state: 'has_program_columns' | 'unknown_columns' | 'empty';
+  recognizedColumns: ExcelColumn[];
+  headerRow: number | null;          // 1-based
+  dataRows: number;
+  existingTxnIds: number;            // عدد أرقام PayPal الموجودة (للمعاينة)
+};
+// excel_inspect({ path }): { path: string; sheets: ExcelSheetInfo[] }      throws file_locked | export_failed (ليس xlsx)
+// excel_append_preview({ path, sheet: string, txnIds: number[] }): { toAdd: number; duplicates: number }
+// excel_append_transactions({ path, target: { kind: 'existing'; sheet: string } | { kind: 'new'; sheet: string },
+//   txnIds: number[], columns?: ExcelColumn[], skipDuplicates: boolean }):
+//   { path: string; sheet: string; added: number; skippedDuplicates: number }   throws file_locked | excel_layout | export_failed
 // open_path({ path }): void                             // فتح الملف في Excel
 ```
 
