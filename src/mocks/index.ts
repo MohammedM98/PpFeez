@@ -21,6 +21,11 @@ export function installMocks() {
     db.mailboxes = [];
     db.settings.backupDir = null;
   }
+  if (params.get('empty') === '1') {
+    // a fresh install: no transactions, customers, ledger or emails yet
+    const db = getDb();
+    db.txns = []; db.customers = []; db.ledger = []; db.emails = []; db.history = [];
+  }
   if (params.get('theme')) getDb().settings.theme = params.get('theme') as 'dark' | 'light' | 'system';
   const latency = Number(params.get('latency') ?? 60);
 

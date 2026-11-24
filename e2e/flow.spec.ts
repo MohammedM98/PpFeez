@@ -211,3 +211,31 @@ for (const theme of ['dark', 'light'] as const) {
     expect(errors).toEqual([]);
   });
 }
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`currency filter on an empty database (${theme})`, async ({ page }) => {
+    await page.goto(`/?theme=${theme}&empty=1#/transactions`);
+    const currency = page.locator('main').getByRole('button', { name: /كل العملات/ });
+    await expect(currency).toBeVisible();
+    await expect(currency).toHaveText(/كل العملات/);
+
+    // a write to React Aria's hidden native <select> (autofill / form restore in the
+    // Windows webview) must not change the filter: this is what showed "USD" in 0.2.0
+    await page.evaluate(() => {
+      const s = document.querySelector('main select') as HTMLSelectElement;
+      s.value = 'USD';
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await expect(currency).toHaveText(/كل العملات/);
+    await page.screenshot({ path: `e2e/screenshots/${theme}-15-empty-db.png` });
+
+    // choosing a currency by hand still works, and back to all
+    await currency.click();
+    await page.getByRole('option', { name: 'EUR' }).click();
+    const eur = page.locator('main').getByRole('button', { name: /EUR/ });
+    await expect(eur).toBeVisible();
+    await eur.click();
+    await page.getByRole('option', { name: 'كل العملات' }).click();
+    await expect(page.locator('main').getByRole('button', { name: /كل العملات/ })).toBeVisible();
+  });
+}

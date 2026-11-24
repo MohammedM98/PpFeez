@@ -3,7 +3,7 @@ import {
   Label, Checkbox as RacCheckbox, type CheckboxProps, type Key,
 } from 'react-aria-components';
 import { Check, ChevronDown, Search, X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { cx } from './cx';
 
 export const fieldShell =
@@ -25,8 +25,17 @@ export type Option = { id: Key; label: ReactNode };
 export function Select({ label, options, value, onChange, className, placeholder }: {
   label: string; options: Option[]; value: Key | null; onChange: (k: Key) => void; className?: string; placeholder?: string;
 }) {
+  // React Aria keeps a hidden native <select> for forms. In the Windows webview, autofill or
+  // form-state restore can write to it, which silently switched the currency filter to "USD".
+  // Only accept a change while the person is using this control (list open or trigger focused).
+  const open = useRef(false);
+  const focused = useRef(false);
   return (
-    <RacSelect aria-label={label} selectedKey={value} onSelectionChange={(k) => k !== null && onChange(k)} placeholder={placeholder ?? label} className={cx('group', className)}>
+    <RacSelect aria-label={label} selectedKey={value} placeholder={placeholder ?? label} className={cx('group', className)}
+      autoComplete="off"
+      onOpenChange={(o) => { open.current = o; }}
+      onFocusChange={(f) => { focused.current = f; }}
+      onSelectionChange={(k) => { if (k !== null && (open.current || focused.current)) onChange(k); }}>
       <RacButton className={cx('flex w-full items-center justify-between gap-2 px-3 outline-none data-[focus-visible]:border-focus', fieldShell)}>
         <SelectValue className="truncate data-[placeholder]:text-fg-3" />
         <ChevronDown className="size-4 text-fg-3" aria-hidden />
