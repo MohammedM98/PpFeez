@@ -134,14 +134,15 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
   }, [rows, currency, st.data]);
   const W = useMemo(() => {
     const w = {
-      select: SELECT_W, seq: '72px', date: '96px',
+      select: SELECT_W, seq: '60px', date: '92px',
       gross: amountWidth(fit.gross, false, 156), fee: amountWidth(fit.fee, false, 100), net: amountWidth(fit.net, false, 128),
       commission: amountWidth(fit.commission, false, 76), credit: amountWidth(fit.credit, false, 64), debit: amountWidth(fit.debit, false, 64),
-      balance: amountWidth(fit.balance, false, 80), sent: '136px', method: '148px', ref: '128px', matched: '76px', notes: '140px', excel: '40px', menu: '48px',
+      balance: amountWidth(fit.balance, false, 80), sent: '124px', method: '148px', ref: '128px', matched: '76px', notes: '140px', excel: '40px', menu: '48px',
     };
-    return { ...w, min: sumWidths([...Object.values(w), '200px']) };
+    return { ...w, min: sumWidths([...Object.values(w), '150px']) };
   }, [fit]);
-  const widths = [W.select, W.seq, W.date, undefined, W.gross, W.fee, W.net, W.commission, W.credit, W.debit, W.balance, W.sent, W.method, W.ref, W.matched, W.notes, W.excel, W.menu];
+  // له / عليه / الرصيد / تم الإرسال come first after the description, so they fit at 1100 without scrolling
+  const widths = [W.select, W.seq, W.date, undefined, W.credit, W.debit, W.balance, W.sent, W.gross, W.fee, W.net, W.commission, W.method, W.ref, W.matched, W.notes, W.excel, W.menu];
 
   const pickedRows = rows.filter((r) => picked.has(keyOf(r)));
   const pickedTxns = pickedRows.flatMap((r) => (r.kind === 'txn' ? [r.txn] : []));
@@ -226,14 +227,14 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
               <th className="sticky z-[2] text-start" data-sticky="start-inner" style={{ insetInlineStart: SELECT_W }}><HeadLabel>#</HeadLabel></th>
               <th className="sticky z-[2] text-start" data-sticky="start" style={{ insetInlineStart: `calc(${SELECT_W} + ${W.seq})` }}><HeadLabel>التاريخ</HeadLabel></th>
               <th className="text-start"><HeadLabel>البيان</HeadLabel></th>
-              <th className="text-end"><HeadLabel>المبلغ الكامل من PayPal</HeadLabel></th>
-              <th className="text-end"><HeadLabel>خصم PayPal</HeadLabel></th>
-              <th className="text-end"><HeadLabel>الصافي من PayPal</HeadLabel></th>
-              <th className="text-end"><HeadLabel>العمولة</HeadLabel></th>
               <th className="text-end"><HeadLabel>له</HeadLabel></th>
               <th className="text-end"><HeadLabel>عليه</HeadLabel></th>
               <th className="text-end"><HeadLabel>الرصيد</HeadLabel></th>
               <th className="text-start"><HeadLabel>تم الإرسال؟</HeadLabel></th>
+              <th className="text-end"><HeadLabel>المبلغ الكامل من PayPal</HeadLabel></th>
+              <th className="text-end"><HeadLabel>خصم PayPal</HeadLabel></th>
+              <th className="text-end"><HeadLabel>الصافي من PayPal</HeadLabel></th>
+              <th className="text-end"><HeadLabel>العمولة</HeadLabel></th>
               <th className="text-start"><HeadLabel>طريقة الدفع</HeadLabel></th>
               <th className="text-start"><HeadLabel>المرجع</HeadLabel></th>
               <th className="text-start"><HeadLabel>المطابقة</HeadLabel></th>
@@ -245,9 +246,9 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
           <tbody className="[&>tr>td]:h-12 [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:px-2.5 [&>tr>td]:leading-tight [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
             {st.data && period.from && (
               <tr className="t-row [--row-tint:color-mix(in_oklab,var(--raised)_40%,transparent)] text-fg-2">
-                <td colSpan={10}>رصيد سابق حتى <bdi dir="ltr" className="num">{period.from}</bdi></td>
+                <td colSpan={6}>رصيد سابق حتى <bdi dir="ltr" className="num">{period.from}</bdi></td>
                 <td className="text-end"><Amount fit={fit.balance} minor={st.data.openingBalanceMinor} currency={currency} showCurrency={false} tone="signed" /></td>
-                <td colSpan={7} />
+                <td colSpan={11} />
               </tr>
             )}
             {rows.map((r) => {
@@ -280,6 +281,10 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                         {t.payerNote && <Trunc className="text-[12px] text-fg-3">{t.payerNote}</Trunc>}
                       </button>
                     </td>
+                    <td className="text-end"><Amount fit={fit.credit} minor={t.customerAmountMinor} currency={currency} showCurrency={false} className="font-medium text-pos" /></td>
+                    <td />
+                    {balance}
+                    <td><SentCell t={t} onPayout={toPayout} /></td>
                     <td className="text-end"><Amount fit={fit.gross} minor={t.grossMinor} currency={currency} showCurrency={false} className="text-fg-2" /></td>
                     <td className="text-end"><Amount fit={fit.fee} minor={t.feeMinor} currency={currency} showCurrency={false} className="text-fg-2" /></td>
                     <td className="text-end"><Amount fit={fit.net} minor={t.netMinor} currency={currency} showCurrency={false} className="text-fg-2" /></td>
@@ -287,10 +292,6 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                       <Amount fit={fit.commission} minor={t.commissionMinor} currency={currency} showCurrency={false} className="text-fg-2" />
                       <div className="num text-[12px] text-fg-3">{t.commissionMode === 'percent' && t.commissionBps !== null ? <bdi dir="ltr">{formatBps(t.commissionBps)}</bdi> : t.commissionMode === 'fixed' ? 'ثابتة' : ''}</div>
                     </td>
-                    <td className="text-end"><Amount fit={fit.credit} minor={t.customerAmountMinor} currency={currency} showCurrency={false} className="font-medium text-pos" /></td>
-                    <td />
-                    {balance}
-                    <td><SentCell t={t} onPayout={toPayout} /></td>
                     <td className="text-fg-3">—</td>
                     <td className="text-[13px] text-fg-3"><div dir="ltr" className="num truncate text-right" title={t.paypalTxnId}>{t.paypalTxnId}</div></td>
                     <td>{t.matched ? <span className="inline-flex items-center gap-1 text-[13px] text-pos"><Check className="size-3.5" strokeWidth={2.2} />مطابق</span> : <span className="text-fg-3">—</span>}</td>
@@ -327,11 +328,12 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                       <Trunc className={cx(cancelled && 'line-through')}>دفعة {payoutMethod[p.details.method]}{p.details.platform ? ` — ${p.details.platform}` : ''}</Trunc>
                       <div className="num text-[12px] text-fg-3">{p.rangeLabel} · {transferCountLabel(p.txnCount)}</div>
                     </td>
-                    <td /><td /><td /><td /><td />
+                    <td />
                     <td className="text-end"><Amount fit={fit.debit} minor={p.amountMinor} currency={currency} showCurrency={false}
                       className={cx('font-medium', cancelled ? 'text-fg-3 line-through' : p.status === 'draft' ? 'text-fg-3' : 'text-fg')} /></td>
                     {balance}
                     <td><Badge tone={payoutTone[p.status]}>{payoutStatus[p.status]}</Badge></td>
+                    <td /><td /><td /><td />
                     <td><Trunc className="text-[13px] text-fg-2">{[payoutMethod[p.details.method], p.details.platform, p.details.network].filter(Boolean).join(' · ')}</Trunc></td>
                     <td className="text-[13px] text-fg-3">{p.details.reference && <div dir="ltr" className="num truncate text-right" title={p.details.reference}>{p.details.reference}</div>}</td>
                     <td className="text-fg-3">—</td>
@@ -367,11 +369,11 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                       <div className="text-[12px] text-fg-3">{e.payoutMethod ? payoutMethod[e.payoutMethod] : ''}{reversed ? ' عُكس بقيد لاحق' : ''}{e.reversesEntryId !== null ? ' يعكس قيداً سابقاً' : ''}</div>
                     )}
                   </td>
-                  <td /><td /><td /><td />
                   <td className="text-end">{e.amountMinor > 0 && <Amount fit={fit.credit} minor={e.amountMinor} currency={currency} showCurrency={false} className={reversed ? 'text-fg-3 line-through' : 'text-pos'} />}</td>
                   <td className="text-end">{e.amountMinor < 0 && <Amount fit={fit.debit} minor={-e.amountMinor} currency={currency} showCurrency={false} className={reversed ? 'text-fg-3 line-through' : ''} />}</td>
                   {balance}
                   <td className="text-fg-3">—</td>
+                  <td /><td /><td /><td />
                   <td><Trunc className="text-[13px] text-fg-2">{e.payoutMethod ? payoutMethod[e.payoutMethod] : ''}</Trunc></td>
                   <td className="text-[13px] text-fg-3">{e.reference && <div dir="ltr" className="truncate text-right" title={e.reference}>{e.reference}</div>}</td>
                   <td className="text-fg-3">—</td>
@@ -404,9 +406,9 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
           <TotalsTable label="الرصيد الختامي" minWidth={W.min} widths={widths}>
             <tr>
               <TotalsCell sticky="start" colSpan={3} className="!ps-4 text-fg-2">الرصيد الختامي <span className="text-fg-3">{currency}</span></TotalsCell>
-              <TotalsCell colSpan={7} />
+              <TotalsCell colSpan={3} />
               <TotalsCell align="end" className="text-sm font-medium"><Amount fit={fit.balance} minor={st.data.closingBalanceMinor} currency={currency} showCurrency={false} className={st.data.closingBalanceMinor < 0 ? 'text-neg' : 'text-accent-ink'} /></TotalsCell>
-              <TotalsCell colSpan={6} />
+              <TotalsCell colSpan={10} />
               <TotalsCell sticky="end" />
             </tr>
           </TotalsTable>

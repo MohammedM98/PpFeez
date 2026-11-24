@@ -123,6 +123,20 @@ for (const theme of ['dark', 'light'] as const) {
       await open('customers/8');
       await expect(page.getByRole('tab', { name: 'كشف USD' })).toBeVisible();
       problems.push(...await checkTables(page, 'statement with payouts'));
+      // له / عليه / الرصيد / تم الإرسال؟ are in view without scrolling (left of them only the pinned ⋯ column)
+      problems.push(...await page.evaluate(() => {
+        const out: string[] = [];
+        const table = document.querySelector('table[aria-label="كشف USD"]')!;
+        const frame = table.parentElement!.getBoundingClientRect();
+        const ths = Array.from(table.querySelectorAll<HTMLElement>('thead th'));
+        const menu = ths[ths.length - 1].getBoundingClientRect();
+        for (const name of ['له', 'عليه', 'الرصيد', 'تم الإرسال؟']) {
+          const th = ths.find((x) => x.textContent?.trim() === name);
+          const r = th?.getBoundingClientRect();
+          if (!r || r.left < menu.right - 1 || r.right > frame.right + 1) out.push(`statement: column ${name} is not in view without scrolling`);
+        }
+        return out;
+      }));
       await page.getByRole('tab', { name: 'الدفعات' }).click();
       await page.waitForTimeout(150);
       problems.push(...await checkTables(page, 'payouts register'));
