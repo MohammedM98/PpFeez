@@ -77,7 +77,7 @@ function PaypalDomains({ s }: { s: SettingsT }) {
   return (
     <div className="mt-5 border-t border-line pt-5">
       <div className="text-sm text-fg">نطاقات PayPal الإضافية</div>
-      <p className="mb-3 text-[12.5px] text-fg-3">يقرأ البرنامج رسائل PayPal من نطاقات كل الدول المعروفة. أضف هنا نطاقاً لم يُعرف بعد، فتُقبل رسائله إن كانت موقّعة منه</p>
+      <p className="mb-3 text-[12.5px] text-fg-3">رسائل النطاقات المدمجة تُقرأ مباشرة. لنطاق PayPal بلد آخر أضفه هنا، أو اضغط «الوثوق بهذا النطاق» في الرسائل المتجاهلة. تُقبل رسائله فقط إن كانت موقّعة منه</p>
       <div className="flex items-start gap-2">
         <TextField aria-label="نطاق PayPal" ltr value={text} onChange={(v) => { setText(v); setError(undefined); }} placeholder="paypal.com.eg" errorMessage={error} className="w-[280px]"
           onKeyDown={(e) => { if (e.key === 'Enter') void add(); }} />

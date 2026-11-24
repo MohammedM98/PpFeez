@@ -5,14 +5,15 @@ import type { PullRun } from '@/lib/contract';
 import { pullRangeLabel } from '@/lib/strings';
 import { DateTime } from '@/components/ui/DateTime';
 
-/** The first two domains searched, each isolated LTR, then the Arabic count of the rest. */
+/** Domains searched: all of them when there are three or fewer, else two and the Arabic count of the rest. */
 export function DomainsSummary({ domains }: { domains: string[] }) {
-  const shown = domains.slice(0, 2);
+  const shown = domains.length <= 3 ? domains : domains.slice(0, 2);
   const rest = domains.length - shown.length;
+  const restAr = rest === 1 ? 'ونطاق آخر' : rest === 2 ? 'ونطاقان آخران' : rest <= 10 ? `و${rest} نطاقات أخرى` : `و${rest} نطاقاً آخر`;
   return (
     <>
       {shown.map((d, i) => <span key={d}>{i > 0 && ' و'}<bdi dir="ltr">{d}</bdi></span>)}
-      {rest > 0 && <> و<span className="num">{rest}</span> {rest <= 10 ? 'نطاقات أخرى' : 'نطاقاً آخر'}</>}
+      {rest > 0 && <> {restAr}</>}
     </>
   );
 }

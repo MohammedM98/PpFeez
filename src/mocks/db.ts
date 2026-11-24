@@ -199,7 +199,7 @@ export function seed(): Db {
       excelExportPath: 'D:\\PpFeez\\PpFeez.xlsx', excelLastExportedAt: daysAgo(1, 22, 40), excelUpdateOnClose: true,
       autoCheckUpdates: true,
       extraPaypalDomains: [],
-      builtinPaypalDomains: ['paypal.com', 'paypal.co.il', 'paypal.com.tr', 'paypal.co.uk', 'paypal.de', 'paypal.fr', 'paypal.it', 'paypal.es', 'paypal.nl', 'paypal.be', 'paypal.at', 'paypal.ch', 'paypal.pl', 'paypal.se', 'paypal.dk', 'paypal.no', 'paypal.fi', 'paypal.ie', 'paypal.pt', 'paypal.ca', 'paypal.com.au', 'paypal.com.br', 'paypal.com.mx', 'paypal.jp', 'paypal.cn', 'paypal.com.sg', 'paypal.com.hk', 'paypal.ae', 'paypal.in'],
+      builtinPaypalDomains: ['paypal.com', 'paypal.co.il', 'paypal.co.uk'], // same as BUILTIN in the backend
     },
     customers, txns, ledger,
     history: [],
