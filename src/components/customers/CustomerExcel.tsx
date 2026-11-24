@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { MenuTrigger, Menu, MenuItem, Popover, Button as RacButton } from 'react-aria-components';
 import { FileSpreadsheet, TriangleAlert } from 'lucide-react';
 import { api, events, native, toAppError } from '@/lib/api';
-import type { AppError, Customer, CustomerExcelItemRef, CustomerExcelPreview } from '@/lib/contract';
+import type { AppError, Customer, CustomerExcelFile, CustomerExcelItemRef, CustomerExcelPreview, ExcelStart } from '@/lib/contract';
 import { useAction } from '@/lib/useAction';
 import { Button } from '@/components/ui/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { Checkbox } from '@/components/ui/Field';
+import { Checkbox, Select } from '@/components/ui/Field';
+import { Badge } from '@/components/ui/Badge';
+import { DatePicker } from '@/components/ui/DateFields';
 import { Amount } from '@/components/ui/Amount';
 import { DateTime } from '@/components/ui/DateTime';
 import { Trunc } from '@/components/ui/Trunc';
@@ -123,6 +125,10 @@ export function CustomerExcelChip({ customer }: { customer: Customer }) {
   const [linkError, setLinkError] = useState<string | null>(null);
   const x = customer.excel;
   const unsent = x ? x.pendingCount + x.notExportedCount : 0;
+  const [starting, setStarting] = useState(false);
+  const [listing, setListing] = useState(false);
+  // after "إلغاء الربط" the customer's files stay listed (SPEC 6.8.4): one of them can become current again
+  const files = useQuery({ queryKey: ['customer_excel_files', customer.id], queryFn: () => api.customerExcelFiles(customer.id), enabled: !x });
 
   const link = async () => {
     const path = await native.pickXlsx();
@@ -177,6 +183,8 @@ export function CustomerExcelChip({ customer }: { customer: Customer }) {
             if (k === 'folder' && x) void run(() => api.openPath(folderOf(x.path)));
             if (k === 'change' || k === 'link') void link();
             if (k === 'create') setCreating(true);
+            if (k === 'new-file') setStarting(true);
+            if (k === 'files') setListing(true);
             if (k === 'auto' && x) void setAuto(!x.autoSync);
             if (k === 'unlink') setUnlinking(true);
           }}>
@@ -185,6 +193,8 @@ export function CustomerExcelChip({ customer }: { customer: Customer }) {
                 <MenuItem id="open" isDisabled={!x.exists} className={cx(menuItem, 'data-[disabled]:text-fg-3')}>فتح الملف</MenuItem>
                 <MenuItem id="folder" className={menuItem}>فتح المجلد</MenuItem>
                 <MenuItem id="auto" className={menuItem}>{x.autoSync ? 'إيقاف المزامنة التلقائية' : 'تفعيل المزامنة التلقائية'}</MenuItem>
+                <MenuItem id="new-file" className={menuItem}>بدء ملف جديد…</MenuItem>
+                <MenuItem id="files" className={menuItem}>ملفات العميل <span className="num text-fg-3">({x.filesCount})</span>…</MenuItem>
                 <MenuItem id="change" className={menuItem}>تغيير الملف…</MenuItem>
                 <MenuItem id="unlink" className={cx(menuItem, 'text-neg')}>إلغاء الربط</MenuItem>
               </>
@@ -192,6 +202,7 @@ export function CustomerExcelChip({ customer }: { customer: Customer }) {
               <>
                 <MenuItem id="create" className={menuItem}>إنشاء ملف للعميل…</MenuItem>
                 <MenuItem id="link" className={menuItem}>ربط ملف موجود…</MenuItem>
+                {(files.data?.length ?? 0) > 0 && <MenuItem id="files" className={menuItem}>ملفات العميل السابقة <span className="num text-fg-3">({files.data!.length})</span>…</MenuItem>}
               </>
             )}
           </Menu>
@@ -204,6 +215,8 @@ export function CustomerExcelChip({ customer }: { customer: Customer }) {
       )}
 
       {creating && <CreateStatementDialog customer={customer} onClose={() => setCreating(false)} />}
+      {starting && <NewFileDialog customer={customer} onClose={() => setStarting(false)} />}
+      {listing && <FilesDialog customer={customer} onClose={() => setListing(false)} />}
       {askSend !== null && (
         <Dialog isOpen onOpenChange={(o) => !o && setAskSend(null)} width="sm" title="إرسالها الآن؟"
           footer={<>
@@ -285,16 +298,21 @@ export function AddToStatementDialog({ customer, items, onClose, onDone }: { cus
   const { run, pending } = useAction();
   const [problem, setProblem] = useState<{ code: string; message: string } | null>(null);
   const [creating, setCreating] = useState(false);
+  // the destination (SPEC 6.8.4): the current file, another of the customer's files, or a new one
+  const files = useQuery({ queryKey: ['customer_excel_files', customer.id], queryFn: () => api.customerExcelFiles(customer.id), enabled: !!customer.excel });
+  const [fileId, setFileId] = useState<number | undefined>(undefined);
+  const [newFile, setNewFile] = useState(false);
+  const target = files.data?.find((f) => (fileId === undefined ? f.isCurrent : f.id === fileId));
   const preview = useQuery({
-    queryKey: ['customer_excel_preview', customer.id, items],
-    queryFn: () => api.customerExcelPreview(customer.id, items),
+    queryKey: ['customer_excel_preview', customer.id, items, fileId],
+    queryFn: () => api.customerExcelPreview(customer.id, items, fileId),
     enabled: !!customer.excel,
   });
   const p: CustomerExcelPreview | undefined = preview.data;
 
   const add = async () => {
     setProblem(null);
-    const r = await run(() => api.customerExcelAdd(customer.id, items), undefined,
+    const r = await run(() => api.customerExcelAdd(customer.id, items, fileId), undefined,
       { quiet: (e) => e.code === 'file_locked' || e.code === 'excel_layout' || e.code === 'no_export_path' });
     if (r.ok) {
       onClose();
@@ -333,14 +351,26 @@ export function AddToStatementDialog({ customer, items, onClose, onDone }: { cus
   );
 
   return (
-    <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="md" title="إضافة إلى ملف العميل"
-      description={<PathText path={customer.excel.path} className="text-fg-3" />}
+    <>
+    <Dialog isOpen={!newFile} onOpenChange={(o) => !o && onClose()} width="md" title="إضافة إلى ملف العميل"
+      description={<PathText path={target?.path ?? customer.excel.path} className="text-fg-3" />}
       footer={<>
         <Button variant="secondary" onPress={onClose}>تراجع</Button>
         <Button variant="primary" isPending={pending} isDisabled={!p || p.toAdd.length === 0} onPress={() => void add()}>
           {p && p.toAdd.length ? `إضافة ${linesLabel(p.toAdd.length)}` : 'إضافة'}
         </Button>
       </>}>
+      {(files.data?.length ?? 0) > 0 && (
+        <div className="mb-4 flex items-center gap-3">
+          <span className="shrink-0 text-[13px] text-fg-2">الوجهة</span>
+          <Select label="الوجهة" className="min-w-0 flex-1" value={fileId === undefined ? 'current' : String(fileId)}
+            onChange={(k) => { if (k === 'new') setNewFile(true); else setFileId(k === 'current' ? undefined : Number(k)); }}
+            options={[
+              ...(files.data ?? []).map((f) => ({ id: f.isCurrent ? 'current' : String(f.id), label: `${f.isCurrent ? 'الملف الحالي: ' : 'ملف سابق: '}${fileTitle(f)}` })),
+              { id: 'new', label: 'ملف جديد…' },
+            ]} />
+        </div>
+      )}
       {!p ? <p className="text-sm text-fg-3">جارٍ التحقق من الملف…</p> : (
         <div className="flex flex-col gap-4">
           {problem && (
@@ -372,6 +402,127 @@ export function AddToStatementDialog({ customer, items, onClose, onDone }: { cus
         </div>
       )}
     </Dialog>
+    {newFile && <NewFileDialog customer={customer} onClose={() => setNewFile(false)} onCreated={(f) => { setNewFile(false); void files.refetch(); setFileId(f.isCurrent ? undefined : f.id); }} />}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- several files (SPEC 6.8.4)
+/** the name shown for a file: its label, or its file name without .xlsx (keeps a dated name readable in RTL) */
+export const fileTitle = (f: CustomerExcelFile) => f.label || fileName(f.path).replace(/\.xlsx$/i, '');
+
+const START_TEXT: Record<CustomerExcelFile['startMode'], string> = {
+  carry_balance: 'برصيد مرحّل', all: 'بكل الحركات', from_date: 'من تاريخ', from_seq: 'من رقم حوالة',
+};
+
+/**
+ * "بدء ملف جديد…": where to save, what the file starts with (a carried balance by default, every line,
+ * or from a date / transfer number), and whether it becomes the current file.
+ */
+export function NewFileDialog({ customer, onClose, onCreated }: { customer: Customer; onClose: () => void; onCreated?: (f: CustomerExcelFile) => void }) {
+  const qc = useQueryClient();
+  const { run, pending } = useAction();
+  const [kind, setKind] = useState<ExcelStart['kind']>('carry_balance');
+  const [date, setDate] = useState<string | null>(null);
+  const [seq, setSeq] = useState('');
+  const [label, setLabel] = useState('');
+  const [makeCurrent, setMakeCurrent] = useState(true);
+  const [errors, setErrors] = useState<{ start?: string; path?: string }>({});
+  const start: ExcelStart | null = kind === 'from_date' ? (date ? { kind, date } : null) : kind === 'from_seq' ? (/^\d+$/.test(seq) ? { kind, seq: Number(seq) } : null) : { kind };
+
+  const create = async () => {
+    if (!start) { setErrors({ start: kind === 'from_date' ? 'اختر التاريخ' : 'اكتب رقم الحوالة' }); return; }
+    const path = await native.saveXlsx(`كشف حساب - ${customer.name} - ${new Date().toISOString().slice(0, 10)}.xlsx`);
+    if (!path) return;
+    setErrors({});
+    const r = await run(() => api.customerExcelNewFile(customer.id, path, start, makeCurrent, label.trim() || undefined), undefined,
+      { quiet: (e) => e.code === 'validation' || e.code === 'file_locked' });
+    await qc.invalidateQueries();
+    if (r.ok) {
+      onCreated?.(r.value.file);
+      if (!onCreated) onClose();
+      toast.action(makeCurrent ? 'بدأ ملف جديد، وصار الملف الحالي' : 'أُنشئ الملف', [openFileAction(r.value.file.path)],
+        r.value.added ? `${linesLabel(r.value.added)} في بدايته` : fileName(r.value.file.path));
+    } else if (r.error.code === 'validation') setErrors({ [r.error.field === 'start' ? 'start' : 'path']: r.error.messageAr });
+    else if (r.error.code === 'file_locked') setErrors({ path: 'الملف مفتوح في Excel. اختر اسماً آخر أو أغلقه.' });
+  };
+
+  const opt = (id: ExcelStart['kind'], title: string, hint: string, extra?: ReactNode) => (
+    <label className={cx('flex cursor-default gap-3 rounded-card border px-3 py-2.5', kind === id ? 'border-accent bg-accent-soft/40' : 'border-line')}>
+      <input type="radio" name="start" className="mt-1 accent-(--accent)" checked={kind === id} onChange={() => { setKind(id); setErrors({}); }} />
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm text-fg">{title}</span>
+        <span className="block text-[12.5px] text-fg-3">{hint}</span>
+        {kind === id && extra}
+      </span>
+    </label>
+  );
+  return (
+    <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="md" title={`بدء ملف جديد لـ ${customer.name}`}
+      description="الملف القديم يبقى كما هو في قائمة ملفات العميل، ويمكنك الإضافة إليه يدوياً"
+      footer={<>
+        <Button variant="secondary" onPress={onClose}>تراجع</Button>
+        <Button variant="primary" isPending={pending} onPress={() => void create()}>اختيار مكان الحفظ وإنشاء</Button>
+      </>}>
+      <div className="flex flex-col gap-3" role="radiogroup" aria-label="ما يبدأ به الملف">
+        {opt('carry_balance', 'رصيد مرحّل فقط', 'يبدأ لكل عملة بصف «رصيد مرحّل من الملف السابق» بالرصيد الحالي، ثم الحركات الجديدة فقط')}
+        {opt('all', 'كل الحركات من البداية', 'نسخة كاملة جديدة من الكشف')}
+        {opt('from_date', 'من تاريخ', 'رصيد مرحّل بما قبل التاريخ، ثم الحركات من بعده',
+          <div className="mt-2 max-w-[220px]"><DatePicker label="من تاريخ" value={date} onChange={(v) => { setDate(v); setErrors({}); }} /></div>)}
+        {opt('from_seq', 'من رقم حوالة #', 'رصيد مرحّل بما قبل الحوالة، ثم الحركات من بعدها',
+          <div className="mt-2 max-w-[160px]"><TextField label="رقم الحوالة #" ltr value={seq} onChange={(v) => { setSeq(v.replace(/\D/g, '')); setErrors({}); }} /></div>)}
+        {errors.start && <p role="alert" className="text-[13px] text-neg">{errors.start}</p>}
+        <TextField label="اسم للملف (اختياري)" value={label} onChange={setLabel} placeholder="مثلاً: 2027" />
+        <Checkbox isSelected={makeCurrent} onChange={setMakeCurrent}>اجعله الملف الحالي (المزامنة التلقائية تكتب فيه)</Checkbox>
+        {errors.path && <p role="alert" className="rounded-card bg-warn-soft px-3 py-2 text-sm text-fg">{errors.path}</p>}
+      </div>
+    </Dialog>
+  );
+}
+
+/** "ملفات العميل": every statement file of this customer, the current one first. */
+export function FilesDialog({ customer, onClose }: { customer: Customer; onClose: () => void }) {
+  const qc = useQueryClient();
+  const { run } = useAction();
+  const [starting, setStarting] = useState(false);
+  const files = useQuery({ queryKey: ['customer_excel_files', customer.id], queryFn: () => api.customerExcelFiles(customer.id) });
+  const refresh = () => qc.invalidateQueries();
+  return (
+    <>
+    <Dialog isOpen={!starting} onOpenChange={(o) => !o && onClose()} width="lg" title={`ملفات ${customer.name}`}
+      description="الملف الحالي تكتب فيه المزامنة التلقائية؛ الملفات السابقة تبقى ويمكن الإضافة إليها يدوياً"
+      footer={<>
+        <Button variant="secondary" onPress={() => setStarting(true)}>بدء ملف جديد…</Button>
+        <Button variant="primary" onPress={onClose}>تم</Button>
+      </>}>
+      <ul aria-label="ملفات العميل" className="flex flex-col divide-y divide-line rounded-card border border-line">
+        {(files.data ?? []).map((f) => (
+          <li key={f.id} className="flex items-center gap-3 px-3 py-2.5" data-file={f.id}>
+            <FileSpreadsheet className="size-5 shrink-0 text-fg-3" strokeWidth={1.6} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-sm text-fg">
+                <span className="truncate">{fileTitle(f)}</span>
+                <Badge tone={!f.exists ? 'warn' : f.isCurrent ? 'pos' : 'outline'}>{!f.exists ? 'مفقود' : f.isCurrent ? 'الحالي' : 'سابق'}</Badge>
+              </div>
+              <PathText path={f.path} className="text-[12px] text-fg-3" />
+              <div className="num text-[12px] text-fg-3">
+                {START_TEXT[f.startMode]}{f.startValue ? ` ${f.startMode === 'from_seq' ? '#' : ''}${f.startValue}` : ''} · صُدّرت إليه {f.exportedCount}
+                {f.updatedAt && <> · آخر تحديث <DateTime iso={f.updatedAt} /></>}
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-1">
+              <Button size="sm" variant="quiet" isDisabled={!f.exists} onPress={() => openFileAction(f.path).onPress()}>فتح</Button>
+              {!f.isCurrent && <Button size="sm" variant="secondary" onPress={async () => { const r = await run(() => api.customerExcelSetCurrent(customer.id, f.id), `صار «${fileTitle(f)}» الملف الحالي`); if (r.ok) await refresh(); }}>اجعله الحالي</Button>}
+              {!f.isCurrent && <Button size="sm" variant="quiet" className="text-fg-3" aria-label={`إزالة ${fileTitle(f)} من القائمة`}
+                onPress={async () => { const r = await run(() => api.customerExcelRemoveFile(customer.id, f.id), 'أُزيل من القائمة؛ الملف نفسه باقٍ في مكانه'); if (r.ok) await refresh(); }}>إزالة من القائمة</Button>}
+            </div>
+          </li>
+        ))}
+        {files.data?.length === 0 && <li className="px-3 py-6 text-center text-sm text-fg-3">لا ملفات بعد</li>}
+      </ul>
+    </Dialog>
+    {starting && <NewFileDialog customer={customer} onClose={() => setStarting(false)} onCreated={() => setStarting(false)} />}
+    </>
   );
 }
 

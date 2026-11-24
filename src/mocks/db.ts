@@ -22,11 +22,14 @@ export type PayoutRow = {
   txnIds: number[]; ledgerIds: number[]; ledgerEntryId: number | null; createdAt: string; differenceReason: string | null;
 };
 export type CustomerExcelRow = {
+  /** SPEC 6.8.4: one of the customer's files; `db.customerExcel` holds the current one, `db.customerFiles` the others */
+  id: number; label: string | null; startMode: 'carry_balance' | 'all' | 'from_date' | 'from_seq'; startValue: string | null; createdAt: string;
   path: string; updatedAt: string | null; addToExcelByDefault: boolean;
   /** SPEC 6.8.3: every money event is appended automatically (on by default) */
   autoSync: boolean;
   /** pending = could not be written yet (file open, missing…); exported = in the file */
-  items: { kind: 'txn' | 'ledger' | 'payout'; id: number; currency: string; date: string; status: 'pending' | 'exported'; exportedAt: string | null }[];
+  /** covered = before the carried balance this file started with: counts as in the file, not as exported */
+  items: { kind: 'txn' | 'ledger' | 'payout'; id: number; currency: string; date: string; status: 'pending' | 'exported'; exportedAt: string | null; covered?: boolean }[];
   linkedAt: string;
 };
 
@@ -44,6 +47,8 @@ export type Db = {
   emails: RawEmail[];
   backups: BackupFile[];
   customerExcel: Record<number, CustomerExcelRow>;
+  /** the customer's other (previous) files, newest first (SPEC 6.8.4) */
+  customerFiles: Record<number, CustomerExcelRow[]>;
   payouts: PayoutRow[];
   /** last transfer number given per `${customerId}:${currency}` (a number is never reused) */
   txnSeq: Record<string, number>;
@@ -284,6 +289,7 @@ export function seed(): Db {
     txnSeq,
     customerExcel: {
       2: {
+        id: 9001, label: null, startMode: 'all', startValue: null, createdAt: daysAgo(20),
         path: 'D:\\العملاء\\كشف حساب - علي حسن.xlsx', updatedAt: daysAgo(3, 18, 5), addToExcelByDefault: true, autoSync: true, linkedAt: daysAgo(20),
         items: [
           { kind: 'ledger', id: 1, currency: 'USD', date: dayStr(40), status: 'exported', exportedAt: daysAgo(20) },
@@ -292,6 +298,7 @@ export function seed(): Db {
       },
       // هشام الزعبي: #1-3 and payout 1 are in his file; the rest happened while it was not linked (SPEC 6.8.3)
       8: {
+        id: 9002, label: null, startMode: 'all', startValue: null, createdAt: daysAgo(30),
         path: 'D:\\العملاء\\كشف حساب - هشام الزعبي.xlsx', updatedAt: daysAgo(20, 12), addToExcelByDefault: true, autoSync: true, linkedAt: daysAgo(30),
         items: [
           ...p1.map((t) => ({ kind: 'txn' as const, id: t.id, currency: 'USD', date: t.occurredAt.slice(0, 10), status: 'exported' as const, exportedAt: daysAgo(20, 12) })),
@@ -299,6 +306,7 @@ export function seed(): Db {
         ],
       },
     },
+    customerFiles: {},
     seq: 5000,
   };
 

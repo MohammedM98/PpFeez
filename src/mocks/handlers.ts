@@ -5,10 +5,10 @@ import type {
   FeeInput, LedgerEntry, LedgerView, ManualTxnInput, Money, Page, Period, PullRun, RawEmailSummary,
   RefundAlert, Transaction, TxnAction, TxnCounts, TxnFilter, TxnListResult, TxnPreview, TxnSort, AdjustmentInput, PayoutInput,
   MailboxInput, ParseStatus, PullRange, TxnLocation, TxnSearchHit, CustomerExcel, CustomerExcelItemRef, CustomerExcelPreview, ExcelStatus,
-  Payout, PayoutPreparation, PayoutSelection, CustomerSummary, StatementFilter, StatementRow,
+  Payout, PayoutPreparation, PayoutSelection, CustomerSummary, StatementFilter, StatementRow, CustomerExcelFile, ExcelStart,
 } from '@/lib/contract';
 import { amountTextToMinor2, decimalsOf, formatMinor } from '@/lib/money';
-import { creditDescription, halfUp, ltr, seed, type Db, type LedgerRow, type PayoutRow, type TxnRow } from './db';
+import { creditDescription, halfUp, ltr, seed, type CustomerExcelRow, type Db, type LedgerRow, type PayoutRow, type TxnRow } from './db';
 
 let db: Db = seed();
 // Excel append mode (SPEC 6.8.1): which PayPal ids the main file already has, and rows changed since
@@ -518,13 +518,43 @@ function customerStatement(customerId: number, currency: string, filter: Stateme
 function excelView(customerId: number): CustomerExcel | null {
   const x = db.customerExcel[customerId];
   if (!x) return null;
-  const exported = x.items.filter((i) => i.status === 'exported').length;
+  const exported = x.items.filter((i) => i.status === 'exported' && !i.covered).length;
   const pending = x.items.filter((i) => i.status === 'pending').length;
   const notExported = excelAllItems(customerId).filter((r) => !x.items.some((i) => i.kind === r.kind && i.id === r.id)).length;
   return {
     path: x.path, updatedAt: x.updatedAt, exists: true, addToExcelByDefault: x.addToExcelByDefault,
     autoSync: x.autoSync, exportedCount: exported, pendingCount: pending, notExportedCount: notExported, lastError: excelLastError[customerId] ?? null,
-    currentFileId: 1, filesCount: 1, // several files per customer (SPEC 6.8.4) are not mocked yet
+    currentFileId: x.id, filesCount: 1 + (db.customerFiles[customerId]?.length ?? 0),
+  };
+}
+
+// ---- several files per customer (SPEC 6.8.4)
+/** the file to write: the given one from the customer's list, or the current one */
+function fileRow(customerId: number, fileId?: number) {
+  const cur = db.customerExcel[customerId];
+  if (fileId === undefined || cur?.id === fileId) return cur ?? fail('no_export_path', 'لا ملف Excel مرتبط بهذا العميل');
+  return (db.customerFiles[customerId] ?? []).find((f) => f.id === fileId) ?? fail('not_found', 'الملف غير موجود في قائمة ملفات العميل');
+}
+const inFileList = (customerId: number, path: string) =>
+  db.customerExcel[customerId]?.path === path || (db.customerFiles[customerId] ?? []).some((f) => f.path === path);
+function takeFromList(customerId: number, path: string) {
+  const f = (db.customerFiles[customerId] ?? []).find((x) => x.path === path);
+  if (f) db.customerFiles[customerId] = db.customerFiles[customerId].filter((x) => x !== f);
+  return f;
+}
+function newFileRow(path: string, startMode: CustomerExcelRow['startMode'], startValue: string | null, label: string | null): CustomerExcelRow {
+  return { id: ++db.seq, label, startMode, startValue, createdAt: nowIso(), path, updatedAt: nowIso(), addToExcelByDefault: true, autoSync: true, linkedAt: nowIso(), items: [] };
+}
+/** the new current file; the previous current one goes to the top of the list */
+function makeCurrent(customerId: number, row: CustomerExcelRow) {
+  const prev = db.customerExcel[customerId];
+  if (prev && prev !== row) (db.customerFiles[customerId] ??= []).unshift(prev);
+  db.customerExcel[customerId] = row;
+}
+function fileView(f: CustomerExcelRow, isCurrent: boolean): CustomerExcelFile {
+  return {
+    id: f.id, path: f.path, label: f.label, isCurrent, exists: true, startMode: f.startMode, startValue: f.startValue,
+    exportedCount: f.items.filter((i) => i.status === 'exported' && !i.covered).length, updatedAt: f.updatedAt, createdAt: f.createdAt,
   };
 }
 
@@ -584,9 +614,11 @@ function excelLine(customerId: number, ref: CustomerExcelItemRef): ExcelLine | C
   return { ...r, date: e.entryDate, labelAr: e.description, currency: e.currency, amountMinor: e.amountMinor };
 }
 
-function excelPreview(customerId: number, items: CustomerExcelItemRef[]): CustomerExcelPreview {
+function excelPreview(customerId: number, items: CustomerExcelItemRef[], fileId?: number): CustomerExcelPreview {
   const out: CustomerExcelPreview = { toAdd: [], duplicates: [], notAllowed: [], olderThanLastRow: 0 };
-  const x = db.customerExcel[customerId];
+  const x = db.customerExcel[customerId] || fileId ? fileRow(customerId, fileId) : undefined;
+  // duplicates are checked per file (SPEC 6.8.4)
+  const inExcel = (_c: number, kind: string, id: number) => !!x?.items.some((i) => i.kind === kind && i.id === id && i.status === 'exported');
   const last = x?.items.reduce((m, i) => (i.date > m ? i.date : m), '') ?? '';
   for (const ref of items) {
     const line = excelLine(customerId, ref);
@@ -607,11 +639,10 @@ function statementRank(l: { kind: string; id: number }) {
   return 1e6 + l.id;
 }
 
-function excelAdd(customerId: number, items: CustomerExcelItemRef[]) {
-  const x = db.customerExcel[customerId];
-  if (!x) fail('no_export_path', 'لا ملف Excel مرتبط بهذا العميل');
+function excelAdd(customerId: number, items: CustomerExcelItemRef[], fileId?: number) {
+  const x = fileRow(customerId, fileId);
   if (excelLocked) fail('file_locked', 'أغلق الملف في Excel ثم أعد المحاولة');
-  const p = excelPreview(customerId, items);
+  const p = excelPreview(customerId, items, fileId);
   if (items.length && !p.toAdd.length && !p.duplicates.length) fail('validation', p.notAllowed[0]?.reasonAr ?? 'لا شيء يمكن إضافته', 'items');
   for (const l of p.toAdd) {
     const ref = { kind: l.kind, id: l.id };
@@ -914,12 +945,13 @@ export function handle(cmd: string, a: Args = {}): unknown {
       return excelView(a.customerId);
     }
     case 'customer_excel_send_unexported': {
-      const x = db.customerExcel[a.customerId] ?? fail('no_export_path', 'لا ملف Excel مرتبط بهذا العميل');
+      const x = fileRow(a.customerId, a.fileId);
       if (excelLocked) { excelLastError[a.customerId] = LOCKED; fail('file_locked', LOCKED.messageAr); }
       const missing = excelAllItems(a.customerId).filter((r) => !x.items.some((i) => i.kind === r.kind && i.id === r.id));
       const pendingBefore = x.items.filter((i) => i.status === 'pending').length;
-      const r = excelAdd(a.customerId, missing);
-      flushPending(a.customerId);
+      const r = excelAdd(a.customerId, missing, a.fileId);
+      if (x === db.customerExcel[a.customerId]) flushPending(a.customerId);
+      else for (const i of x.items) if (i.status === 'pending') { i.status = 'exported'; i.exportedAt = nowIso(); }
       return { path: r.path, added: r.added + pendingBefore, skippedDuplicates: r.skippedDuplicates, stillPending: 0 };
     }
     case 'customer_excel_unexported_summary':
@@ -930,7 +962,8 @@ export function handle(cmd: string, a: Args = {}): unknown {
           ? [{ customerId: cid, customerName: c.name, pending: v.pendingCount, notExported: v.notExportedCount, lastError: v.lastError }] : [];
       });
     case 'customer_excel_create': {
-      db.customerExcel[a.customerId] = { path: a.path, updatedAt: nowIso(), addToExcelByDefault: true, autoSync: true, linkedAt: nowIso(), items: [] };
+      if (inFileList(a.customerId, a.path)) fail('validation', 'هذا الملف في قائمة ملفات العميل أصلاً', 'path');
+      makeCurrent(a.customerId, newFileRow(a.path, 'all', null, null));
       if (!a.includeExisting) return { path: a.path, added: 0, sheets: [] };
       const r = excelAdd(a.customerId, excelAllItems(a.customerId));
       return { path: r.path, added: r.added, sheets: r.sheets };
@@ -938,17 +971,66 @@ export function handle(cmd: string, a: Args = {}): unknown {
     case 'customer_excel_link': {
       // ?wrongStatement=1: the chosen file is not this customer's statement
       if (new URLSearchParams(location.search).get('wrongStatement') === '1') fail('excel_layout', 'هذا الملف ليس كشف حساب أنشأه البرنامج لهذا العميل.');
-      db.customerExcel[a.customerId] = { path: a.path, updatedAt: nowIso(), addToExcelByDefault: true, autoSync: true, linkedAt: nowIso(), items: db.customerExcel[a.customerId]?.items ?? [] };
+      const listed = takeFromList(a.customerId, a.path);
+      makeCurrent(a.customerId, listed ?? newFileRow(a.path, 'all', null, null));
       return excelView(a.customerId);
     }
-    case 'customer_excel_unlink': delete db.customerExcel[a.customerId]; return null;
+    case 'customer_excel_unlink': {
+      // the list of files stays (SPEC 6.8.4); only "current" goes
+      const x = db.customerExcel[a.customerId];
+      if (x) (db.customerFiles[a.customerId] ??= []).unshift(x);
+      delete db.customerExcel[a.customerId];
+      return null;
+    }
+    case 'customer_excel_files': {
+      const cur = db.customerExcel[a.customerId];
+      return [...(cur ? [cur] : []), ...(db.customerFiles[a.customerId] ?? [])].map((f) => fileView(f, f === cur));
+    }
+    case 'customer_excel_new_file': {
+      if (inFileList(a.customerId, a.path)) fail('validation', 'هذا الملف في قائمة ملفات العميل أصلاً. اختر اسماً آخر.', 'path');
+      const start = a.start as ExcelStart;
+      const all = excelAllItems(a.customerId).map((r) => ({ r, l: excelLine(a.customerId, r) })).filter((x): x is { r: CustomerExcelItemRef; l: ExcelLine } => !('reasonAr' in x.l));
+      let cutoff: (l: ExcelLine) => boolean = () => false;
+      if (start.kind === 'carry_balance') cutoff = () => true;
+      if (start.kind === 'from_date') {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(start.date)) fail('validation', 'تاريخ غير صالح', 'start');
+        cutoff = (l) => l.date < start.date;
+      }
+      if (start.kind === 'from_seq') {
+        const firsts = db.txns.filter((t) => t.customerId === a.customerId && t.status === 'approved' && t.customerSeq === start.seq);
+        if (!firsts.length) fail('validation', `لا حوالة معتمدة برقم #${start.seq}`, 'start');
+        const from = new Map(firsts.map((t) => [t.currency, t.occurredAt.slice(0, 10)]));
+        cutoff = (l) => { const d = from.get(l.currency); return d === undefined ? true : l.date < d; };
+      }
+      const row = newFileRow(a.path, start.kind, start.kind === 'from_date' ? start.date : start.kind === 'from_seq' ? String(start.seq) : null, a.label ?? null);
+      const covered = start.kind === 'all' ? [] : all.filter((x) => cutoff(x.l));
+      row.items = covered.map(({ l }) => ({ kind: l.kind, id: l.id, currency: l.currency, date: l.date, status: 'exported' as const, exportedAt: nowIso(), covered: true }));
+      const prev = db.customerExcel[a.customerId];
+      if (prev) { row.autoSync = prev.autoSync; row.addToExcelByDefault = prev.addToExcelByDefault; }
+      if (a.makeCurrent) makeCurrent(a.customerId, row);
+      else (db.customerFiles[a.customerId] ??= []).unshift(row);
+      let added = new Set(covered.map(({ l }) => l.currency)).size; // one carried-balance row per currency
+      if (start.kind !== 'carry_balance') added += excelAdd(a.customerId, all.filter((x) => !cutoff(x.l)).map((x) => x.r), row.id).added;
+      return { file: fileView(row, db.customerExcel[a.customerId] === row), added, sheets: [...new Set(all.map((x) => `كشف ${x.l.currency}`))] };
+    }
+    case 'customer_excel_set_current': {
+      const f = (db.customerFiles[a.customerId] ?? []).find((x) => x.id === a.fileId);
+      if (!f && db.customerExcel[a.customerId]?.id !== a.fileId) fail('not_found', 'الملف غير موجود في قائمة ملفات العميل');
+      if (f) { db.customerFiles[a.customerId] = db.customerFiles[a.customerId].filter((x) => x !== f); makeCurrent(a.customerId, f); }
+      return excelView(a.customerId);
+    }
+    case 'customer_excel_remove_file': {
+      if (db.customerExcel[a.customerId]?.id === a.fileId) fail('invalid_transition', 'لا يُزال الملف الحالي. اجعل ملفاً آخر هو الحالي أولاً.');
+      db.customerFiles[a.customerId] = (db.customerFiles[a.customerId] ?? []).filter((x) => x.id !== a.fileId);
+      return null;
+    }
     case 'customer_excel_set_default': {
       const x = db.customerExcel[a.customerId] ?? fail('no_export_path', 'لا ملف Excel مرتبط بهذا العميل');
       x.addToExcelByDefault = !!a.addToExcelByDefault;
       return excelView(a.customerId);
     }
-    case 'customer_excel_preview': return excelPreview(a.customerId, a.items ?? []);
-    case 'customer_excel_add': return excelAdd(a.customerId, a.items ?? []);
+    case 'customer_excel_preview': return excelPreview(a.customerId, a.items ?? [], a.fileId);
+    case 'customer_excel_add': return excelAdd(a.customerId, a.items ?? [], a.fileId);
     case 'customer_get': return customerView(db.customers.find((c) => c.id === a.id) ?? fail('not_found', 'العميل غير موجود'));
     case 'customer_create': case 'customer_update': {
       const input = a.input as CustomerInput;

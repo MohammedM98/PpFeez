@@ -11,8 +11,7 @@ import type {
   RawEmail, RawEmailSummary, ParseStatus, RefundAlert, Settings, Transaction, TxnCounts,
   TxnFilter, TxnListResult, TxnPreview, TxnSort, Currency, ExcelExportResult, PullRange,
   DeleteEffect, ResetScope, ResetPreview, Money, TxnSearchHit, CustomerExcel, CustomerExcelItemRef, CustomerExcelPreview,
-  CustomerSummary, StatementFilter, StatementRow, PayoutSelection, PayoutPreparation, PayoutDetails, Payout, Minor,
-} from './contract';
+  CustomerSummary, StatementFilter, StatementRow, PayoutSelection, PayoutPreparation, PayoutDetails, Payout, Minor, CustomerExcelFile, ExcelStart } from './contract';
 
 const KNOWN_CODES = new Set<ErrorCode>([
   'locked', 'wrong_password', 'too_many_attempts', 'not_found', 'validation', 'invalid_amount',
@@ -184,16 +183,23 @@ export const api = {
   customerExcelUnlink: (customerId: number) => call<void>('customer_excel_unlink', { customerId }),
   customerExcelSetDefault: (customerId: number, addToExcelByDefault: boolean) =>
     call<CustomerExcel>('customer_excel_set_default', { customerId, addToExcelByDefault }),
-  customerExcelPreview: (customerId: number, items: CustomerExcelItemRef[]) =>
-    call<CustomerExcelPreview>('customer_excel_preview', { customerId, items }),
+  /** fileId: one of the customer's files (SPEC 6.8.4); the current one when left out */
+  customerExcelPreview: (customerId: number, items: CustomerExcelItemRef[], fileId?: number) =>
+    call<CustomerExcelPreview>('customer_excel_preview', { customerId, items, fileId }),
   // auto-sync and export status (SPEC 6.8.3)
   customerExcelSetAuto: (customerId: number, autoSync: boolean) => call<CustomerExcel>('customer_excel_set_auto', { customerId, autoSync }),
-  customerExcelSendUnexported: (customerId: number) =>
-    call<{ path: string; added: number; skippedDuplicates: number; stillPending: number }>('customer_excel_send_unexported', { customerId }),
+  customerExcelSendUnexported: (customerId: number, fileId?: number) =>
+    call<{ path: string; added: number; skippedDuplicates: number; stillPending: number }>('customer_excel_send_unexported', { customerId, fileId }),
   customerExcelUnexportedSummary: () =>
     call<{ customerId: number; customerName: string; pending: number; notExported: number; lastError: AppError | null }[]>('customer_excel_unexported_summary'),
-  customerExcelAdd: (customerId: number, items: CustomerExcelItemRef[]) =>
-    call<{ path: string; added: number; skippedDuplicates: number; sheets: string[] }>('customer_excel_add', { customerId, items }),
+  customerExcelAdd: (customerId: number, items: CustomerExcelItemRef[], fileId?: number) =>
+    call<{ path: string; added: number; skippedDuplicates: number; sheets: string[] }>('customer_excel_add', { customerId, items, fileId }),
+  // ---- several files per customer (SPEC 6.8.4)
+  customerExcelFiles: (customerId: number) => call<CustomerExcelFile[]>('customer_excel_files', { customerId }),
+  customerExcelNewFile: (customerId: number, path: string, start: ExcelStart, makeCurrent: boolean, label?: string) =>
+    call<{ file: CustomerExcelFile; added: number; sheets: string[] }>('customer_excel_new_file', { customerId, path, start, makeCurrent, label }),
+  customerExcelSetCurrent: (customerId: number, fileId: number) => call<CustomerExcel>('customer_excel_set_current', { customerId, fileId }),
+  customerExcelRemoveFile: (customerId: number, fileId: number) => call<null>('customer_excel_remove_file', { customerId, fileId }),
 };
 
 export const events = {

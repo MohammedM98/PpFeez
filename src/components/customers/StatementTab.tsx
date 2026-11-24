@@ -107,7 +107,7 @@ export function SummaryBar({ customerId, currency }: { customerId: number; curre
 function ExcelCell({ status, excel }: { status: ExcelStatus; excel: Customer['excel'] }) {
   if (!excel) return <td />;
   const v = {
-    exported: { icon: '✓', text: 'صُدّرت', cls: 'text-pos', title: 'في ملف العميل' },
+    exported: { icon: '✓', text: 'صُدّرت', cls: 'text-pos', title: excel.filesCount > 1 ? 'صُدّرت إلى الملف الحالي' : 'في ملف العميل' },
     pending: { icon: '⏳', text: 'بانتظار', cls: 'text-warn', title: `بانتظار التصدير${excel.lastError ? `: ${excelWhy(excel.lastError)}` : ''}` },
     not_exported: { icon: '—', text: 'لم تُصدَّر', cls: 'text-fg-3', title: 'ليست في ملف العميل. حدّدها ثم «إضافة إلى ملف العميل» أو اضغط E' },
   }[status];
