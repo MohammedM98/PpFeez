@@ -5,6 +5,7 @@ import type { BulkResult, CommissionInput, CommissionMode, FeeInput, Transaction
 import { bpsToPercentText, formatBps, formatMinor, percentTextToBps } from '@/lib/money';
 import { formatDateTime, nowLocalMinute } from '@/lib/dates';
 import { useAction } from '@/lib/useAction';
+import { useRecentCustomers } from '@/lib/uiPrefs';
 import { txnCountLabel } from '@/lib/strings';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
@@ -143,6 +144,8 @@ function AssignDialog({ txn, ids, move, onClose, onBulk }: { txn?: Transaction; 
   const customers = useQuery({ queryKey: ['customers', { active: true }], queryFn: () => api.customersList({ active: true }) });
   const [customerId, setCustomerId] = useState<number | null>(null);
   const customer = customers.data?.find((c) => c.id === customerId) ?? null;
+  const { recent, remember } = useRecentCustomers();
+  const rank = (id: number) => { const i = recent.indexOf(id); return i < 0 ? 99 : i; };
   const c = useCommissionInput('percent', null, '');
   const [approve, setApprove] = useState(false);
   const { run, pending } = useAction();
@@ -157,11 +160,14 @@ function AssignDialog({ txn, ids, move, onClose, onBulk }: { txn?: Transaction; 
   const p = preview.data;
   const canApprove = !!txn && txn.feeMinor !== null && !move;
   const items = (customers.data ?? []).filter((x) => !move || x.id !== txn?.customer?.id)
-    .map((x) => ({ id: x.id, label: x.name, hint: <bdi dir="ltr" className="num">{formatBps(x.defaultCommissionBps)}</bdi> }));
+    .map((x) => ({ id: x.id, label: x.name, hint: <bdi dir="ltr" className="num">{formatBps(x.defaultCommissionBps)}</bdi> }))
+    // the last five customers used come first, newest first
+    .sort((x, y) => rank(x.id) - rank(y.id));
 
   const submit = async () => {
     if (!customerId || !customer) return;
     const name = customer.name;
+    remember(customerId);
     if (txn) {
       const approved = approve && canApprove;
       if (move) {

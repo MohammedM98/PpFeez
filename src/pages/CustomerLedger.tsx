@@ -20,6 +20,7 @@ import { Segmented } from '@/components/ui/Segmented';
 import { ConfirmMoney } from '@/components/ui/ConfirmMoney';
 import { cx } from '@/components/ui/cx';
 import { tablePage } from '@/components/ui/Table';
+import { useScreenMemory } from '@/lib/uiPrefs';
 import { ToolbarSlotContext } from '@/components/layout/ToolbarSlot';
 import { TransactionsView } from '@/components/transactions/TransactionsView';
 import { CURRENCIES } from '@/components/transactions/TxnActions';
@@ -142,12 +143,28 @@ function CustomerPage({ customerId }: { customerId: number }) {
   // ?tab=USD | pending | payouts (links from search, the "فتح" toast, the dashboard); older ?tab=txns&sub=… still lands right
   const pTab = params.get('tab'), pSub = params.get('sub');
   const wanted = pTab === 'txns' ? (pSub === 'approved' ? null : 'pending') : pTab;
-  const [tab, setTab] = useState<string | null>(wanted);
+  // the last tab of this customer comes back (SPEC 6.10); a link's ?tab= wins
+  const memory = useScreenMemory(`customer:${customerId}`);
+  const [tab, setTab] = useState<string | null>(wanted ?? memory.saved?.tab ?? null);
+  const { remember } = memory;
+  useEffect(() => { if (tab) remember({ tab }); }, [tab, remember]);
   useEffect(() => { if (wanted) setTab(wanted); }, [wanted, params]);
-  useEffect(() => { if (tab === null && cards.data) setTab(cards.data[0]?.currency ?? 'pending'); }, [cards.data, tab]);
+  useEffect(() => {
+    if (!cards.data) return;
+    const valid = tab === 'pending' || tab === 'payouts' || cards.data.some((c) => c.currency === tab);
+    if (!valid) setTab(cards.data[0]?.currency ?? 'pending');
+  }, [cards.data, tab]);
   const [dialog, setDialog] = useState<'payout' | 'adjustment' | 'edit' | 'delete' | null>(null);
   const [prepare, setPrepare] = useState<{ currency: string; initial?: PayoutSelection } | null>(null);
   const [toolbar, setToolbar] = useState<HTMLDivElement | null>(null);
+  // "تجهيز دفعة لـ…" from Ctrl+K lands here with ?prepare=1
+  const [, setParams] = useSearchParams();
+  const wantsPrepare = params.get('prepare') === '1';
+  useEffect(() => {
+    if (!wantsPrepare || !cards.data) return;
+    if (cards.data.length) setPrepare({ currency: tab && cards.data.some((c) => c.currency === tab) ? tab : cards.data[0].currency });
+    setParams((p) => { const n = new URLSearchParams(p); n.delete('prepare'); return n; }, { replace: true });
+  }, [wantsPrepare, cards.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const navigate = useNavigate();
 
   const c = customer.data;

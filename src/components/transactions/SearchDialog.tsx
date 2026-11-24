@@ -1,18 +1,31 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Autocomplete, Dialog, Input, ListBox, ListBoxItem, Modal, ModalOverlay, SearchField } from 'react-aria-components';
-import { FileSpreadsheet, Search } from 'lucide-react';
+import { CloudDownload, CornerDownLeft, FileSpreadsheet, Search, Send, User } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { AppError, Transaction, TxnLocation, TxnSearchHit } from '@/lib/contract';
+import type { Transaction, TxnLocation, TxnSearchHit } from '@/lib/contract';
 import { formatDateTime } from '@/lib/dates';
 import { Amount } from '@/components/ui/Amount';
 import { Badge } from '@/components/ui/Badge';
 import { Trunc } from '@/components/ui/Trunc';
 import { cx } from '@/components/ui/cx';
+import { usePull } from '@/lib/pull';
+import { useExcelUpdate } from '@/components/settings/useExcelUpdate';
+import { PullDialog } from './PullDialog';
 import { excelWhy, movesLabel, sendUnexported } from '@/components/customers/CustomerExcel';
 
-type Item = { id: string; cmd: { customerId: number; customerName: string; pending: number; notExported: number; lastError: AppError | null } } | { id: string; hit: TxnSearchHit };
+type Cmd = { id: string; label: string; words: string; hint?: string; icon: ReactNode; run: () => void };
+type Item = { id: string; cmd: Cmd } | { id: string; hit: TxnSearchHit };
+
+/** The screens, with the G-chord key that goes there (SPEC 6.10: G then I / C / D / S). */
+export const SCREENS = [
+  { to: '/dashboard', label: 'لوحة التحكم', words: 'dashboard رئيسية', key: 'G D' },
+  { to: '/transactions', label: 'الوارد', words: 'المعاملات inbox', key: 'G I' },
+  { to: '/customers', label: 'العملاء', words: 'customers', key: 'G C' },
+  { to: '/emails', label: 'الرسائل', words: 'emails بريد', key: 'G E' },
+  { to: '/settings', label: 'الإعدادات', words: 'settings', key: 'G S' },
+];
 
 /** Opens the search from anywhere (the inbox's search box, Ctrl+K). */
 export const openSearch = () => window.dispatchEvent(new Event('ppfeez:search'));
@@ -64,15 +77,34 @@ export function SearchDialog() {
     placeholderData: keepPreviousData,
   });
   const hits = q.length >= 2 ? results.data ?? [] : [];
-  // commands (SPEC 6.8.3): "إرسال غير المُصدَّر لـ …" for each customer whose file is behind
+  // commands (SPEC 6.10 "لوحة أوامر"): screens, pull, Excel, a customer's page or payout, and
+  // "إرسال غير المُصدَّر لـ …" (6.8.3). Shown as soon as something is typed that matches them.
+  const pull = usePull();
+  const excel = useExcelUpdate();
+  const [pulling, setPulling] = useState(false);
+  const mailboxes = useQuery({ queryKey: ['mailboxes'], queryFn: api.mailboxList, enabled: isOpen });
+  const customers = useQuery({ queryKey: ['customers', { active: true }], queryFn: () => api.customersList({ active: true }), enabled: isOpen });
   const unexported = useQuery({ queryKey: ['customer_excel_unexported_summary'], queryFn: api.customerExcelUnexportedSummary, enabled: isOpen });
-  const plain = (x: string) => x.replace(/[\u064B-\u0652]/g, '').toLowerCase();
+  const plain = (x: string) => x.replace(/[\u064B-\u0652\u0640]/g, '').replace(/[أإآ]/g, 'ا').toLowerCase();
   const typed = plain(text.trim());
-  const cmds = typed ? (unexported.data ?? []).filter((c) => {
-    const label = plain(`إرسال غير المُصدَّر لـ ${c.customerName} excel اكسل إكسل تصدير`);
-    return typed.split(/\s+/).every((w) => label.includes(w));
-  }) : [];
-  const items: Item[] = [...cmds.map((c) => ({ id: `cmd-${c.customerId}`, cmd: c })), ...hits.map((h) => ({ id: `t-${h.txn.id}`, hit: h }))];
+  const fits = (words: string) => !!typed && typed.split(/\s+/).every((w) => plain(words).includes(w));
+  const close = () => setOpen(false);
+  const all: Cmd[] = [
+    ...SCREENS.map((x) => ({ id: `go-${x.to}`, label: `الانتقال إلى ${x.label}`, words: `${x.label} ${x.words} انتقال اذهب`, hint: x.key, icon: <CornerDownLeft />, run: () => navigate(x.to) })),
+    ...(pull.run ? [] : [{ id: 'pull', label: 'سحب الآن', words: 'سحب الان بريد pull', icon: <CloudDownload />, run: () => setPulling(true) }]),
+    { id: 'excel', label: 'تحديث ملف Excel', words: 'تحديث ملف excel اكسل', icon: <FileSpreadsheet />, run: () => void excel.update() },
+    ...(customers.data ?? []).flatMap((c) => [
+      { id: `open-${c.id}`, label: `فتح العميل ${c.name}`, words: `فتح عميل ${c.name} ${c.phone ?? ''}`, icon: <User />, run: () => navigate(`/customers/${c.id}`) },
+      { id: `prep-${c.id}`, label: `تجهيز دفعة لـ ${c.name}`, words: `تجهيز دفعة ${c.name}`, icon: <Send />, run: () => navigate(`/customers/${c.id}?prepare=1`) },
+    ]),
+    ...(unexported.data ?? []).map((c) => ({
+      id: `send-${c.customerId}`, label: `إرسال غير المُصدَّر لـ ${c.customerName}`, words: `إرسال غير المُصدَّر ${c.customerName} excel اكسل إكسل تصدير`,
+      hint: `${movesLabel(c.pending + c.notExported)} ليست في ملفه${c.lastError ? ` · ${excelWhy(c.lastError)}` : ''}`,
+      icon: <FileSpreadsheet />, run: () => void sendUnexported(c.customerId, qc, c.customerName),
+    })),
+  ];
+  const cmds = all.filter((c) => fits(c.words)).slice(0, 8);
+  const items: Item[] = [...cmds.map((c) => ({ id: `cmd-${c.id}`, cmd: c })), ...hits.map((h) => ({ id: `t-${h.txn.id}`, hit: h }))];
 
   const go = (hit: TxnSearchHit) => {
     setOpen(false);
@@ -82,11 +114,12 @@ export function SearchDialog() {
     const it = items.find((x) => x.id === key);
     if (!it) return;
     if ('hit' in it) { go(it.hit); return; }
-    setOpen(false);
-    void sendUnexported(it.cmd.customerId, qc, it.cmd.customerName);
+    close();
+    it.cmd.run();
   };
 
   return (
+    <>
     <ModalOverlay isOpen={isOpen} onOpenChange={setOpen} isDismissable
       className="fixed inset-0 z-50 flex justify-center bg-black/55 px-6 pt-[12vh] transition-opacity duration-150 data-[entering]:opacity-0 data-[exiting]:opacity-0">
       <Modal className="h-fit w-[640px] max-w-full overflow-hidden rounded-panel border border-line bg-surface shadow-(--shadow-float)">
@@ -102,16 +135,16 @@ export function SearchDialog() {
               className="max-h-[56vh] overflow-auto p-1.5 outline-none"
               renderEmptyState={() => (
                 <p className="px-3 py-8 text-center text-sm text-fg-3">
-                  {text.trim().length < 2 ? 'اكتب حرفين على الأقل. يبحث في كل المعاملات: الوارد والمستبعدة وصفحات العملاء' : results.isFetching ? 'جارٍ البحث…' : 'لا معاملة بهذا البحث'}
+                  {text.trim().length < 2 ? 'ابحث في كل المعاملات (الوارد والمستبعدة وصفحات العملاء)، أو اكتب أمراً: سحب، فتح العميل…، تجهيز دفعة لـ…، تحديث Excel' : results.isFetching ? 'جارٍ البحث…' : 'لا معاملة بهذا البحث'}
                 </p>
               )}>
               {(it) => 'cmd' in it ? (
-                <ListBoxItem id={it.id} textValue={`إرسال غير المُصدَّر لـ ${it.cmd.customerName}`}
+                <ListBoxItem id={it.id} textValue={it.cmd.label}
                   className="flex cursor-default items-center gap-3 rounded-ctl px-3 py-2 outline-none data-[focused]:bg-raised">
-                  <FileSpreadsheet className="size-[18px] shrink-0 text-fg-3" strokeWidth={1.6} />
+                  <span className="grid size-[18px] shrink-0 place-items-center text-fg-3 [&_svg]:size-[18px] [&_svg]:stroke-[1.6]">{it.cmd.icon}</span>
                   <div className="min-w-0 flex-1">
-                    <Trunc className="text-sm text-fg">إرسال غير المُصدَّر لـ {it.cmd.customerName}</Trunc>
-                    <div className="text-[12px] text-fg-3">{movesLabel(it.cmd.pending + it.cmd.notExported)} ليست في ملفه{it.cmd.lastError ? ` · ${excelWhy(it.cmd.lastError)}` : ''}</div>
+                    <Trunc className="text-sm text-fg">{it.cmd.label}</Trunc>
+                    {it.cmd.hint && <div className="num text-[12px] text-fg-3">{it.cmd.hint}</div>}
                   </div>
                   <Badge tone="outline" className="shrink-0">أمر</Badge>
                 </ListBoxItem>
@@ -137,5 +170,8 @@ export function SearchDialog() {
         </Dialog>
       </Modal>
     </ModalOverlay>
+    {pulling && <PullDialog mailboxes={(mailboxes.data ?? []).filter((m) => m.isActive)} onClose={() => setPulling(false)} />}
+    {excel.dialog}
+    </>
   );
 }

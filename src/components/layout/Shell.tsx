@@ -10,6 +10,7 @@ import { cx } from '@/components/ui/cx';
 import type { ReactNode } from 'react';
 import { SearchDialog } from '@/components/transactions/SearchDialog';
 import { ExcelSyncListener } from '@/components/customers/CustomerExcel';
+import { Shortcuts } from './Shortcuts';
 
 function NavItem({ to, icon, label, count, tone = 'muted', narrow }: { to: string; icon: ReactNode; label: string; count?: number; tone?: 'muted' | 'warn'; narrow?: boolean }) {
   if (narrow) {
@@ -150,6 +151,7 @@ export function Shell() {
         )}
         <SearchDialog />
         <ExcelSyncListener />
+        <Shortcuts />
       </main>
     </div>
   );

@@ -1,7 +1,7 @@
 import { useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Button as RacButton, DialogTrigger, Dialog as RacDialog, GridList, GridListItem, Popover, useDragAndDrop } from 'react-aria-components';
 import { Columns3, GripVertical, Pin, PinOff, RotateCcw } from 'lucide-react';
-import { useColumnPrefs } from '@/lib/uiPrefs';
+import { useColumnPrefs, type ColumnPrefs } from '@/lib/uiPrefs';
 import { Button } from './Button';
 import { Checkbox } from './Field';
 import { cx } from './cx';
@@ -68,6 +68,8 @@ export function useColumns(table: string, defs: ColDef[], stickyStart: string) {
     columns,
     all: order.map((id) => ({ ...byId.get(id)!, hidden: hidden.has(id), pinned: pinnedIds.includes(id) })),
     customized: Object.keys(cols).length > 0,
+    current: cols,
+    replace: (next: ColumnPrefs) => set(() => next),
     reset,
     setWidth: (id: string, px: number) => set((c) => ({ ...c, widths: { ...c.widths, [id]: Math.round(px) } })),
     toggle: (id: string, show: boolean) => set((c) => ({ ...c, hidden: show ? (c.hidden ?? []).filter((x) => x !== id) : [...new Set([...(c.hidden ?? []), id])] })),
@@ -150,7 +152,7 @@ export function ColumnsMenu({ cols, label = 'الأعمدة' }: { cols: Columns;
   });
   return (
     <DialogTrigger>
-      <Button variant="secondary" size="sm" aria-label={label}><Columns3 />{label}</Button>
+      <Button variant="secondary" size="icon" aria-label={label} className="size-8"><Columns3 /><span className="sr-only">{label}</span></Button>
       <Popover placement="bottom end" className="w-72 rounded-card border border-line bg-surface shadow-(--shadow-float) outline-none">
         <RacDialog aria-label={label} className="flex max-h-[70vh] flex-col outline-none">
           <div className="border-b border-line px-3 py-2 text-[12.5px] text-fg-3">اسحب لتغيير الترتيب، ودبّوس لتثبيت العمود عند الحافة</div>

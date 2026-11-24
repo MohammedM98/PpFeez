@@ -16,8 +16,18 @@ export type ColumnPrefs = {
   pinned?: string[];               // pinned to the start edge, after the built-in sticky columns
 };
 
+/** what a list screen shows: remembered per screen, and the content of a saved view */
+export type ScreenState = {
+  tab?: string; currency?: string; mailboxId?: string; preset?: string; custom?: { from?: string; to?: string };
+  needsFeeOnly?: boolean; needsReviewOnly?: boolean; sort?: { column: string; direction: 'ascending' | 'descending' };
+};
+export type SavedView = { name: string; state: ScreenState; columns?: ColumnPrefs };
+
 export type UiPrefs = {
   sidebarCollapsed?: boolean;
+  screens?: Record<string, ScreenState>;       // last tab / currency / filters, per screen and customer
+  views?: Record<string, SavedView[]>;         // saved views, per list
+  recentCustomers?: number[];     // last customers assigned to, newest first (quick assign, SPEC 6.10)
   tables?: Record<string, ColumnPrefs>;
 };
 
@@ -85,4 +95,37 @@ export function useColumnPrefs(table: string) {
   const reset = useCallback(() =>
     update((p) => { const t = { ...p.tables }; delete t[table]; return { ...p, tables: t }; }), [update, table]);
   return { cols, set, reset };
+}
+
+/** Quick assign (SPEC 6.10): the last 5 customers used come first in the customer picker. */
+export function useRecentCustomers() {
+  const { prefs, update } = useUiPrefs();
+  const recent = prefs.recentCustomers ?? [];
+  const remember = useCallback((id: number) =>
+    update((p) => ({ ...p, recentCustomers: [id, ...(p.recentCustomers ?? []).filter((x) => x !== id)].slice(0, 5) })), [update]);
+  return { recent, remember };
+}
+
+/** The last state of a list screen (SPEC 6.10 "تذكّر آخر تبويب/عملة/فلتر لكل شاشة وعميل"). */
+export function useScreenMemory(key: string) {
+  const { prefs, update } = useUiPrefs();
+  const saved = prefs.screens?.[key];
+  const remember = useCallback((state: ScreenState) => update((p) => {
+    if (JSON.stringify(p.screens?.[key]) === JSON.stringify(state)) return p;
+    return { ...p, screens: { ...p.screens, [key]: state } };
+  }), [update, key]);
+  return { saved, remember };
+}
+
+/** Saved views of one list (SPEC 6.10 "طرق عرض محفوظة"). */
+export function useSavedViews(list: string) {
+  const { prefs, update } = useUiPrefs();
+  const views = prefs.views?.[list] ?? [];
+  const save = useCallback((v: SavedView) => update((p) => ({
+    ...p, views: { ...p.views, [list]: [...(p.views?.[list] ?? []).filter((x) => x.name !== v.name), v] },
+  })), [update, list]);
+  const remove = useCallback((name: string) => update((p) => ({
+    ...p, views: { ...p.views, [list]: (p.views?.[list] ?? []).filter((x) => x.name !== name) },
+  })), [update, list]);
+  return { views, save, remove };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router';
 import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
@@ -21,6 +21,10 @@ import { cx } from '@/components/ui/cx';
 import { Trunc } from '@/components/ui/Trunc';
 import { DateCell, FeeCell, PayerCell } from './bits';
 import { useRowWindow } from '@/components/ui/useRowWindow';
+import { quietKey } from '@/lib/keys';
+import { InlineCommission, InlineFee, type InlineField } from './InlineEdit';
+import { useScreenMemory, type SavedView, type ScreenState } from '@/lib/uiPrefs';
+import { ViewsMenu } from '@/components/ui/Views';
 import { ColumnResizer, ColumnsMenu, useColumns, type ColDef } from '@/components/ui/Columns';
 import { DetailPanel } from './DetailPanel';
 import { actionLabel, useTxnActions } from './TxnActions';
@@ -52,18 +56,24 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
   const tabKey = inbox ? 'tab' : 'sub';
   const [params, setParams] = useSearchParams();
   const asTab = (v: string | null) => (v && tabs.includes(v as TxnStatus) ? (v as TxnStatus) : null);
-  const [tab, setTabState] = useState<TxnStatus>(asTab(params.get(tabKey)) ?? tabs[0]);
-  const tabChosen = useRef(!!asTab(params.get(tabKey)));
-  const [currency, setCurrency] = useState<string>('all');
-  const [mailboxId, setMailboxId] = useState<string>('all');
-  const [preset, setPreset] = useState<PeriodPreset>('all');
-  const [custom, setCustom] = useState<Period>({});
-  const [needsFeeOnly, setNeedsFeeOnly] = useState(params.get('needsFee') === '1');
-  const [needsReviewOnly, setNeedsReviewOnly] = useState(params.get('needsReview') === '1');
-  const [sort, setSort] = useState<SortDescriptor>({ column: 'occurredAt', direction: 'descending' });
+  // the last tab and filters of this list come back (SPEC 6.10); a link's own params win
+  const memory = useScreenMemory(inbox ? 'inbox' : `customer_txns:${customerId}`);
+  const was = memory.saved ?? {};
+  const linked = !!(asTab(params.get(tabKey)) || params.get('needsFee') || params.get('needsReview') || params.get('detail'));
+  const from = linked ? {} : was;
+  const [tab, setTabState] = useState<TxnStatus>(asTab(params.get(tabKey)) ?? asTab(from.tab ?? null) ?? tabs[0]);
+  const tabChosen = useRef(!!asTab(params.get(tabKey)) || !!asTab(from.tab ?? null));
+  const [currency, setCurrency] = useState<string>(from.currency ?? 'all');
+  const [mailboxId, setMailboxId] = useState<string>(from.mailboxId ?? 'all');
+  const [preset, setPreset] = useState<PeriodPreset>((from.preset as PeriodPreset) ?? 'all');
+  const [custom, setCustom] = useState<Period>(from.custom ?? {});
+  const [needsFeeOnly, setNeedsFeeOnly] = useState(params.get('needsFee') === '1' || !!from.needsFeeOnly);
+  const [needsReviewOnly, setNeedsReviewOnly] = useState(params.get('needsReview') === '1' || !!from.needsReviewOnly);
+  const [sort, setSort] = useState<SortDescriptor>(from.sort ?? { column: 'occurredAt', direction: 'descending' });
   const [selected, setSelected] = useState<Selection>(new Set());
   const [detailId, setDetailId] = useState<number | null>(params.get('detail') ? Number(params.get('detail')) : null);
   const [flashId, setFlashId] = useState<number | null>(null);
+  const [editing, setEditing] = useState<{ id: number; field: InlineField } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const actions = useTxnActions();
   const { run } = useAction();
@@ -96,6 +106,24 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
   }), [currency, mailboxId, inbox, customerId, period.from, period.to, needsFeeOnly, needsReviewOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { setSelected(new Set()); scrollRef.current?.scrollTo({ top: 0 }); }, [filter, tab, sort]);
+  const screenState = (): ScreenState => ({
+    tab, currency, mailboxId, preset, custom, needsFeeOnly, needsReviewOnly,
+    sort: { column: String(sort.column), direction: sort.direction === 'ascending' ? 'ascending' : 'descending' },
+  });
+  const { remember } = memory;
+  useEffect(() => { remember(screenState()); }, [tab, currency, mailboxId, preset, custom, needsFeeOnly, needsReviewOnly, sort]); // eslint-disable-line react-hooks/exhaustive-deps
+  const applyView = (v: SavedView) => {
+    const st = v.state;
+    if (st.tab && asTab(st.tab)) setTab(st.tab as TxnStatus);
+    setCurrency(st.currency ?? 'all');
+    setMailboxId(st.mailboxId ?? 'all');
+    setPreset((st.preset as PeriodPreset) ?? 'all');
+    setCustom(st.custom ?? {});
+    setNeedsFeeOnly(!!st.needsFeeOnly);
+    setNeedsReviewOnly(!!st.needsReviewOnly);
+    if (st.sort) setSort(st.sort);
+    if (v.columns) cols.replace(v.columns);
+  };
 
   const counts = useQuery({ queryKey: ['txn_counts', filter], queryFn: () => api.txnCounts(filter) });
   // the customer page opens on "awaiting approval" when there is something there, otherwise on "approved"
@@ -237,6 +265,34 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
   const label = (k: MenuKey) => (k === 'move' ? 'نقل لعميل آخر' : k === 'detail' ? 'عرض التفاصيل' : actionLabel[k]);
 
   const ids = selectedRows.map((t) => t.id);
+  // table shortcuts (SPEC 6.10): J / K move like ↓ / ↑, A assigns, F edits the fee; none of them
+  // runs a money action without its dialog
+  const onTableKey = (e: ReactKeyboardEvent) => {
+    if (quietKey(e.nativeEvent)) return;
+    const rowEl = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('[role=row][data-key]');
+    const focused = rowEl ? items.find((t) => String(t.id) === rowEl.dataset.key) : undefined;
+    const k = e.code;
+    if ((k === 'KeyJ' || k === 'KeyK') && rowEl && !e.shiftKey) {
+      e.preventDefault();
+      const sib = (k === 'KeyJ' ? rowEl.nextElementSibling : rowEl.previousElementSibling) as HTMLElement | null;
+      if (sib?.matches('[role=row][data-key]')) { sib.focus(); sib.scrollIntoView({ block: 'nearest' }); }
+    } else if (k === 'KeyA' && !e.shiftKey && tab === 'unassigned') {
+      const rows = selectedRows.length ? selectedRows : focused ? [focused] : [];
+      if (!rows.length) return;
+      e.preventDefault();
+      if (rows.length === 1) actions.act('assign', rows[0]);
+      else actions.open({ kind: 'bulk_assign', ids: rows.map((t) => t.id) });
+    } else if (k === 'KeyF' && !e.shiftKey && focused?.allowedActions.includes('set_fee')) {
+      e.preventDefault();
+      actions.act('set_fee', focused);
+    } else if (e.key === 'F2' && focused) {
+      // F2 edits in the cell: the fee, or (Shift+F2) the commission of a transaction on a customer's page
+      const field: InlineField = e.shiftKey && focused.allowedActions.includes('set_commission') ? 'commission' : 'fee';
+      if (!focused.allowedActions.includes(field === 'fee' ? 'set_fee' : 'set_commission')) return;
+      e.preventDefault();
+      setEditing({ id: focused.id, field });
+    }
+  };
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* tabs and filters on one line (SPEC 6.5): the table starts high on the screen */}
@@ -274,7 +330,10 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
             <Checkbox isSelected={needsReviewOnly} onChange={setNeedsReviewOnly}>تحتاج مراجعة<span className="num text-warn">{counts.data?.needsReview}</span></Checkbox>
           )}
         </div>
-        <div className="ms-auto"><ColumnsMenu cols={cols} /></div>
+        <div className="ms-auto flex gap-2">
+          <ViewsMenu list={inbox ? 'inbox' : 'customer_txns'} capture={() => ({ state: screenState(), columns: cols.current })} apply={applyView} />
+          <ColumnsMenu cols={cols} />
+        </div>
         {exportSlot && createPortal(
           <Button variant="secondary" onPress={exportExcel} isDisabled={!total}><FileSpreadsheet />تصدير إلى Excel</Button>, exportSlot)}
       </div>
@@ -298,6 +357,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
         </div>
       )}
 
+      <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onTableKey}>
       <TableFrame fill scrollRef={scrollRef}>
         <Table style={marginTop ? { marginTop } : undefined} aria-rowcount={total + 1} aria-label={inbox ? 'الوارد' : 'معاملات العميل'} selectionMode="multiple" selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
           sortDescriptor={sort} onSortChange={setSort} onRowAction={(k: Key) => openDetail(Number(k))} minWidth={minWidth}>
@@ -314,7 +374,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
             ))}
             <Column id="menu" width={W.menu} sticky="end"><span className="sr-only">إجراءات</span></Column>
           </TableHeader>
-          <TableBody items={shown} dependencies={[showExcel, inbox, flashId, detailId, fit, colKey]} renderEmptyState={() => total > 0 ? <p className="py-6 text-center text-fg-3" role="status">جارٍ التحميل…</p> : (
+          <TableBody items={shown} dependencies={[showExcel, inbox, flashId, detailId, fit, colKey, editing]} renderEmptyState={() => total > 0 ? <p className="py-6 text-center text-fg-3" role="status">جارٍ التحميل…</p> : (
             <div className="py-16 text-center">
               <p className="text-fg-2">{tab === 'unassigned' ? 'الوارد فارغ: كل المعاملات مخصّصة' : tab === 'pending_approval' ? 'لا شيء بانتظار الموافقة' : 'لا معاملات هنا'}</p>
               {inbox && tab === 'unassigned' && <p className="mt-1 text-[13px] text-fg-3">المعاملات المخصّصة في صفحات العملاء، وتجدها بالبحث <kbd className="num rounded border border-line px-1 text-[12px]">Ctrl K</kbd></p>}
@@ -329,12 +389,22 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
                     case 'payerName': return <Cell key={c.id} {...g}><PayerCell t={t} /></Cell>;
                     case 'payerNote': return <Cell key={c.id} {...g}><Trunc className="text-fg-2" title={t.payerNote ?? ''}>{t.payerNote ?? ''}</Trunc></Cell>;
                     case 'grossMinor': return <Cell key={c.id} {...g} align="end"><Amount fit={fit.gross} minor={t.grossMinor} currency={t.currency} className={t.grossMinor < 0 ? 'text-neg' : ''} /></Cell>;
-                    case 'feeMinor': return <Cell key={c.id} {...g} align="end"><FeeCell t={t} fit={fit.fee} /></Cell>;
+                    case 'feeMinor': return (
+                      <Cell key={c.id} {...g} align="end">
+                        {editing?.id === t.id && editing.field === 'fee'
+                          ? <InlineFee t={t} onDone={() => setEditing(null)} />
+                          : <div onDoubleClick={() => t.allowedActions.includes('set_fee') && setEditing({ id: t.id, field: 'fee' })}><FeeCell t={t} fit={fit.fee} /></div>}
+                      </Cell>
+                    );
                     case 'netMinor': return <Cell key={c.id} {...g} align="end"><Amount fit={fit.net} minor={t.netMinor} currency={t.currency} showCurrency={false} /></Cell>;
                     case 'commission': return (
                       <Cell key={c.id} {...g} align="end">
-                        <Amount fit={fit.commission} minor={t.commissionMinor} currency={t.currency} showCurrency={false} className="text-fg-2" />
-                        <div className="num text-[12px] text-fg-3">{t.commissionMode === 'percent' && t.commissionBps !== null ? <bdi dir="ltr">{formatBps(t.commissionBps)}</bdi> : t.commissionMode === 'fixed' ? 'ثابتة' : ''}</div>
+                        {editing?.id === t.id && editing.field === 'commission' ? <InlineCommission t={t} onDone={() => setEditing(null)} /> : (
+                          <div onDoubleClick={() => t.allowedActions.includes('set_commission') && setEditing({ id: t.id, field: 'commission' })}>
+                            <Amount fit={fit.commission} minor={t.commissionMinor} currency={t.currency} showCurrency={false} className="text-fg-2" />
+                            <div className="num text-[12px] text-fg-3">{t.commissionMode === 'percent' && t.commissionBps !== null ? <bdi dir="ltr">{formatBps(t.commissionBps)}</bdi> : t.commissionMode === 'fixed' ? 'ثابتة' : ''}</div>
+                          </div>
+                        )}
                       </Cell>
                     );
                     case 'customerAmountMinor': return <Cell key={c.id} {...g} align="end"><Amount fit={fit.toCustomer} minor={t.customerAmountMinor} currency={t.currency} showCurrency={false} className="font-medium" /></Cell>;
@@ -382,6 +452,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
           </TotalsTable>
         )}
       </TableFrame>
+      </div>
 
 
       {detailId !== null && <DetailPanel id={detailId} onClose={() => openDetail(null)} />}
