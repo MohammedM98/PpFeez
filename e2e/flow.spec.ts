@@ -87,8 +87,10 @@ for (const theme of ['dark', 'light'] as const) {
     await approve.getByRole('button', { name: 'اعتماد' }).click();
     await expect(pending).toHaveCount(0);
     await panel.getByRole('button', { name: 'إغلاق' }).click();
-    await page.getByRole('tab', { name: /معتمدة/ }).click();
+    // approved transfers live in the statement, numbered (SPEC 6.5)
+    await page.getByRole('tab', { name: 'كشف USD' }).click();
     await expect(page.getByRole('row').filter({ hasText: 'Samer Ali' })).toContainText('388.00');
+    await expect(page.getByRole('row').filter({ hasText: 'Samer Ali' })).toContainText('#1');
 
     // 6. payout from the same page
     await page.getByRole('button', { name: 'تسجيل دفعة' }).click();
@@ -100,13 +102,9 @@ for (const theme of ['dark', 'light'] as const) {
     await shot(page, theme, '6-payout');
     await confirm.getByRole('button', { name: 'تسجيل الدفعة' }).click();
 
-    // 7. remaining balance
-    await page.getByRole('tab', { name: 'دفتر USD' }).click();
-    const card = page.locator('div').filter({ hasText: /^المتبقي له/ }).first();
-    await expect(card).toContainText('288.00');
+    // 7. remaining balance, in the summary and the statement's closing line
+    await expect(page.getByRole('region', { name: 'ملخص USD' })).toContainText('288.00');
     await expect(page.getByRole('table', { name: 'الرصيد الختامي' })).toContainText(/الرصيد الختامي USD.*288\.00/);
-    // numbers in the generated description are isolated so "20.00%" keeps its order in RTL
-    await expect(page.getByRole('cell', { name: /Samer Ali/ })).toContainText('\u206620.00%\u2069');
     await shot(page, theme, '7-balance');
 
     // 8. Ctrl+K finds it from anywhere and says where it lives; a result opens there
@@ -279,9 +277,9 @@ for (const theme of ['dark', 'light'] as const) {
     const shot = (n: string) => page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-${n}.png` });
 
     // 1. approved transaction: the preview shows the balance change, then the balance moves
-    await page.goto(`/?theme=${theme}#/customers/2?tab=txns&sub=approved`);
+    await page.goto(`/?theme=${theme}#/customers/2?tab=USD`);
     const row = page.getByRole('row').filter({ hasText: 'Noah Smith' });
-    await row.getByRole('button', { name: 'إجراءات' }).click();
+    await row.getByRole('button', { name: 'إجراءات الحوالة' }).click();
     await page.getByRole('menuitem', { name: 'حذف' }).click();
     const del = page.getByRole('dialog');
     await expect(del).toContainText('سيُحذف قيد واحد من دفاتر العملاء');
@@ -306,11 +304,7 @@ for (const theme of ['dark', 'light'] as const) {
     // navigate inside the app: a reload would reset the in-memory mock database
     await page.getByRole('link', { name: 'العملاء' }).click();
     await page.getByRole('row').filter({ hasText: 'أحمد يلماز' }).getByRole('rowheader').click();
-    await page.getByRole('tab', { name: 'دفتر USD' }).click();
-    const credit = page.getByRole('row').filter({ hasText: 'اعتماد' }).first();
-    await credit.getByRole('button', { name: 'إجراءات القيد' }).click();
-    await expect(page.getByRole('menu')).toContainText('قيد اعتماد');
-    await page.keyboard.press('Escape');
+    await page.getByRole('tab', { name: 'كشف USD' }).click();
     const payout = page.getByRole('row').filter({ hasText: 'دفعة نقدية في المكتب' });
     await payout.getByRole('button', { name: 'إجراءات القيد' }).click();
     await page.getByRole('menuitem', { name: 'حذف القيد' }).click();
@@ -452,46 +446,45 @@ for (const theme of ['dark', 'light'] as const) {
     page.on('pageerror', (e) => errors.push(e.message));
     const shot = (n: string) => page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-${n}.png` });
     const toast = (text: string) => page.locator('[role=alertdialog]').filter({ hasText: text });
+    const bar = () => page.getByRole('toolbar', { name: 'إجراءات على المحدد' });
 
     // linked statement: ✓ on what is already in it; duplicates are listed and skipped
-    await page.goto(`/?theme=${theme}#/customers/2?tab=txns&sub=approved`);
+    await page.goto(`/?theme=${theme}#/customers/2?tab=USD`);
     const card = page.getByTestId('customer-excel');
     await expect(card).toContainText('كشف حساب - علي حسن.xlsx');
-    const hans = page.getByRole('row').filter({ hasText: 'Hans Müller' });
-    await expect(hans.getByLabel('في ملف العميل')).toBeVisible();
-    await hans.getByRole('checkbox').check({ force: true });
+    const opening = page.getByRole('row').filter({ hasText: 'رصيد افتتاحي' });
+    await expect(opening.getByLabel('في ملف العميل')).toBeVisible();
+    await opening.getByRole('checkbox').check({ force: true });
     await page.getByRole('row').filter({ hasText: 'Noah Smith' }).getByRole('checkbox').check({ force: true });
-    await page.getByRole('toolbar', { name: 'إجراءات جماعية' }).getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
+    await bar().getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
     const add = page.getByRole('dialog');
     await expect(add).toContainText('ستُضاف سطر واحد');
     await expect(add).toContainText('موجودة أصلاً في ملف العميل: 1');
-    await expect(add).toContainText('Hans Müller');
+    await expect(add).toContainText('رصيد افتتاحي');
     await shot('33-statement-preview');
     await add.getByRole('button', { name: 'إضافة سطر واحد' }).click();
     await expect(toast('أُضيف سطر واحد إلى ملف العميل')).toBeVisible();
     await expect(toast('أُضيف سطر واحد إلى ملف العميل').getByRole('button', { name: 'فتح الملف' })).toBeVisible();
     await expect(page.getByRole('row').filter({ hasText: 'Noah Smith' }).getByLabel('في ملف العميل')).toBeVisible();
 
-    // ledger: payouts are added; an approval credit is refused with its reason
-    await page.getByRole('tab', { name: 'دفتر USD' }).click();
-    await expect(page.getByRole('row').filter({ hasText: 'رصيد افتتاحي' })).toBeVisible();
-    await page.getByRole('checkbox', { name: 'تحديد كل القيود' }).check({ force: true });
-    await page.getByRole('toolbar', { name: 'إجراءات على القيود المحددة' }).getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
-    const fromLedger = page.getByRole('dialog');
-    await expect(fromLedger).toContainText('لا تُضاف');
-    await expect(fromLedger).toContainText('قيد اعتماد');
-    await fromLedger.getByRole('button', { name: /^إضافة/ }).click();
-    await expect(toast('إلى ملف العميل')).toBeVisible();
+    // the rest of the statement: payouts and reversals are added, what is there is skipped
+    await page.getByRole('checkbox', { name: 'تحديد كل الأسطر' }).check({ force: true });
+    await bar().getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
+    const all = page.getByRole('dialog');
+    await expect(all).toContainText('موجودة أصلاً في ملف العميل: 2');
     await shot('34-statement-ledger');
+    await all.getByRole('button', { name: /^إضافة/ }).click();
+    await expect(toast('إلى ملف العميل').first()).toBeVisible();
 
     // unapproving a transfer that is in the statement marks it as changed
-    await page.getByRole('tab', { name: /معاملاته/ }).click();
-    await page.getByRole('tab', { name: /معتمدة/ }).click();
-    await page.getByRole('row').filter({ hasText: 'Hans Müller' }).getByRole('button', { name: 'إجراءات' }).click();
+    await page.getByRole('tab', { name: 'كشف EUR' }).click();
+    await page.getByRole('row').filter({ hasText: 'Hans Müller' }).getByRole('button', { name: 'إجراءات الحوالة' }).click();
     await page.getByRole('menuitem', { name: 'إلغاء الاعتماد' }).click();
     await page.getByRole('dialog').getByRole('textbox', { name: 'السبب' }).fill('خطأ');
     await page.getByRole('dialog').getByRole('button', { name: 'إلغاء الاعتماد' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('link', { name: 'المعاملات' }).click();
+    await expect(page.getByRole('heading', { name: 'المعاملات' })).toBeVisible();
     await expect(page.getByRole('row').filter({ hasText: 'Hans Müller' })).toContainText('تغيّرت بعد إضافتها لملف العميل');
 
     // no statement yet: create one (with what exists), then approve with "add to the statement" on
@@ -505,7 +498,7 @@ for (const theme of ['dark', 'light'] as const) {
     await create.getByRole('button', { name: 'اختيار مكان الحفظ وإنشاء' }).click();
     await expect(toast('أُنشئ ملف العميل')).toContainText('أُضيف سطران');
     await expect(page.getByTestId('customer-excel')).toContainText('كشف حساب - أحمد يلماز.xlsx');
-    await page.getByRole('tab', { name: /معاملاته/ }).click();
+    await page.getByRole('tab', { name: /بانتظار الموافقة/ }).click();
     await page.getByRole('row').filter({ hasText: 'Website hosting' }).getByRole('button', { name: 'إجراءات' }).click();
     await page.getByRole('menuitem', { name: 'اعتماد' }).click();
     const approve = page.getByRole('dialog');
@@ -513,24 +506,24 @@ for (const theme of ['dark', 'light'] as const) {
     await shot('36-statement-approve');
     await approve.getByRole('button', { name: 'اعتماد' }).click();
     await expect(toast('أُضيفت إلى ملف العميل')).toBeVisible();
-    await page.getByRole('tab', { name: /معتمدة/ }).click();
+    await page.getByRole('tab', { name: 'كشف USD' }).click();
     await expect(page.getByRole('row').filter({ hasText: 'Website hosting' }).getByLabel('في ملف العميل')).toBeVisible();
     expect(errors).toEqual([]);
   });
 
   test(`0.4.2 customer Excel statement errors (${theme})`, async ({ page }) => {
     // the file is open in Excel: nothing is written, the dialog says so
-    await page.goto(`/?theme=${theme}&customerExcelLocked=1#/customers/2?tab=txns&sub=approved`);
+    await page.goto(`/?theme=${theme}&customerExcelLocked=1#/customers/2?tab=USD`);
     await page.getByRole('row').filter({ hasText: 'Noah Smith' }).getByRole('checkbox').check({ force: true });
-    await page.getByRole('toolbar', { name: 'إجراءات جماعية' }).getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
+    await page.getByRole('toolbar', { name: 'إجراءات على المحدد' }).getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'إضافة سطر واحد' }).click();
     await expect(page.getByRole('dialog')).toContainText('الملف مفتوح في Excel');
 
     // a customer without a statement is offered to create one
-    await page.goto(`/?theme=${theme}#/customers/3?tab=txns&sub=approved`);
+    await page.goto(`/?theme=${theme}#/customers/3?tab=USD`);
     await page.reload();
     await page.getByRole('row').filter({ hasText: 'Olivia Wilson' }).getByRole('checkbox').check({ force: true });
-    await page.getByRole('toolbar', { name: 'إجراءات جماعية' }).getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
+    await page.getByRole('toolbar', { name: 'إجراءات على المحدد' }).getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
     await expect(page.getByRole('dialog')).toContainText('لا ملف Excel لهذا العميل');
     await expect(page.getByRole('dialog').getByRole('button', { name: 'إنشاء ملف للعميل' })).toBeVisible();
 
@@ -539,5 +532,92 @@ for (const theme of ['dark', 'light'] as const) {
     await page.reload();
     await page.getByRole('button', { name: 'ربط ملف موجود' }).click();
     await expect(page.getByRole('dialog')).toContainText('ليس كشف حساب أنشأه البرنامج لهذا العميل');
+  });
+}
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`0.5.0 statement and linked payouts (${theme})`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    const shot = (n: string) => page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-${n}.png` });
+
+    // one statement per currency: transfers (له) and payouts (عليه) together, with the eight figures
+    await page.goto(`/?theme=${theme}#/customers/8`);
+    const summary = page.getByRole('region', { name: 'ملخص USD' });
+    await expect(summary).toContainText('غير مدفوع');
+    await expect(summary).toContainText('3 حوالات');
+    const p1 = page.locator('tr[data-kind=payout]').filter({ hasText: 'دفعة 1' });
+    await expect(p1).toContainText('695.09');
+    await expect(p1).toContainText('تم الإرسال');
+    await expect(page.getByRole('row').filter({ hasText: 'Liam Turner' }).first()).toContainText('نعم — دفعة 1');
+    await expect(page.getByRole('row').filter({ hasText: 'Chloe Price' })).toContainText('مسجلة — دفعة 2');
+    await shot('37-statement');
+
+    // a range that overlaps an earlier payout: the paid ones are flagged and left out
+    await page.getByRole('button', { name: 'تجهيز دفعة' }).first().click();
+    const prep = page.getByRole('dialog');
+    await prep.getByRole('radio', { name: 'نطاق من # إلى #' }).click({ force: true });
+    await prep.getByRole('textbox', { name: 'من #' }).fill('3');
+    await prep.getByRole('textbox', { name: 'إلى #' }).fill('7');
+    await expect(prep.getByLabel('تنبيهات')).toContainText('مدفوعة سابقاً في الدفعة 1: #3');
+    await expect(prep.getByLabel('تنبيهات')).toContainText('مدفوعة سابقاً في الدفعة 2: #4، #5');
+    await expect(prep).toContainText('(6-7)');
+
+    // all unpaid (the default): #6-8; the "matched" box is required; a different amount needs a reason
+    await prep.getByRole('radio', { name: 'كل غير المدفوع' }).click({ force: true });
+    await expect(prep).toContainText('(6-8)');
+    await expect(prep).toContainText('775.70');
+    await prep.getByRole('button', { name: 'متابعة' }).click();
+    await expect(prep).toContainText('راجع الحوالات وأكّد أنها مطابقة');
+    await prep.getByRole('checkbox', { name: 'راجعتُ الحوالات وهي مطابقة' }).check({ force: true });
+    await prep.getByRole('textbox', { name: 'المبلغ المدفوع' }).fill('700.00');
+    await prep.getByRole('button', { name: 'متابعة' }).click();
+    await expect(prep).toContainText('المبلغ يختلف عن المستحق؛ اكتب السبب');
+    await prep.getByRole('textbox', { name: 'المبلغ المدفوع' }).fill('');
+    await shot('38-prepare-payout');
+    await prep.getByRole('button', { name: 'متابعة' }).click();
+    const confirm = page.getByRole('dialog');
+    await expect(confirm).toContainText('-775.70');
+    await confirm.getByRole('button', { name: 'تم الإرسال' }).click();
+    await expect(page.getByText('أُرسلت الدفعة 3 (6-8)')).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'Noah Bennett' })).toContainText('نعم — دفعة 3');
+    await expect(summary).toContainText('0 حوالة');
+
+    // the recorded payout 2 is confirmed as sent; then payout 1 is cancelled: its transfers are unpaid again
+    const p2 = page.locator('tr[data-kind=payout]').filter({ hasText: 'دفعة 2' });
+    await p2.getByRole('button', { name: 'إجراءات الدفعة' }).click();
+    await page.getByRole('menuitem', { name: 'تأكيد الإرسال' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'تم الإرسال' }).click();
+    await expect(page.getByRole('row').filter({ hasText: 'Chloe Price' })).toContainText('نعم — دفعة 2');
+    await p1.getByRole('button', { name: 'إجراءات الدفعة' }).click();
+    await page.getByRole('menuitem', { name: 'إلغاء الدفعة' }).click();
+    await page.getByRole('dialog').getByRole('textbox', { name: 'السبب' }).fill('أُعيدت من المنصة');
+    await page.getByRole('dialog').getByRole('button', { name: 'إلغاء الدفعة' }).click();
+    await expect(page.getByRole('row').filter({ hasText: 'Mason Reed' })).toContainText('لا');
+    await expect(summary).toContainText('3 حوالات');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    // matched, from the selection bar
+    const mason = page.getByRole('row').filter({ hasText: 'Mason Reed' });
+    // bring it out from under the sticky header before clicking its (visually hidden) checkbox
+    await mason.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    await mason.getByRole('checkbox').check({ force: true });
+    await page.getByRole('toolbar', { name: 'إجراءات على المحدد' }).getByRole('button', { name: 'مطابق', exact: true }).click();
+    await expect(page.getByRole('row').filter({ hasText: 'Mason Reed' })).toContainText('مطابق');
+
+    // the payouts register with the cumulative paid
+    await page.getByRole('tab', { name: 'الدفعات' }).click();
+    const reg = page.getByRole('table', { name: 'سجل الدفعات USD' });
+    await expect(reg.getByRole('row')).toHaveCount(4);
+    await expect(reg).toContainText('ملغاة');
+    await shot('39-payouts-register');
+
+    // search: an approved transfer opens its currency tab on the row
+    await page.keyboard.press('Control+k');
+    await page.getByRole('dialog', { name: 'البحث في كل المعاملات' }).getByRole('searchbox').fill('Noah Bennett');
+    await page.getByRole('option').filter({ hasText: 'Noah Bennett' }).click();
+    await expect(page.getByRole('tab', { name: 'كشف USD' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('complementary', { name: 'تفاصيل المعاملة' })).toContainText('Noah Bennett');
+    expect(errors).toEqual([]);
   });
 }

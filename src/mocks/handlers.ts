@@ -5,9 +5,10 @@ import type {
   FeeInput, LedgerEntry, LedgerView, ManualTxnInput, Money, Page, Period, PullRun, RawEmailSummary,
   RefundAlert, Transaction, TxnAction, TxnCounts, TxnFilter, TxnListResult, TxnPreview, TxnSort, AdjustmentInput, PayoutInput,
   MailboxInput, ParseStatus, PullRange, TxnLocation, TxnSearchHit, CustomerExcel, CustomerExcelItemRef, CustomerExcelPreview,
+  Payout, PayoutPreparation, PayoutSelection, CustomerSummary, StatementFilter, StatementRow,
 } from '@/lib/contract';
-import { decimalsOf, formatMinor } from '@/lib/money';
-import { creditDescription, halfUp, ltr, seed, type Db, type LedgerRow, type TxnRow } from './db';
+import { amountTextToMinor2, decimalsOf, formatMinor } from '@/lib/money';
+import { creditDescription, halfUp, ltr, seed, type Db, type LedgerRow, type PayoutRow, type TxnRow } from './db';
 
 let db: Db = seed();
 // Excel append mode (SPEC 6.8.1): which PayPal ids the main file already has, and rows changed since
@@ -76,8 +77,7 @@ function view(t: TxnRow): Transaction {
     mailbox: mb ? { id: mb.id, label: mb.label } : null,
     refundedBy: db.txns.filter((r) => r.type !== 'payment' && r.relatedTxnId === t.paypalTxnId).map((r) => ({ id: r.id, type: r.type, grossMinor: r.grossMinor })),
     allowedActions: allowedActions(t),
-    // SPEC 4.8 (transfer numbers, matched, payouts) is not mocked yet
-    customerSeq: null, matched: false, payout: null,
+    payout: payoutOf(t.id),
     inCustomerExcel: !!t.customerId && inExcel(t.customerId, 'txn', t.id),
     changedAfterExcel: t.status !== 'approved' && Object.values(db.customerExcel).some((x) => x.items.some((i) => i.kind === 'txn' && i.id === t.id)),
   };
@@ -246,6 +246,9 @@ function approveTxn(id: number) {
   if ((t.customerAmountMinor ?? 0) <= 0) fail('validation', 'المبلغ المستحق للعميل يجب أن يكون أكبر من صفر');
   t.status = 'approved';
   t.approvedAt = nowIso();
+  // SPEC 4.8: the next transfer number for this customer and currency (never reused)
+  const k = `${t.customerId}:${t.currency}`;
+  t.customerSeq = db.txnSeq[k] = (db.txnSeq[k] ?? 0) + 1;
   addLedger({ customerId: t.customerId!, currency: t.currency, type: 'credit', amountMinor: t.customerAmountMinor!, transactionId: t.id, reference: t.paypalTxnId, description: creditDescription(t), entryDate: nowIso().slice(0, 10) });
   log(t, 'approved', 'اعتُمدت وأُضيف قيد للعميل');
   return view(t);
@@ -259,7 +262,7 @@ function unapprove(id: number, reason: string) {
   if (credit) reverseEntry(credit.id, reason);
   t.status = 'unassigned';
   t.customerId = null; t.commissionMode = null; t.commissionBps = null; t.commissionMinor = null; t.customerAmountMinor = null;
-  t.assignedAt = null; t.approvedAt = null;
+  t.assignedAt = null; t.approvedAt = null; t.customerSeq = null; // the number stays a gap
   log(t, 'unapproved', `أُلغي الاعتماد: ${reason}`);
   return view(t);
 }
@@ -348,6 +351,147 @@ function customerView(c: Db['customers'][number]): Customer {
   };
 }
 
+// ---------------------------------------------------------------- linked payouts and the statement (SPEC 4.8, 6.5)
+const livePayouts = () => db.payouts.filter((p) => p.status !== 'cancelled');
+function payoutOf(txnId: number) {
+  const p = livePayouts().find((x) => x.txnIds.includes(txnId));
+  return p ? { id: p.id, seq: p.seq, status: p.status as 'draft' | 'sent' } : null;
+}
+const sumOf = (xs: TxnRow[], f: (t: TxnRow) => number | null) => xs.reduce((n, t) => n + (f(t) ?? 0), 0);
+
+function payoutView(p: PayoutRow): Payout {
+  const cumulative = db.payouts
+    .filter((x) => x.customerId === p.customerId && x.currency === p.currency && x.status === 'sent' && x.seq <= p.seq)
+    .reduce((n, x) => n + x.amountMinor, 0);
+  return {
+    id: p.id, customerId: p.customerId, currency: p.currency, seq: p.seq, status: p.status, amountMinor: p.amountMinor, dueMinor: p.dueMinor,
+    date: p.date, rangeLabel: p.rangeLabel, details: { ...p.details }, txnCount: p.txnIds.length, cumulativePaidMinor: cumulative,
+    ledgerEntryId: p.ledgerEntryId, itemIds: { txns: [...p.txnIds], ledger: [...p.ledgerIds] }, inCustomerExcel: inExcel(p.customerId, 'payout', p.id), createdAt: p.createdAt,
+  };
+}
+
+/** "(13-40)", "(99-119) بدون 113", "(5)" */
+function rangeLabelOf(seqs: number[]): string {
+  if (!seqs.length) return '()';
+  const sorted = [...seqs].sort((a, b) => a - b);
+  const lo = sorted[0], hi = sorted[sorted.length - 1];
+  const missing: number[] = [];
+  for (let n = lo; n <= hi; n++) if (!sorted.includes(n)) missing.push(n);
+  return `(${lo === hi ? lo : `${lo}-${hi}`})${missing.length ? ` بدون ${missing.join('، ')}` : ''}`;
+}
+
+function payoutPrepare(customerId: number, currency: string, sel: PayoutSelection): PayoutPreparation {
+  const approved = db.txns.filter((t) => t.customerId === customerId && t.currency === currency && t.status === 'approved' && t.customerSeq !== null)
+    .sort((a, b) => a.customerSeq! - b.customerSeq!);
+  let found: TxnRow[];
+  const missingSeqs: number[] = [];
+  if (sel.kind === 'range') {
+    found = approved.filter((t) => t.customerSeq! >= sel.from && t.customerSeq! <= sel.to);
+    for (let n = sel.from; n <= sel.to; n++) if (!found.some((t) => t.customerSeq === n)) missingSeqs.push(n);
+  } else if (sel.kind === 'ids') found = approved.filter((t) => sel.txnIds.includes(t.id));
+  else found = approved.filter((t) => !payoutOf(t.id));
+  const alreadyPaid = found.filter((t) => payoutOf(t.id)).map((t) => ({ txn: view(t), payoutSeq: payoutOf(t.id)!.seq }));
+  const held = found.filter((t) => !payoutOf(t.id) && t.holdStatus !== null);
+  const included = found.filter((t) => !payoutOf(t.id) && t.holdStatus === null);
+  const gross = sumOf(included, (t) => t.grossMinor), net = sumOf(included, (t) => t.netMinor), commission = sumOf(included, (t) => t.commissionMinor);
+  return {
+    included: included.map(view), returned: [], alreadyPaid, excludedHeld: held.map(view), missingSeqs,
+    foundCount: found.length, countedCount: included.length, returnedCount: 0,
+    grossMinor: gross, netPaypalMinor: net, commissionMinor: commission, dueMinor: sumOf(included, (t) => t.customerAmountMinor),
+    rangeLabel: rangeLabelOf(included.map((t) => t.customerSeq!)),
+  };
+}
+
+function payoutLedger(p: PayoutRow): LedgerEntry {
+  const e = addLedger({
+    customerId: p.customerId, currency: p.currency, type: 'payout', amountMinor: -p.amountMinor, payoutMethod: p.details.method,
+    reference: p.details.reference ?? null, description: `دفعة ${p.seq} ${p.rangeLabel}`, entryDate: p.date,
+  });
+  p.ledgerEntryId = e.id;
+  return e;
+}
+
+function payoutCreate(a: Args): Payout {
+  if (a.matchedConfirmed !== true) fail('validation', 'أكّد أنك راجعت الحوالات وأنها مطابقة', 'matched');
+  const ids: number[] = a.txnIds ?? [];
+  if (!ids.length) fail('validation', 'لا حوالات في هذه الدفعة', 'txnIds');
+  const overlap = ids.map((id) => [id, payoutOf(id)] as const).filter(([, p]) => p);
+  if (overlap.length) fail('validation', `مدفوعة سابقاً في الدفعة ${overlap[0][1]!.seq}`, 'overlap');
+  const rows = ids.map(getTxn);
+  if (rows.some((t) => t.customerId !== a.customerId || t.currency !== a.currency || t.status !== 'approved')) fail('invalid_transition', 'كل حوالات الدفعة يجب أن تكون معتمدة لهذا العميل وبهذه العملة');
+  const dueMinor = sumOf(rows, (t) => t.customerAmountMinor);
+  let amountMinor = dueMinor;
+  if (a.amountText?.trim()) {
+    const m = amountTextToMinor2(String(a.amountText).replace(/,/g, '').trim());
+    if (m === null || m <= 0) fail('invalid_amount', 'أدخل مبلغاً صحيحاً', 'amount');
+    amountMinor = m!;
+  }
+  if (amountMinor !== dueMinor && !a.differenceReason?.trim()) fail('validation', 'المبلغ يختلف عن المستحق؛ اكتب السبب', 'difference_reason');
+  const seq = 1 + Math.max(0, ...db.payouts.filter((p) => p.customerId === a.customerId && p.currency === a.currency).map((p) => p.seq));
+  const p: PayoutRow = {
+    id: ++db.seq, customerId: a.customerId, currency: a.currency, seq, status: a.status === 'draft' ? 'draft' : 'sent', amountMinor, dueMinor,
+    date: a.date, rangeLabel: rangeLabelOf(rows.map((t) => t.customerSeq!)), details: { ...a.details }, txnIds: ids, ledgerIds: a.returnedEntryIds ?? [],
+    ledgerEntryId: null, createdAt: nowIso(), differenceReason: a.differenceReason?.trim() || null,
+  };
+  db.payouts.push(p);
+  if (p.status === 'sent') payoutLedger(p);
+  for (const t of rows) log(t, 'payout', p.status === 'sent' ? `تم الإرسال — دفعة ${seq}` : `مسجلة في الدفعة ${seq}`);
+  return payoutView(p);
+}
+
+function getPayout(id: number) {
+  return db.payouts.find((p) => p.id === id) ?? fail('not_found', 'الدفعة غير موجودة');
+}
+
+function customerSummary(customerId: number, currency: string): CustomerSummary {
+  const approved = db.txns.filter((t) => t.customerId === customerId && t.currency === currency && t.status === 'approved' && t.holdStatus === null);
+  const sent = db.ledger.filter((e) => e.customerId === customerId && e.currency === currency && e.type === 'payout' && e.reversedByEntryId === null)
+    .reduce((n, e) => n - e.amountMinor, 0);
+  return {
+    currency, netCompletedMinor: sumOf(approved, (t) => t.customerAmountMinor), sentMinor: sent, remainingMinor: balanceOf(customerId, currency),
+    notPaidCount: approved.filter((t) => !payoutOf(t.id)).length, grossBeforeCommissionMinor: sumOf(approved, (t) => t.netMinor),
+    commissionMinor: sumOf(approved, (t) => t.commissionMinor), txnCount: approved.length,
+    paidCount: approved.filter((t) => payoutOf(t.id)?.status === 'sent').length,
+  };
+}
+
+/** The ledger in order, transfers and linked payouts shown as themselves; recorded payouts sit at their date without moving the balance. */
+function customerStatement(customerId: number, currency: string, filter: StatementFilter = {}) {
+  const rows: (StatementRow & { date: string })[] = [];
+  let bal = 0;
+  const drafts = db.payouts.filter((p) => p.customerId === customerId && p.currency === currency && p.status === 'draft');
+  for (const e of ordered(customerId, currency)) {
+    bal += e.amountMinor;
+    const t = e.type === 'credit' && e.transactionId !== null ? db.txns.find((x) => x.id === e.transactionId) : undefined;
+    const p = db.payouts.find((x) => x.ledgerEntryId === e.id);
+    if (t && t.status === 'approved' && t.customerId === customerId && e.reversedByEntryId === null) rows.push({ kind: 'txn', txn: view(t), runningBalanceMinor: bal, date: e.entryDate });
+    else if (p) rows.push({ kind: 'payout', payout: payoutView(p), runningBalanceMinor: bal, date: e.entryDate });
+    else rows.push({ kind: 'entry', entry: asEntry(e, bal), runningBalanceMinor: bal, date: e.entryDate });
+  }
+  for (const p of drafts) {
+    const at = rows.findIndex((r) => r.date > p.date);
+    const prev = at === -1 ? rows[rows.length - 1] : rows[at - 1];
+    const row = { kind: 'payout' as const, payout: payoutView(p), runningBalanceMinor: prev?.runningBalanceMinor ?? 0, date: p.date };
+    if (at === -1) rows.push(row); else rows.splice(at, 0, row);
+  }
+  const from = filter.period?.from, to = filter.period?.to;
+  let opening = 0;
+  const inPeriod = rows.filter((r) => {
+    if (from && r.date < from) { opening = r.runningBalanceMinor; return false; }
+    return !(to && r.date > to);
+  });
+  const show = filter.show ?? 'all';
+  const shown = inPeriod.filter((r) =>
+    show === 'all' ? true
+      : show === 'payouts' ? r.kind === 'payout' || (r.kind === 'entry' && r.entry.type === 'payout')
+        : r.kind === 'txn' && (show === 'paid' ? !!r.txn.payout : !r.txn.payout));
+  return {
+    openingBalanceMinor: opening,
+    rows: shown.map(({ date: _d, ...r }) => r as StatementRow),
+    closingBalanceMinor: inPeriod.length ? inPeriod[inPeriod.length - 1].runningBalanceMinor : opening,
+  };
+}
+
 // ---------------------------------------------------------------- customer Excel statement (SPEC 6.8.2)
 function excelView(customerId: number): CustomerExcel | null {
   const x = db.customerExcel[customerId];
@@ -356,7 +500,13 @@ function excelView(customerId: number): CustomerExcel | null {
 
 type ExcelLine = CustomerExcelPreview['toAdd'][number];
 function excelLine(customerId: number, ref: CustomerExcelItemRef): ExcelLine | CustomerExcelPreview['notAllowed'][number] {
-  if (ref.kind === 'payout') return { kind: 'ledger', id: ref.id, reasonAr: 'الدفعات المرتبطة غير متاحة في الوضع التجريبي بعد' };
+  // the preview types only know txn/ledger: a payout is reported by its id under 'ledger' (contract note sent)
+  if (ref.kind === 'payout') {
+    const p = db.payouts.find((x) => x.id === ref.id);
+    if (!p || p.customerId !== customerId) return { kind: 'ledger', id: ref.id, reasonAr: 'دفعة عميل آخر' };
+    if (p.status !== 'sent') return { kind: 'ledger', id: ref.id, reasonAr: p.status === 'draft' ? 'الدفعة مسجلة ولم تُرسل بعد' : 'الدفعة ملغاة' };
+    return { kind: 'ledger', id: p.id, date: p.date, labelAr: `دفعة ${p.seq} ${p.rangeLabel}`, currency: p.currency, amountMinor: -p.amountMinor };
+  }
   const r = { kind: ref.kind as 'txn' | 'ledger', id: ref.id };
   if (ref.kind === 'txn') {
     const t = db.txns.find((x) => x.id === ref.id);
@@ -394,7 +544,10 @@ function excelAdd(customerId: number, items: CustomerExcelItemRef[]) {
   if (!x) fail('no_export_path', 'لا ملف Excel مرتبط بهذا العميل');
   if (new URLSearchParams(location.search).get('customerExcelLocked') === '1') fail('file_locked', 'أغلق الملف في Excel ثم أعد المحاولة');
   const p = excelPreview(customerId, items);
-  for (const l of p.toAdd) x.items.push({ kind: l.kind, id: l.id, currency: l.currency, date: l.date });
+  for (const ref of items) {
+    const l = excelLine(customerId, ref);
+    if (!('reasonAr' in l) && !inExcel(customerId, ref.kind, ref.id)) x.items.push({ kind: ref.kind, id: ref.id, currency: l.currency, date: l.date });
+  }
   x.updatedAt = nowIso();
   return { path: x.path, added: p.toAdd.length, skippedDuplicates: p.duplicates.length, sheets: [...new Set(x.items.map((i) => `كشف ${i.currency}`))] };
 }
@@ -486,7 +639,7 @@ function reparse(ids: number[]): BulkResult {
         payerName: e.subject.replace(/^.*from /, '') || null, payerEmail: null, payerNote: null, currency: 'USD', grossMinor: 10000, feeMinor: null, netMinor: null,
         feeIsEstimated: false, occurredAt: e.receivedAt, status: 'unassigned', customerId: null, commissionMode: null, commissionBps: null, commissionMinor: null,
         customerAmountMinor: null, assignedAt: null, approvedAt: null, note: null, mailboxId: 1, rawEmailId: e.id, refundHandled: false,
-        needsReview: false, reviewReasonAr: null, holdStatus: null,
+        needsReview: false, reviewReasonAr: null, holdStatus: null, customerSeq: null, matched: false,
       });
       Object.assign(e, { parseStatus: 'parsed', parseReason: null, parseReasonAr: null, transactionId: tid });
       res.ok.push(id);
@@ -497,7 +650,7 @@ function reparse(ids: number[]): BulkResult {
         payerName: e.subject.includes('Omar') ? 'Omar Nabil' : 'Hany Saad', payerEmail: null, payerNote: null, currency: 'EGP', grossMinor: 250000 + (id % 7) * 1000,
         feeMinor: null, netMinor: null, feeIsEstimated: false, occurredAt: e.receivedAt, status: 'unassigned', customerId: null, commissionMode: null,
         commissionBps: null, commissionMinor: null, customerAmountMinor: null, assignedAt: null, approvedAt: null, note: null, mailboxId: 1,
-        rawEmailId: e.id, refundHandled: false, needsReview: true, reviewReasonAr: 'صيغة غير معروفة — راجع المبلغ والعملة والمرسل', holdStatus: null,
+        rawEmailId: e.id, refundHandled: false, needsReview: true, reviewReasonAr: 'صيغة غير معروفة — راجع المبلغ والعملة والمرسل', holdStatus: null, customerSeq: null, matched: false,
       });
       Object.assign(e, { parseStatus: 'parsed', parseReason: null, parseReasonAr: null, transactionId: tid, parserName: 'generic' });
       res.ok.push(id);
@@ -597,7 +750,7 @@ function addPulledTxns(n: number, mailboxId: number) {
       id, source: 'email', paypalTxnId: `${Math.random().toString(36).slice(2, 10).toUpperCase()}${id}PULL`, relatedTxnId: null, type: 'payment',
       payerName: payer, payerEmail: email, payerNote: null, currency: cur, grossMinor: gross, feeMinor: null, netMinor: null, feeIsEstimated: false,
       occurredAt: nowIso(), status: 'unassigned', customerId: null, commissionMode: null, commissionBps: null, commissionMinor: null, customerAmountMinor: null,
-      assignedAt: null, approvedAt: null, note: null, mailboxId, rawEmailId: null, refundHandled: false, needsReview: false, reviewReasonAr: null, holdStatus: null,
+      assignedAt: null, approvedAt: null, note: null, mailboxId, rawEmailId: null, refundHandled: false, needsReview: false, reviewReasonAr: null, holdStatus: null, customerSeq: null, matched: false,
     });
   }
 }
@@ -647,6 +800,38 @@ export function handle(cmd: string, a: Args = {}): unknown {
         .filter((c) => (a.active === undefined || c.isActive === a.active) && (!q || c.name.toLowerCase().includes(q) || (c.phone ?? '').includes(q)))
         .map(customerView)
         .filter((c) => a.hasPending === undefined || (c.pendingCount > 0) === a.hasPending);
+    }
+    case 'customer_summary': return customerSummary(a.customerId, a.currency);
+    case 'customer_statement': return customerStatement(a.customerId, a.currency, a.filter);
+    case 'payout_prepare': return payoutPrepare(a.customerId, a.currency, a.selection);
+    case 'payout_create': return payoutCreate(a);
+    case 'payout_mark_sent': {
+      const p = getPayout(a.payoutId);
+      if (p.status !== 'draft') fail('invalid_transition', 'الدفعة ليست مسجلة بانتظار الإرسال');
+      p.status = 'sent';
+      if (a.date) p.date = a.date;
+      payoutLedger(p);
+      return payoutView(p);
+    }
+    case 'payout_update_details': { const p = getPayout(a.payoutId); p.details = { ...p.details, ...a.details }; return payoutView(p); }
+    case 'payout_cancel': {
+      const p = getPayout(a.payoutId);
+      if (p.status === 'cancelled') fail('invalid_transition', 'الدفعة ملغاة أصلاً');
+      if (!a.reason?.trim()) fail('validation', 'السبب إلزامي', 'reason');
+      if (p.ledgerEntryId !== null) reverseEntry(p.ledgerEntryId, `إلغاء الدفعة ${p.seq}: ${a.reason}`);
+      p.status = 'cancelled';
+      return payoutView(p);
+    }
+    case 'payouts_list': return db.payouts.filter((p) => p.customerId === a.customerId && p.currency === a.currency).sort((x, y) => x.seq - y.seq).map(payoutView);
+    case 'payout_defaults': {
+      const last = [...db.payouts].filter((p) => p.customerId === a.customerId).sort((x, y) => y.id - x.id)[0];
+      return last ? { ...last.details, reference: null, note: null } : null;
+    }
+    case 'payout_platform_suggestions': return [...new Set(['Binance', 'OKX', 'Bybit', ...db.payouts.map((p) => p.details.platform).filter(Boolean) as string[]])];
+    case 'txn_set_matched': {
+      const ok: number[] = [];
+      for (const id of a.ids ?? []) { const t = db.txns.find((x) => x.id === id); if (t) { t.matched = !!a.matched; ok.push(id); } }
+      return { ok, failed: [] };
     }
     case 'customer_excel_get': return excelView(a.customerId);
     case 'customer_excel_create': {
@@ -728,7 +913,7 @@ export function handle(cmd: string, a: Args = {}): unknown {
         id, source: 'manual', paypalTxnId: pp, relatedTxnId: null, type: 'payment', payerName: i.payerName || null, payerEmail: i.payerEmail || null, payerNote: i.payerNote || null,
         currency: i.currency, grossMinor: gross, feeMinor: fee, netMinor: fee === null ? null : gross - fee, feeIsEstimated: false,
         occurredAt: new Date(`${m![1]}T${m![2]}:${m![3]}:00`).toISOString(), status: 'unassigned', customerId: null, commissionMode: null, commissionBps: null,
-        commissionMinor: null, customerAmountMinor: null, assignedAt: null, approvedAt: null, note: i.note || null, mailboxId: null, rawEmailId: i.rawEmailId ?? null, refundHandled: false, needsReview: false, reviewReasonAr: null, holdStatus: null,
+        commissionMinor: null, customerAmountMinor: null, assignedAt: null, approvedAt: null, note: i.note || null, mailboxId: null, rawEmailId: i.rawEmailId ?? null, refundHandled: false, needsReview: false, reviewReasonAr: null, holdStatus: null, customerSeq: null, matched: false,
       };
       db.txns.push(t);
       log(t, 'created', 'أُضيفت يدوياً');
@@ -820,7 +1005,7 @@ export function handle(cmd: string, a: Args = {}): unknown {
       const amt = parseAmount(i.amountText, i.currency);
       if (amt <= 0) fail('validation', 'المبلغ يجب أن يكون أكبر من صفر', 'amount');
       if (amt > balanceOf(a.customerId, i.currency) && !i.confirmOverdraw) fail('validation', 'الدفعة أكبر من الرصيد المتاح', 'overdraw');
-      return addLedger({ customerId: a.customerId, currency: i.currency, type: 'payout', amountMinor: -amt, payoutMethod: i.method, reference: i.reference || null, description: i.description || 'دفعة', entryDate: i.entryDate });
+      return addLedger({ customerId: a.customerId, currency: i.currency, type: 'payout', amountMinor: -amt, payoutMethod: i.method, reference: i.reference || null, description: i.description || ['دفعة', i.platform].filter(Boolean).join(' — '), entryDate: i.entryDate });
     }
     case 'ledger_add_adjustment': {
       const i = a.input as AdjustmentInput;

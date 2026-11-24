@@ -110,20 +110,22 @@ for (const theme of ['dark', 'light'] as const) {
       await shot('22-align-customers');
 
       await open('customers/7');
-      await expect(page.getByRole('tab', { name: 'دفتر AUD' })).toBeVisible();
-      problems.push(...await checkTables(page, 'ledger AUD'));
-      await page.getByRole('tab', { name: 'دفتر TRY' }).click();
+      await expect(page.getByRole('tab', { name: 'كشف AUD' })).toBeVisible();
+      problems.push(...await checkTables(page, 'statement AUD'));
+      await page.getByRole('tab', { name: 'كشف TRY' }).click();
       await page.waitForTimeout(150);
-      problems.push(...await checkTables(page, 'ledger TRY'));
+      problems.push(...await checkTables(page, 'statement TRY'));
       await shot('23-align-ledger');
-      await page.getByRole('tab', { name: /معاملاته/ }).click();
-      await expect(page.getByRole('tab', { name: /بانتظار الموافقة/ })).toHaveAttribute('aria-selected', 'true');
+      await page.getByRole('tab', { name: /بانتظار الموافقة/ }).click();
       await expect(page.getByText('Second instalment')).toBeVisible();
       problems.push(...await checkTables(page, 'customer pending'));
-      await page.getByRole('tab', { name: /معتمدة/ }).click();
-      await expect(page.getByText('Ayşegül Karadeniz-Yıldırım')).toBeVisible();
-      problems.push(...await checkTables(page, 'customer approved'));
       await shot('24-align-customer-transactions');
+      await open('customers/8');
+      await expect(page.getByRole('tab', { name: 'كشف USD' })).toBeVisible();
+      problems.push(...await checkTables(page, 'statement with payouts'));
+      await page.getByRole('tab', { name: 'الدفعات' }).click();
+      await page.waitForTimeout(150);
+      problems.push(...await checkTables(page, 'payouts register'));
 
       await open('emails');
       problems.push(...await checkTables(page, 'emails failed'));

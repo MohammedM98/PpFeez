@@ -129,8 +129,9 @@ function CommissionFields({ c, currency }: { c: ReturnType<typeof useCommissionI
 
 // ---------------------------------------------------------------- assign
 /** Where a transaction lives after it is assigned (SPEC 6.3); the host sits above the router. */
-export function customerTxnsHref(customerId: number, sub: 'pending_approval' | 'approved', txnId?: number) {
-  return `#/customers/${customerId}?tab=txns&sub=${sub}${txnId ? `&detail=${txnId}` : ''}`;
+export function customerTxnsHref(customerId: number, where: 'pending' | { currency: string }, txnId?: number) {
+  const tab = where === 'pending' ? 'pending' : where.currency;
+  return `#/customers/${customerId}?tab=${tab}${txnId ? `&detail=${txnId}` : ''}`;
 }
 const go = (href: string) => { window.location.hash = href.slice(1); };
 
@@ -178,7 +179,7 @@ function AssignDialog({ txn, ids, move, onClose, onBulk }: { txn?: Transaction; 
       if (!r.ok) return;
       onClose();
       toast.action(approved ? `اعتُمدت ونُقلت إلى ${name}` : `نُقلت إلى ${name}`, [
-        { label: 'فتح', onPress: () => go(customerTxnsHref(customerId, approved ? 'approved' : 'pending_approval', txn.id)) },
+        { label: 'فتح', onPress: () => go(customerTxnsHref(customerId, approved ? { currency: txn.currency } : 'pending', txn.id)) },
         // undoing an approval needs a reason, so an approved move is undone from the customer page
         ...(approved || move ? [] : [{ label: 'تراجع', onPress: () => void run(() => api.txnUnassign(txn.id), 'أُعيدت إلى الوارد') }]),
       ]);
@@ -190,7 +191,7 @@ function AssignDialog({ txn, ids, move, onClose, onBulk }: { txn?: Transaction; 
       else onBulk?.(r.value, 'التخصيص');
       if (moved.length) {
         toast.action(`نُقلت ${txnCountLabel(moved.length)} إلى ${name}`, [
-          { label: 'فتح', onPress: () => go(customerTxnsHref(customerId, 'pending_approval')) },
+          { label: 'فتح', onPress: () => go(customerTxnsHref(customerId, 'pending')) },
           { label: 'تراجع', onPress: () => void run(() => api.txnBulk({ action: 'unassign', ids: moved }), 'أُعيدت إلى الوارد') },
         ]);
       }

@@ -92,7 +92,7 @@ export function CustomersPage() {
       </div>
 
       <TableFrame>
-        <Table aria-label="العملاء" onRowAction={(k) => navigate(pendingOnly ? `/customers/${k}?tab=txns&sub=pending_approval` : `/customers/${k}`)} minWidth={CW.min}>
+        <Table aria-label="العملاء" onRowAction={(k) => navigate(pendingOnly ? `/customers/${k}?tab=pending` : `/customers/${k}`)} minWidth={CW.min}>
           <TableHeader>
             <Column isRowHeader width={CW.name} sticky="start">الاسم</Column>
             <Column width={CW.phone}>الهاتف</Column>

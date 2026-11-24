@@ -45,6 +45,9 @@ export function DetailPanel({ id, onClose }: { id: number; onClose: () => void }
         <div className="min-w-0">
           <div className="mb-1.5 flex items-center gap-1.5">
             <StatusBadge status={t.status} />
+            {t.customerSeq !== null && <Badge tone="outline"><span className="num">#{t.customerSeq}</span></Badge>}
+            {t.payout && <Badge tone={t.payout.status === 'sent' ? 'pos' : 'accent'}>{t.payout.status === 'sent' ? `تم الإرسال — دفعة ${t.payout.seq}` : `مسجلة — دفعة ${t.payout.seq}`}</Badge>}
+            {t.matched && <Badge tone="pos">مطابق</Badge>}
             {t.type !== 'payment' && <Badge tone="neg">{txnType[t.type]}</Badge>}
             {t.source === 'manual' && <Badge tone="outline">يدوية</Badge>}
           </div>

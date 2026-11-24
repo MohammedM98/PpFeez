@@ -31,7 +31,8 @@ export type TxnScope = { kind: 'inbox' } | { kind: 'customer'; customerId: numbe
 
 const TABS = {
   inbox: ['unassigned', 'excluded'] as TxnStatus[],
-  customer: ['pending_approval', 'approved'] as TxnStatus[],
+  // approved transfers live in the customer's statement (SPEC 6.5); this tab is what awaits approval
+  customer: ['pending_approval'] as TxnStatus[],
 };
 const PAGE_SIZE = 50;
 /** the payer column takes the remaining width, never less than this */
@@ -181,7 +182,8 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
   const ids = selectedRows.map((t) => t.id);
   return (
     <div className="flex flex-col">
-      <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as TxnStatus)} className="mb-4">
+      {/* a single list (the customer's "awaiting approval") needs no tabs of its own */}
+      <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as TxnStatus)} className={cx('mb-4', tabs.length === 1 && 'hidden')}>
         <TabList aria-label={inbox ? 'الوارد' : 'معاملات العميل'} className="flex gap-1 border-b border-line">
           {tabs.map((k) => (
             <Tab key={k} id={k} className={({ isSelected }) => cx(

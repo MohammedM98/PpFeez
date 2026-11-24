@@ -11,6 +11,7 @@ import type {
   RawEmail, RawEmailSummary, ParseStatus, RefundAlert, Settings, Transaction, TxnCounts,
   TxnFilter, TxnListResult, TxnPreview, TxnSort, Currency, ExcelExportResult, PullRange,
   DeleteEffect, ResetScope, ResetPreview, Money, TxnSearchHit, CustomerExcel, CustomerExcelItemRef, CustomerExcelPreview,
+  CustomerSummary, StatementFilter, StatementRow, PayoutSelection, PayoutPreparation, PayoutDetails, Payout, Minor,
 } from './contract';
 
 const KNOWN_CODES = new Set<ErrorCode>([
@@ -156,6 +157,24 @@ export const api = {
   excelExportLedger: (customerId: number, path: string, currency?: Currency, period?: Period) =>
     call<ExcelExportResult>('excel_export_ledger', { customerId, currency, period, path }),
   openPath: (path: string) => call<void>('open_path', { path }),
+
+  // statement and linked payouts (SPEC 4.8, 6.5)
+  customerSummary: (customerId: number, currency: Currency) => call<CustomerSummary>('customer_summary', { customerId, currency }),
+  customerStatement: (customerId: number, currency: Currency, filter?: StatementFilter) =>
+    call<{ openingBalanceMinor: Minor; rows: StatementRow[]; closingBalanceMinor: Minor }>('customer_statement', { customerId, currency, filter }),
+  payoutPrepare: (customerId: number, currency: Currency, selection: PayoutSelection) =>
+    call<PayoutPreparation>('payout_prepare', { customerId, currency, selection }),
+  payoutCreate: (input: {
+    customerId: number; currency: Currency; txnIds: number[]; returnedEntryIds: number[]; amountText?: string; differenceReason?: string;
+    date: string; details: PayoutDetails; status: 'draft' | 'sent'; matchedConfirmed: true;
+  }) => call<Payout>('payout_create', input),
+  payoutMarkSent: (payoutId: number, date?: string) => call<Payout>('payout_mark_sent', { payoutId, date }),
+  payoutUpdateDetails: (payoutId: number, details: PayoutDetails) => call<Payout>('payout_update_details', { payoutId, details }),
+  payoutCancel: (payoutId: number, reason: string) => call<Payout>('payout_cancel', { payoutId, reason }),
+  payoutsList: (customerId: number, currency: Currency) => call<Payout[]>('payouts_list', { customerId, currency }),
+  payoutDefaults: (customerId: number) => call<PayoutDetails | null>('payout_defaults', { customerId }),
+  payoutPlatformSuggestions: () => call<string[]>('payout_platform_suggestions'),
+  txnSetMatched: (ids: number[], matched: boolean) => call<BulkResult>('txn_set_matched', { ids, matched }),
 
   // the customer's Excel statement (SPEC 6.8.2)
   customerExcelGet: (customerId: number) => call<CustomerExcel | null>('customer_excel_get', { customerId }),

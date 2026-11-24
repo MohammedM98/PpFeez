@@ -22,13 +22,13 @@ export function locationLabel(l: TxnLocation): string {
 
 /** Where a transaction lives now (SPEC 6.3), from the transaction itself. */
 export function txnHref(t: Transaction): string {
-  if ((t.status === 'pending_approval' || t.status === 'approved') && t.customer) return `/customers/${t.customer.id}?tab=txns&sub=${t.status}&detail=${t.id}`;
+  if ((t.status === 'pending_approval' || t.status === 'approved') && t.customer) return `/customers/${t.customer.id}?tab=${t.status === 'approved' ? t.currency : 'pending'}&detail=${t.id}`;
   return `/transactions?tab=${t.status === 'excluded' ? 'excluded' : 'unassigned'}&detail=${t.id}`;
 }
 
 /** Where a result opens: the inbox tab, or the customer's transactions tab, on that row. */
 export function locationHref({ txn, location: l }: TxnSearchHit): string {
-  if (l.kind === 'customer') return `/customers/${l.customerId}?tab=txns&sub=${l.status}&detail=${txn.id}`;
+  if (l.kind === 'customer') return `/customers/${l.customerId}?tab=${l.status === 'approved' ? txn.currency : 'pending'}&detail=${txn.id}`;
   return `/transactions?tab=${l.kind === 'excluded' ? 'excluded' : 'unassigned'}&detail=${txn.id}`;
 }
 

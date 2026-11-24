@@ -59,6 +59,16 @@ export function txnCountLabel(n: number): string {
   return n >= 3 && n <= 10 ? `${n} معاملات` : `${n} معاملة`;
 }
 
+/** "حوالة واحدة" / "حوالتان" / "3 حوالات" / "11 حوالة" (SPEC 4.8 transfers). */
+export function transferCountLabel(n: number): string {
+  if (n === 1) return 'حوالة واحدة';
+  if (n === 2) return 'حوالتان';
+  return n >= 3 && n <= 10 ? `${n} حوالات` : `${n} حوالة`;
+}
+
+export const payoutStatus = { draft: 'مسجلة (لم تُرسل)', sent: 'تم الإرسال', cancelled: 'ملغاة' } as const;
+export const USDT_NETWORKS = ['TRC20', 'ERC20', 'BEP20', 'أخرى'];
+
 /** "آخر 7 أيام" / "آخر 30 يوماً": Arabic counted noun (3–10 plural, 11+ singular accusative). */
 export function daysLabel(n: number): string {
   if (n === 1) return 'آخر يوم';

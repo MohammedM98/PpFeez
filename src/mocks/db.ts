@@ -3,10 +3,10 @@
 // Money arithmetic here simulates the backend; UI code must never do this.
 import type {
   AppStatus, Customer, HistoryItem, LedgerEntry, Mailbox, PullRun, RawEmail, Settings,
-  Transaction, TxnAction, TxnStatus, TxnType, CommissionMode, PayoutMethod, LedgerType, BackupFile,
+  Transaction, TxnAction, TxnStatus, TxnType, CommissionMode, PayoutMethod, LedgerType, BackupFile, PayoutDetails,
 } from '@/lib/contract';
 
-export type TxnRow = Omit<Transaction, 'customer' | 'mailbox' | 'refundedBy' | 'allowedActions' | 'inCustomerExcel' | 'changedAfterExcel' | 'customerSeq' | 'matched' | 'payout'> & {
+export type TxnRow = Omit<Transaction, 'customer' | 'mailbox' | 'refundedBy' | 'allowedActions' | 'inCustomerExcel' | 'changedAfterExcel' | 'payout'> & {
   customerId: number | null;
   mailboxId: number | null;
   refundHandled: boolean; // refund alert confirmed or dismissed
@@ -15,7 +15,13 @@ export type CustomerRow = Omit<Customer, 'balances' | 'pendingCount' | 'excel'>;
 /** Stored entry; deletable/notDeletableReasonAr are computed when read (SPEC 4.7). */
 export type LedgerRow = Omit<LedgerEntry, 'deletable' | 'notDeletableReasonAr' | 'inCustomerExcel'>;
 /** SPEC 6.8.2: the customer's linked statement file and what was added to it. */
-export type CustomerExcelRow = { path: string; updatedAt: string | null; addToExcelByDefault: boolean; items: { kind: 'txn' | 'ledger'; id: number; currency: string; date: string }[] };
+/** SPEC 4.8: a payout covering numbered transfers. */
+export type PayoutRow = {
+  id: number; customerId: number; currency: string; seq: number; status: 'draft' | 'sent' | 'cancelled';
+  amountMinor: number; dueMinor: number; date: string; rangeLabel: string; details: PayoutDetails;
+  txnIds: number[]; ledgerIds: number[]; ledgerEntryId: number | null; createdAt: string; differenceReason: string | null;
+};
+export type CustomerExcelRow = { path: string; updatedAt: string | null; addToExcelByDefault: boolean; items: { kind: 'txn' | 'ledger' | 'payout'; id: number; currency: string; date: string }[] };
 
 export type Db = {
   status: AppStatus;
@@ -31,6 +37,9 @@ export type Db = {
   emails: RawEmail[];
   backups: BackupFile[];
   customerExcel: Record<number, CustomerExcelRow>;
+  payouts: PayoutRow[];
+  /** last transfer number given per `${customerId}:${currency}` (a number is never reused) */
+  txnSeq: Record<string, number>;
   seq: number;
 };
 
@@ -96,6 +105,8 @@ function mkTxn(s: Seed): TxnRow {
     needsReview: !!s.review,
     reviewReasonAr: s.review ?? null,
     holdStatus: s.hold ?? null,
+    customerSeq: null,
+    matched: false,
   };
 }
 
@@ -107,6 +118,7 @@ export function seed(): Db {
     mkCustomer(4, 'يوسف الحربي', '+966 55 301 7745', 1500, 'عمولة مخفّضة بالاتفاق'),
     mkCustomer(5, 'مريم خليل', null, 2500, null),
     mkCustomer(6, 'خالد العمري', '+962 79 640 1183', 2500, 'توقف عن العمل معنا', false, 300),
+    mkCustomer(8, 'هشام الزعبي', '+962 78 551 2040', 2000, 'يستلم USDT على Binance', true, 90),
   ];
 
   const T: Seed[] = [
@@ -139,6 +151,18 @@ export function seed(): Db {
     { id: 21, d: 3, h: 9, payer: 'Murat Arslan', email: 'murat.arslan@gmail.com', note: 'Web tasarım', cur: 'TRY', gross: 640000, fee: 26880, pp: '2PQ88120RT4419063', hold: 'on_hold' },
     { id: 18, d: 9, h: 13, payer: 'تحويل من بشير', email: '', note: null, cur: 'USD', gross: 15000, fee: 450, status: 'pending_approval', cust: 5, source: 'manual', pp: 'MANUAL-0018', myNote: 'أُدخلت يدوياً من لقطة شاشة' },
   ];
+  // هشام الزعبي (SPEC 4.8): numbered transfers, one payout sent (#1-3), one recorded but not sent (#4-5), the rest unpaid
+  const H: [number, string, string, number, number, string | null][] = [
+    [31, 'Liam Turner', 'liam.turner@gmail.com', 30000, 1200, 'Website build'],
+    [32, 'Ava Collins', 'ava.collins@outlook.com', 12500, 511, null],
+    [33, 'Mason Reed', 'mason.reed@yahoo.com', 48000, 1902, 'Logo + brand kit'],
+    [34, 'Liam Turner', 'liam.turner@gmail.com', 30000, 1200, 'Website build — part 2'],
+    [35, 'Chloe Price', 'chloe.price@icloud.com', 9000, 384, null],
+    [36, 'Ethan Brooks', 'ethan.brooks@gmail.com', 22000, 896, 'Consulting'],
+    [37, 'Ava Collins', 'ava.collins@outlook.com', 15000, 615, null],
+    [38, 'Noah Bennett', 'noah.bennett@proton.me', 64000, 2526, 'App MVP'],
+  ];
+  H.forEach(([id, payer, email, gross, fee, note], i) => T.push({ id, d: 34 - i * 3, h: 11, payer, email, note, cur: 'USD', gross, fee, status: 'approved', cust: 8, bps: 2000, pp: `8HZ${String(id).padStart(2, '0')}10${i}7LK9${i}2Q` }));
   const txns = T.map(mkTxn);
 
   const ledger: LedgerRow[] = [];
@@ -167,6 +191,27 @@ export function seed(): Db {
   push({ customerId: 2, currency: 'USD', type: 'payout', amountMinor: -15000, transactionId: null, reversesEntryId: null, payoutMethod: 'cash', reference: null, description: 'دفعة نقدية', entryDate: dayStr(5) });
   push({ customerId: 4, currency: 'TRY', type: 'payout', amountMinor: -400000, transactionId: null, reversesEntryId: null, payoutMethod: 'bank', reference: 'Ziraat 55120', description: 'تحويل بنكي', entryDate: dayStr(3) });
   push({ customerId: 5, currency: 'USD', type: 'payout', amountMinor: -20000, transactionId: null, reversesEntryId: null, payoutMethod: 'paypal', reference: null, description: 'إرسال عبر PayPal', entryDate: dayStr(2) });
+
+  // transfer numbers per customer and currency, in approval order (SPEC 4.8)
+  const txnSeq: Record<string, number> = {};
+  for (const t of txns.filter((x) => x.status === 'approved').sort((a, b) => (a.approvedAt! === b.approvedAt! ? a.id - b.id : a.approvedAt! < b.approvedAt! ? -1 : 1))) {
+    const k = `${t.customerId}:${t.currency}`;
+    t.customerSeq = txnSeq[k] = (txnSeq[k] ?? 0) + 1;
+  }
+  // هشام الزعبي: payout 1 sent (USDT on Binance, TRC20) for #1-3, payout 2 recorded by bank for #4-5
+  const hisham = txns.filter((t) => t.customerId === 8).sort((a, b) => a.customerSeq! - b.customerSeq!);
+  const due = (xs: TxnRow[]) => xs.reduce((n, t) => n + (t.customerAmountMinor ?? 0), 0);
+  const p1 = hisham.slice(0, 3), p2 = hisham.slice(3, 5);
+  for (const t of p1) t.matched = true;
+  const p1Entry = push({ customerId: 8, currency: 'USD', type: 'payout', amountMinor: -due(p1), transactionId: null, reversesEntryId: null, payoutMethod: 'usdt', reference: '0x7c2f19e4a0b38d55a1f2c09e4b7d9a41', description: 'دفعة 1 (1-3)', entryDate: dayStr(20) });
+  const payouts: PayoutRow[] = [
+    { id: 1, customerId: 8, currency: 'USD', seq: 1, status: 'sent', amountMinor: due(p1), dueMinor: due(p1), date: dayStr(20), rangeLabel: '(1-3)',
+      details: { method: 'usdt', platform: 'Binance', network: 'TRC20', destination: 'TQx7mWn2r8VbP3kJd9sHe4L1aZc6Yk9Lm', reference: '0x7c2f19e4a0b38d55a1f2c09e4b7d9a41', note: null },
+      txnIds: p1.map((t) => t.id), ledgerIds: [], ledgerEntryId: p1Entry.id, createdAt: daysAgo(20), differenceReason: null },
+    { id: 2, customerId: 8, currency: 'USD', seq: 2, status: 'draft', amountMinor: due(p2), dueMinor: due(p2), date: dayStr(4), rangeLabel: '(4-5)',
+      details: { method: 'bank', platform: 'بنك الاتحاد', network: null, destination: 'JO94 UBSI 1030 0000 0012 3456 7890 12', reference: null, note: 'بانتظار تأكيد العميل للحساب' },
+      txnIds: p2.map((t) => t.id), ledgerIds: [], ledgerEntryId: null, createdAt: daysAgo(4), differenceReason: null },
+  ];
 
   const emails: RawEmail[] = [];
   for (const t of txns.filter((x) => x.rawEmailId)) {
@@ -226,6 +271,8 @@ export function seed(): Db {
       { path: 'D:\\Backups\\PpFeez\\ppfeez-2026-11-19-2002.db', createdAt: daysAgo(4, 20, 2), sizeBytes: 1_392_640 },
     ],
     // علي حسن already has a statement with his opening balance and one transfer in it (SPEC 6.8.2)
+    payouts,
+    txnSeq,
     customerExcel: {
       2: {
         path: 'D:\\العملاء\\كشف حساب - علي حسن.xlsx', updatedAt: daysAgo(3, 18, 5), addToExcelByDefault: true,
