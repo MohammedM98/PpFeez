@@ -219,6 +219,8 @@ impl Core {
             for &id in &existing {
                 let txn = snapshot(&tx, "paypal_transactions", "id = ?1", &[&id])?;
                 let entries = snapshot(&tx, "ledger_entries", "paypal_transaction_id = ?1", &[&id])?;
+                let entry_ids: Vec<i64> = entries.iter().filter_map(|e| e["id"].as_i64()).collect();
+                self.excel_before_delete(&tx, Some(id), &entry_ids)?;
                 tx.execute("DELETE FROM ledger_entries WHERE paypal_transaction_id = ?1", params![id])?;
                 let raw: Option<i64> =
                     tx.query_row("SELECT raw_email_id FROM paypal_transactions WHERE id = ?1", params![id], |r| {
@@ -368,6 +370,7 @@ impl Core {
             for id in &ids {
                 snaps.extend(snapshot(&tx, "ledger_entries", "id = ?1", &[id])?);
             }
+            self.excel_before_delete(&tx, None, &ids)?;
             // Newest first: a reversal references the entry it reverses.
             for id in ids.iter().rev() {
                 tx.execute("DELETE FROM ledger_entries WHERE id = ?1", params![id])?;

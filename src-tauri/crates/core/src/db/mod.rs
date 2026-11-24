@@ -13,6 +13,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0005_excel_exported.sql"),
     include_str!("migrations/0006_payouts.sql"),
     include_str!("migrations/0007_customer_excel.sql"),
+    include_str!("migrations/0008_excel_sync.sql"),
 ];
 
 pub fn schema_version() -> i64 {

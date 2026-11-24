@@ -75,7 +75,8 @@ pub async fn open_path(app: AppHandle, state: State<'_, AppState>, path: PathBuf
 // ===== Customer Excel statement (SPEC 6.8.2) =====
 
 use ppfeez_core::excel::customer::{
-    CustomerExcel, CustomerExcelAdded, CustomerExcelCreated, CustomerExcelPreview, ItemRef,
+    CustomerExcel, CustomerExcelAdded, CustomerExcelCreated, CustomerExcelPreview, CustomerExcelSent, ItemRef,
+    UnexportedSummary,
 };
 
 #[tauri::command]
@@ -139,4 +140,36 @@ pub async fn customer_excel_add(
 ) -> AppResult<CustomerExcelAdded> {
     state.core.guard()?;
     state.core.customer_excel_add(customer_id, &items)
+}
+
+/// SPEC 6.8.3: automatic sync of the customer's statement on / off.
+#[tauri::command]
+pub async fn customer_excel_set_auto(
+    state: State<'_, AppState>,
+    customer_id: i64,
+    auto_sync: bool,
+) -> AppResult<CustomerExcel> {
+    state.core.guard()?;
+    state.core.customer_excel_set_auto(customer_id, auto_sync)
+}
+
+/// SPEC 6.8.3: write everything not yet in the customer's statement (statement order).
+#[tauri::command]
+pub async fn customer_excel_send_unexported(
+    state: State<'_, AppState>,
+    customer_id: i64,
+) -> AppResult<CustomerExcelSent> {
+    state.core.guard()?;
+    let core = state.core.clone();
+    tauri::async_runtime::spawn_blocking(move || core.customer_excel_send_unexported(customer_id))
+        .await
+        .map_err(runtime)?
+}
+
+/// SPEC 6.8.3: customers whose statement misses lines (dashboard).
+#[tauri::command]
+pub async fn customer_excel_unexported_summary(state: State<'_, AppState>) -> AppResult<Vec<UnexportedSummary>> {
+    state.core.guard()?;
+    let core = state.core.clone();
+    tauri::async_runtime::spawn_blocking(move || core.customer_excel_unexported_summary()).await.map_err(runtime)?
 }

@@ -9,6 +9,21 @@ use state::AppState;
 use std::sync::Arc;
 use tauri::{Manager, RunEvent};
 
+/// SPEC 6.8.3: writes the lines that money operations queued to the customers' statements, after
+/// those operations have returned; tells the UI with `customer-excel://synced`.
+fn excel_sync_worker(app: tauri::AppHandle, core: Arc<Core>) {
+    use tauri::Emitter;
+    std::thread::Builder::new()
+        .name("customer-excel-sync".into())
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            for ev in core.customer_excel_sync_due() {
+                let _ = app.emit("customer-excel://synced", &ev);
+            }
+        })
+        .expect("start the Excel sync thread");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -23,7 +38,9 @@ pub fn run() {
             let version = app.package_info().version.to_string();
             let core = Core::open(CoreConfig::production(&data_dir, &version))
                 .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;
-            app.manage(AppState { core: Arc::new(core) });
+            let core = Arc::new(core);
+            app.manage(AppState { core: core.clone() });
+            excel_sync_worker(app.handle().clone(), core);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -129,6 +146,9 @@ pub fn run() {
             commands::excel::customer_excel_set_default,
             commands::excel::customer_excel_preview,
             commands::excel::customer_excel_add,
+            commands::excel::customer_excel_set_auto,
+            commands::excel::customer_excel_send_unexported,
+            commands::excel::customer_excel_unexported_summary,
         ])
         .build(tauri::generate_context!())
         .expect("error while building PpFeez");
