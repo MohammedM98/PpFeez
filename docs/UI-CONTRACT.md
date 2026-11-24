@@ -80,8 +80,6 @@ export type Settings = {
   excelLastExportedAt: IsoDate | null;
   excelUpdateOnClose: boolean;
   excelMode: 'append' | 'rewrite';    // SPEC §6.8.1، افتراضي 'append'
-  excelRecentFiles: string[];         // SPEC §6.8.2، آخر 5 ملفات (القلب يحدّثها)
-  excelAppendColumns: ExcelColumn[];  // آخر اختيار أعمدة لورقة جديدة
   autoCheckUpdates: boolean;          // SPEC §6.9، افتراضي true
   extraPaypalDomains: string[];       // SPEC §5.6، نطاقات يضيفها المدير
   builtinPaypalDomains: string[];     // للقراءة فقط (update_settings يتجاهله)
@@ -123,6 +121,7 @@ export type Customer = {
   balances: Money[];          // رصيد لكل عملة (سالب = عليه)
   pendingCount: number;       // معاملات بانتظار الموافقة
   createdAt: IsoDate;
+  excel: CustomerExcel | null; // SPEC §6.8.2
 };
 export type CustomerInput = {
   name: string; phone?: string | null; defaultCommissionBps: number; notes?: string | null; isActive?: boolean;
@@ -170,6 +169,8 @@ export type Transaction = {
   needsReview: boolean;          // SPEC §5.3: من المحلّل العام، لا يُعتمد قبل التأكيد
   reviewReasonAr: string | null;
   holdStatus: 'pending_echeck' | 'on_hold' | null;
+  inCustomerExcel: boolean;      // SPEC §6.8.2
+  changedAfterExcel: boolean;    // أُضيفت ثم أُلغي اعتمادها
 };
 export type TxnAction =
   | 'assign' | 'unassign' | 'set_fee' | 'set_commission' | 'approve'
@@ -259,6 +260,7 @@ export type LedgerEntry = {
   reversesEntryId: number | null;
   reversedByEntryId: number | null; // إن كان معكوساً => اعرضه مشطوباً
   deletable: boolean;               // SPEC §4.7
+  inCustomerExcel: boolean;         // SPEC §6.8.2
   notDeletableReasonAr: string | null;
   payoutMethod: PayoutMethod | null;
   reference: string | null;
@@ -358,24 +360,23 @@ export type ExcelExportResult = { path: string; sheets: number; rows: number; ex
 // excel_export_transactions({ filter: TxnFilter, sort: TxnSort, path }): ExcelExportResult
 // excel_export_ledger({ customerId, currency?: Currency, period?: Period, path }): ExcelExportResult  // بلا currency => ورقة لكل عملة
 
-// ===== إضافة معاملات مختارة إلى أي ملف (SPEC §6.8.2) =====
-export type ExcelColumn =
-  | 'date' | 'paypalTxnId' | 'type' | 'payerName' | 'payerEmail' | 'payerNote' | 'currency'
-  | 'gross' | 'fee' | 'net' | 'customer' | 'commissionPct' | 'commission' | 'customerAmount'
-  | 'status' | 'mailbox' | 'note';
-export type ExcelSheetInfo = {
-  name: string;
-  state: 'has_program_columns' | 'unknown_columns' | 'empty';
-  recognizedColumns: ExcelColumn[];
-  headerRow: number | null;          // 1-based
-  dataRows: number;
-  existingTxnIds: number;            // عدد أرقام PayPal الموجودة (للمعاينة)
+// ===== ملف Excel للعميل (SPEC §6.8.2) =====
+export type CustomerExcel = { path: string; updatedAt: IsoDate | null; exists: boolean; addToExcelByDefault: boolean };
+export type CustomerExcelItemRef = { kind: 'txn' | 'ledger'; id: number };
+export type CustomerExcelPreview = {
+  toAdd: { kind: 'txn' | 'ledger'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];
+  duplicates: { kind: 'txn' | 'ledger'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];
+  notAllowed: { kind: 'txn' | 'ledger'; id: number; reasonAr: string }[];   // غير معتمدة، قيد اعتماد، عميل آخر...
+  olderThanLastRow: number;
 };
-// excel_inspect({ path }): { path: string; sheets: ExcelSheetInfo[] }      throws file_locked | export_failed (ليس xlsx)
-// excel_append_preview({ path, sheet: string, txnIds: number[] }): { toAdd: number; duplicates: number }
-// excel_append_transactions({ path, target: { kind: 'existing'; sheet: string } | { kind: 'new'; sheet: string },
-//   txnIds: number[], columns?: ExcelColumn[], skipDuplicates: boolean }):
-//   { path: string; sheet: string; added: number; skippedDuplicates: number }   throws file_locked | excel_layout | export_failed
+// customer_excel_get({ customerId }): CustomerExcel | null
+// customer_excel_create({ customerId, path, includeExisting: boolean }): { path: string; added: number; sheets: string[] }
+// customer_excel_link({ customerId, path }): CustomerExcel            throws excel_layout (ليس كشفاً لهذا العميل)
+// customer_excel_unlink({ customerId }): void
+// customer_excel_set_default({ customerId, addToExcelByDefault: boolean }): CustomerExcel   // خيار نافذتي الاعتماد والدفعة
+// customer_excel_preview({ customerId, items: CustomerExcelItemRef[] }): CustomerExcelPreview
+// customer_excel_add({ customerId, items: CustomerExcelItemRef[] }): { path: string; added: number; skippedDuplicates: number; sheets: string[] }
+//   throws no_export_path (لا ملف مرتبط) | file_locked | excel_layout | export_failed
 // open_path({ path }): void                             // فتح الملف في Excel
 ```
 
