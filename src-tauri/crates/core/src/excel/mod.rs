@@ -32,6 +32,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 mod append;
+pub mod customer;
 pub mod model;
 pub mod xlsx;
 

@@ -11,4 +11,5 @@ pub mod emails;
 pub mod excel;
 pub mod ledger;
 pub mod mail;
+pub mod payouts;
 pub mod transactions;

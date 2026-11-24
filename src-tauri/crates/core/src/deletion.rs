@@ -204,10 +204,12 @@ impl Core {
                     params![id],
                     |r| r.get(0),
                 )?;
-                if found {
-                    v.push(id);
-                } else {
+                if !found {
                     result.push(id, Err(AppError::not_found("المعاملة")));
+                } else if let Some(reason) = payout_block(&conn, id)? {
+                    result.push(id, Err(AppError::new(ErrorCode::NotDeletable, reason)));
+                } else {
+                    v.push(id);
                 }
             }
             v
@@ -288,11 +290,13 @@ impl Core {
                 let v = stmt.query_map(params![id], |r| r.get(0))?.collect::<Result<_, _>>()?;
                 v
             };
+            clear_customer_extras(&tx, Some(id))?;
             tx.execute("DELETE FROM ledger_entries WHERE customer_id = ?1", params![id])?;
+            tx.execute("DELETE FROM payouts WHERE customer_id = ?1", params![id])?;
             tx.execute(
                 "UPDATE paypal_transactions SET status = 'unassigned', customer_id = NULL, commission_mode = NULL,
                  commission_bps = NULL, commission_minor = NULL, customer_amount_minor = NULL, assigned_at = NULL,
-                 approved_at = NULL, updated_at = ?1 WHERE customer_id = ?2",
+                 approved_at = NULL, customer_seq = NULL, matched = 0, updated_at = ?1 WHERE customer_id = ?2",
                 params![now, id],
             )?;
             tx.execute("DELETE FROM customers WHERE id = ?1", params![id])?;
@@ -323,9 +327,17 @@ impl Core {
         if let Some(reason) = not_deletable_reason(e.kind, txn_type.as_deref()) {
             return Err(AppError::new(ErrorCode::NotDeletable, reason));
         }
+        // Linked payouts (SPEC §4.8) are cancelled, not deleted from the ledger.
+        if let Some(reason) = e.not_deletable_reason_ar.clone() {
+            return Err(AppError::new(ErrorCode::NotDeletable, reason));
+        }
         let mut set = vec![];
         if let Some(rev) = e.reversed_by_entry_id {
-            set.push(get_entry(conn, rev)?);
+            let r = get_entry(conn, rev)?;
+            if let Some(reason) = r.not_deletable_reason_ar.clone() {
+                return Err(AppError::new(ErrorCode::NotDeletable, reason));
+            }
+            set.push(r);
         }
         set.insert(0, e);
         Ok(set)
@@ -445,16 +457,26 @@ impl Core {
             let tx = conn.unchecked_transaction()?;
             with_ledger_token(&tx, || {
                 if scope.customers {
+                    clear_customer_extras(&tx, None)?;
                     tx.execute("DELETE FROM ledger_entries", [])?;
+                    tx.execute("DELETE FROM payouts", [])?;
                     tx.execute(
                         "UPDATE paypal_transactions SET status = CASE WHEN status = 'excluded' THEN 'excluded' ELSE 'unassigned' END,
                          customer_id = NULL, commission_mode = NULL, commission_bps = NULL, commission_minor = NULL,
-                         customer_amount_minor = NULL, assigned_at = NULL, approved_at = NULL, updated_at = ?1",
+                         customer_amount_minor = NULL, assigned_at = NULL, approved_at = NULL, customer_seq = NULL,
+                         matched = 0, updated_at = ?1",
                         params![now],
                     )?;
                     tx.execute("DELETE FROM customers", [])?;
                 }
                 if scope.transactions {
+                    // Payouts keep their own entries; their transfer / return links go with the transfers.
+                    tx.execute(
+                        "DELETE FROM payout_items WHERE item_kind = 'txn' OR item_id IN
+                         (SELECT id FROM ledger_entries WHERE paypal_transaction_id IS NOT NULL)",
+                        [],
+                    )?;
+                    tx.execute("DELETE FROM customer_excel_items WHERE item_kind IN ('txn','ledger')", [])?;
                     tx.execute("DELETE FROM ledger_entries WHERE paypal_transaction_id IS NOT NULL", [])?;
                     tx.execute("DELETE FROM paypal_transactions", [])?;
                     tx.execute("DELETE FROM raw_emails", [])?;
@@ -501,4 +523,36 @@ fn preview_counts(p: &ResetPreview) -> Value {
         "transactions": p.transactions, "rawEmails": p.raw_emails, "pullRuns": p.pull_runs,
         "customers": p.customers, "ledgerEntries": p.ledger_entries, "mailboxes": p.mailboxes,
     })
+}
+
+/// Why a transfer cannot be deleted: a draft/sent payout covers it or one of its entries (SPEC §4.8).
+fn payout_block(conn: &Connection, txn_id: i64) -> AppResult<Option<String>> {
+    if let Some(p) = crate::transactions::payout_of(conn, txn_id)? {
+        return Ok(Some(format!("الحوالة ضمن الدفعة {}؛ ألغِ الدفعة أولاً", p.seq)));
+    }
+    let seq: Option<i64> = conn
+        .query_row(
+            "SELECT p.payout_seq FROM ledger_entries e JOIN payout_items i ON i.item_kind = 'ledger' AND i.item_id = e.id
+             JOIN payouts p ON p.id = i.payout_id
+             WHERE e.paypal_transaction_id = ?1 AND p.status <> 'cancelled' LIMIT 1",
+            params![txn_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(seq.map(|n| format!("قيد هذه المعاملة ضمن الدفعة {n}؛ ألغِ الدفعة أولاً")))
+}
+
+/// Payout links, numbering, defaults and Excel tracking of one customer (or all); the caller
+/// deletes the ledger entries and payouts afterwards (payouts point at entries and back).
+fn clear_customer_extras(tx: &Connection, customer: Option<i64>) -> AppResult<()> {
+    let filter = if customer.is_some() { "WHERE customer_id = ?1" } else { "WHERE ?1 IS NULL OR 1=1" };
+    tx.execute(
+        &format!("DELETE FROM payout_items WHERE payout_id IN (SELECT id FROM payouts {filter})"),
+        params![customer],
+    )?;
+    tx.execute(&format!("UPDATE payouts SET ledger_entry_id = NULL {filter}"), params![customer])?;
+    for table in ["customer_seq_counters", "customer_payout_defaults", "customer_excel_items", "customer_excel"] {
+        tx.execute(&format!("DELETE FROM {table} {filter}"), params![customer])?;
+    }
+    Ok(())
 }

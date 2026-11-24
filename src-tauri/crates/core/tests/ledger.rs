@@ -8,6 +8,9 @@ use rusqlite::Connection;
 
 fn payout(currency: &str, amount: &str, date: &str, confirm: bool) -> PayoutInput {
     PayoutInput {
+        platform: None,
+        network: None,
+        destination: None,
         currency: currency.into(),
         amount_text: amount.into(),
         entry_date: date.into(),

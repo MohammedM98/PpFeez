@@ -69,6 +69,9 @@ fn backup_and_restore_round_trip() {
         .ledger_add_payout(
             c.id,
             PayoutInput {
+                platform: None,
+                network: None,
+                destination: None,
                 currency: "USD".into(),
                 amount_text: "75".into(),
                 entry_date: "2026-11-23".into(),
@@ -206,6 +209,9 @@ fn dashboard_numbers() {
         .ledger_add_payout(
             b.id,
             PayoutInput {
+                platform: None,
+                network: None,
+                destination: None,
                 currency: "USD".into(),
                 amount_text: "50".into(),
                 entry_date: "2026-11-23".into(),

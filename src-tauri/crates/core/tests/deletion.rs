@@ -31,6 +31,9 @@ fn payout(h: &common::Harness, customer: i64, amount: &str) -> i64 {
         .ledger_add_payout(
             customer,
             PayoutInput {
+                platform: None,
+                network: None,
+                destination: None,
                 currency: "USD".into(),
                 amount_text: amount.into(),
                 entry_date: "2026-11-23".into(),

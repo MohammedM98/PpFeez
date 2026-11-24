@@ -18,6 +18,7 @@ pub mod ledger;
 pub mod lock;
 pub mod mail;
 pub mod money;
+pub mod payouts;
 pub mod paypal;
 pub mod refunds;
 pub mod settings;

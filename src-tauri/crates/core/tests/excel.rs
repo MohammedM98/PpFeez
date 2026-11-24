@@ -128,6 +128,9 @@ fn update_twice_rewrites_the_same_path_with_new_data() {
         .ledger_add_payout(
             cid,
             PayoutInput {
+                platform: None,
+                network: None,
+                destination: None,
                 currency: "USD".into(),
                 amount_text: "20".into(),
                 entry_date: "2026-11-23".into(),
@@ -232,6 +235,9 @@ fn ledger_export_matches_running_balance() {
         .ledger_add_payout(
             cid,
             PayoutInput {
+                platform: None,
+                network: None,
+                destination: None,
                 currency: "USD".into(),
                 amount_text: "30".into(),
                 entry_date: "2026-11-24".into(),

@@ -98,7 +98,10 @@ fn full_happy_path_assign_fee_approve() {
 
     let t = h.core.txn_approve(t.id).unwrap();
     assert_eq!(t.status, TxnStatus::Approved);
-    assert_eq!(t.allowed_actions, vec![TxnAction::Unapprove, TxnAction::EditNote, TxnAction::Delete]);
+    assert_eq!(
+        t.allowed_actions,
+        vec![TxnAction::Unapprove, TxnAction::SetMatched, TxnAction::EditNote, TxnAction::Delete]
+    );
     assert_eq!(h.balance(ahmed.id, "USD"), 7125);
 
     let view = h.core.ledger_entries(ahmed.id, "USD", None).unwrap();

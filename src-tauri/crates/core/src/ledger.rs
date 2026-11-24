@@ -46,10 +46,12 @@ impl LedgerType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PayoutMethod {
-    Cash,
-    Bank,
     Usdt,
+    Bank,
+    Cash,
     Paypal,
+    Wise,
+    WesternUnion,
     Other,
 }
 
@@ -60,6 +62,8 @@ impl PayoutMethod {
             PayoutMethod::Bank => "bank",
             PayoutMethod::Usdt => "usdt",
             PayoutMethod::Paypal => "paypal",
+            PayoutMethod::Wise => "wise",
+            PayoutMethod::WesternUnion => "western_union",
             PayoutMethod::Other => "other",
         }
     }
@@ -70,6 +74,8 @@ impl PayoutMethod {
             "bank" => Some(PayoutMethod::Bank),
             "usdt" => Some(PayoutMethod::Usdt),
             "paypal" => Some(PayoutMethod::Paypal),
+            "wise" => Some(PayoutMethod::Wise),
+            "western_union" => Some(PayoutMethod::WesternUnion),
             "other" => Some(PayoutMethod::Other),
             _ => None,
         }
@@ -81,6 +87,8 @@ impl PayoutMethod {
             PayoutMethod::Bank => "تحويل بنكي",
             PayoutMethod::Usdt => "USDT",
             PayoutMethod::Paypal => "PayPal",
+            PayoutMethod::Wise => "Wise",
+            PayoutMethod::WesternUnion => "Western Union",
             PayoutMethod::Other => "أخرى",
         }
     }
@@ -107,6 +115,15 @@ pub struct LedgerEntry {
     /// SPEC §4.7: whether `ledger_delete_entry` accepts this entry.
     pub deletable: bool,
     pub not_deletable_reason_ar: Option<String>,
+    /// SPEC §6.8.2: in the customer's linked Excel statement.
+    pub in_customer_excel: bool,
+    /// SPEC §4.8: the linked payout this entry records (not part of the contract).
+    #[serde(skip)]
+    pub payout_id: Option<i64>,
+    #[serde(skip)]
+    pub payout_platform: Option<String>,
+    #[serde(skip)]
+    pub payout_network: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -142,6 +159,12 @@ pub struct PayoutInput {
     pub entry_date: String,
     pub method: PayoutMethod,
     #[serde(default)]
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub network: Option<String>,
+    #[serde(default)]
+    pub destination: Option<String>,
+    #[serde(default)]
     pub reference: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
@@ -167,7 +190,13 @@ pub struct AdjustmentInput {
 }
 
 const SELECT: &str = "SELECT e.*, (SELECT r.id FROM ledger_entries r WHERE r.reverses_entry_id = e.id) AS reversed_by,
-       (SELECT t.type FROM paypal_transactions t WHERE t.id = e.paypal_transaction_id) AS txn_type
+       (SELECT t.type FROM paypal_transactions t WHERE t.id = e.paypal_transaction_id) AS txn_type,
+       (SELECT o.payout_id FROM ledger_entries o WHERE o.id = e.reverses_entry_id) AS reversed_payout_id,
+       (SELECT p.payout_seq FROM payout_items i JOIN payouts p ON p.id = i.payout_id
+         WHERE i.item_kind = 'ledger' AND i.item_id = e.id AND p.status <> 'cancelled' LIMIT 1) AS in_payout_seq,
+       EXISTS(SELECT 1 FROM customer_excel_items x JOIN customer_excel c
+                ON c.customer_id = x.customer_id AND c.file_path = x.file_path
+              WHERE x.customer_id = e.customer_id AND x.item_kind = 'ledger' AND x.item_id = e.id) AS in_excel
      FROM ledger_entries e";
 
 /// Credits and unapprove reversals of a payment are managed from the transaction (SPEC §4.7).
@@ -181,12 +210,36 @@ pub fn not_deletable_reason(kind: LedgerType, txn_type: Option<&str>) -> Option<
     }
 }
 
+/// Entries tied to a linked payout (SPEC §4.8) are managed from the payout.
+fn payout_reason(
+    payout_id: Option<i64>,
+    reversed_payout_id: Option<i64>,
+    in_payout_seq: Option<i64>,
+) -> Option<String> {
+    if payout_id.is_some() {
+        return Some("قيد دفعة مرتبطة بحوالات: يُدار من الدفعة (إلغاء الدفعة)".into());
+    }
+    if reversed_payout_id.is_some() {
+        return Some("قيد إلغاء دفعة مرتبطة بحوالات".into());
+    }
+    in_payout_seq.map(|n| format!("القيد ضمن الدفعة {n}؛ ألغِ الدفعة أولاً"))
+}
+
 fn entry_from_row(r: &Row<'_>) -> rusqlite::Result<LedgerEntry> {
     let kind = LedgerType::parse(&r.get::<_, String>("type")?);
-    let reason = not_deletable_reason(kind, r.get::<_, Option<String>>("txn_type")?.as_deref());
+    let payout_id: Option<i64> = r.get("payout_id")?;
+    let reason = not_deletable_reason(kind, r.get::<_, Option<String>>("txn_type")?.as_deref())
+        .map(str::to_string)
+        .or_else(|| {
+            payout_reason(payout_id, r.get("reversed_payout_id").ok().flatten(), r.get("in_payout_seq").ok().flatten())
+        });
     Ok(LedgerEntry {
         deletable: reason.is_none(),
-        not_deletable_reason_ar: reason.map(str::to_string),
+        not_deletable_reason_ar: reason,
+        in_customer_excel: r.get::<_, Option<bool>>("in_excel").ok().flatten().unwrap_or(false),
+        payout_id,
+        payout_platform: r.get("payout_platform")?,
+        payout_network: r.get("payout_network")?,
         id: r.get("id")?,
         customer_id: r.get("customer_id")?,
         currency: r.get("currency")?,
@@ -364,7 +417,8 @@ impl Core {
         let tx = conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO ledger_entries (customer_id, currency, type, amount_minor, payout_method, reference,
-             description, entry_date, created_at) VALUES (?1, ?2, 'payout', ?3, ?4, ?5, ?6, ?7, ?8)",
+             description, entry_date, created_at, payout_platform, payout_network, payout_destination)
+             VALUES (?1, ?2, 'payout', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 customer_id,
                 currency,
@@ -373,7 +427,10 @@ impl Core {
                 clean(input.reference.clone()),
                 description,
                 entry_date,
-                now
+                now,
+                clean(input.platform.clone()),
+                clean(input.network.clone()),
+                clean(input.destination.clone())
             ],
         )?;
         let id = tx.last_insert_rowid();

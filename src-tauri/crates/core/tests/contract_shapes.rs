@@ -61,6 +61,11 @@ const TRANSACTION: &[&str] = &[
     "needsReview",
     "reviewReasonAr",
     "holdStatus",
+    "inCustomerExcel",
+    "changedAfterExcel",
+    "customerSeq",
+    "matched",
+    "payout",
 ];
 const CUSTOMER: &[&str] =
     &["id", "name", "phone", "defaultCommissionBps", "notes", "isActive", "balances", "pendingCount", "createdAt"];
@@ -81,6 +86,7 @@ const LEDGER_ENTRY: &[&str] = &[
     "createdAt",
     "deletable",
     "notDeletableReasonAr",
+    "inCustomerExcel",
 ];
 const PULL_RUN: &[&str] = &[
     "range",
@@ -532,4 +538,102 @@ fn inbox_group() {
     assert_eq!(keys(&v["txn"]), set(TRANSACTION));
     assert_eq!(v["location"], json!({ "kind": "inbox" }));
     assert_eq!(v["txn"]["id"], json!(t.id));
+}
+
+#[test]
+fn payouts_group() {
+    use ppfeez_core::payouts::{CreateStatus, PayoutCreateInput, PayoutSelection, StatementFilter};
+    let h = harness();
+    let c = h.customer("Ali", 2500);
+    let t = h.manual("USD", "100", Some("5"));
+    h.core.txn_assign(t.id, c.id, None, true).unwrap();
+    let t2 = h.manual("USD", "20", Some("0"));
+    h.core.txn_assign(t2.id, c.id, None, true).unwrap();
+    let prep = h.core.payout_prepare(c.id, "USD", &PayoutSelection::Unpaid).unwrap();
+    assert_keys(
+        &prep,
+        &[
+            "included",
+            "returned",
+            "alreadyPaid",
+            "excludedHeld",
+            "missingSeqs",
+            "foundCount",
+            "countedCount",
+            "returnedCount",
+            "grossMinor",
+            "netPaypalMinor",
+            "commissionMinor",
+            "dueMinor",
+            "rangeLabel",
+        ],
+    );
+    let input: PayoutCreateInput = serde_json::from_value(json!({
+        "currency": "USD", "txnIds": [t.id], "returnedEntryIds": [], "date": "2026-11-24",
+        "details": { "method": "western_union", "platform": "WU", "reference": "MTCN 1" },
+        "status": "sent", "matchedConfirmed": true
+    }))
+    .unwrap();
+    let p = h.core.payout_create(c.id, input).unwrap();
+    let v = assert_keys(
+        &p,
+        &[
+            "id",
+            "customerId",
+            "currency",
+            "seq",
+            "status",
+            "amountMinor",
+            "dueMinor",
+            "date",
+            "rangeLabel",
+            "details",
+            "txnCount",
+            "cumulativePaidMinor",
+            "ledgerEntryId",
+            "itemIds",
+            "inCustomerExcel",
+            "createdAt",
+        ],
+    );
+    assert_eq!(v["status"], json!("sent"));
+    assert_eq!(
+        v["details"],
+        json!({ "method": "western_union", "platform": "WU", "network": null,
+        "destination": null, "reference": "MTCN 1", "note": null })
+    );
+    assert_eq!(v["itemIds"], json!({ "txns": [t.id], "ledger": [] }));
+    let _ = CreateStatus::Draft;
+    let txn = serde_json::to_value(h.core.txn_get(t.id).unwrap()).unwrap();
+    assert_eq!(txn["payout"], json!({ "id": p.id, "seq": 1, "status": "sent" }));
+    assert_eq!(txn["customerSeq"], json!(1));
+    assert_keys(
+        &h.core.customer_summary(c.id, "USD").unwrap(),
+        &[
+            "currency",
+            "netCompletedMinor",
+            "sentMinor",
+            "remainingMinor",
+            "notPaidCount",
+            "grossBeforeCommissionMinor",
+            "commissionMinor",
+            "txnCount",
+            "paidCount",
+        ],
+    );
+    let st = h.core.customer_statement(c.id, "USD", &StatementFilter::default()).unwrap();
+    let v = assert_keys(&st, &["openingBalanceMinor", "rows", "closingBalanceMinor"]);
+    let kinds: Vec<&str> = v["rows"].as_array().unwrap().iter().map(|r| r["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, vec!["txn", "txn", "payout"]);
+    assert!(v["rows"][2]["payout"].is_object() && v["rows"][2]["runningBalanceMinor"].is_number());
+    let bulk = serde_json::to_value(h.core.txn_set_matched(&[t.id], true).unwrap()).unwrap();
+    assert_eq!(bulk, json!({ "ok": [t.id], "failed": [] }));
+    assert!(h
+        .core
+        .txn_get(t.id)
+        .unwrap()
+        .allowed_actions
+        .iter()
+        .any(|a| serde_json::to_value(a).unwrap() == "set_matched"));
+    assert_eq!(serde_json::to_value(h.core.payout_defaults(c.id).unwrap()).unwrap()["method"], json!("western_union"));
 }

@@ -85,6 +85,7 @@ pub enum TxnAction {
     ConfirmReview,
     EditDetails,
     Delete,
+    SetMatched,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -161,6 +162,23 @@ pub struct Transaction {
     pub needs_review: bool,
     pub review_reason_ar: Option<String>,
     pub hold_status: Option<HoldStatus>,
+    /// SPEC §6.8.2: tracked in the customer's linked Excel statement.
+    pub in_customer_excel: bool,
+    /// Added to the customer's Excel statement, then unapproved.
+    pub changed_after_excel: bool,
+    /// SPEC §4.8: transfer number (#) of the customer for this currency, while approved.
+    pub customer_seq: Option<i64>,
+    pub matched: bool,
+    /// The (draft or sent) payout covering this transfer.
+    pub payout: Option<TxnPayoutRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TxnPayoutRef {
+    pub id: i64,
+    pub seq: i64,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -406,6 +424,8 @@ pub struct TxnRow {
     pub needs_review: bool,
     pub review_reason: Option<String>,
     pub hold_status: Option<HoldStatus>,
+    pub customer_seq: Option<i64>,
+    pub matched: bool,
 }
 
 impl TxnRow {
@@ -439,6 +459,8 @@ impl TxnRow {
             needs_review: r.get::<_, i64>("needs_review")? != 0,
             review_reason: r.get("review_reason")?,
             hold_status: r.get::<_, Option<String>>("hold_status")?.and_then(|h| HoldStatus::parse(&h)),
+            customer_seq: r.get("customer_seq")?,
+            matched: r.get::<_, i64>("matched")? != 0,
         })
     }
 
@@ -467,7 +489,35 @@ pub fn find_by_paypal_id(conn: &Connection, paypal_txn_id: &str) -> AppResult<Op
         .optional()?)
 }
 
+/// The draft or sent payout that covers a transfer (SPEC §4.8).
+pub fn payout_of(conn: &Connection, txn_id: i64) -> AppResult<Option<TxnPayoutRef>> {
+    Ok(conn
+        .query_row(
+            "SELECT p.id, p.payout_seq, p.status FROM payout_items i JOIN payouts p ON p.id = i.payout_id
+             WHERE i.item_kind = 'txn' AND i.item_id = ?1 AND p.status <> 'cancelled' ORDER BY p.id DESC LIMIT 1",
+            params![txn_id],
+            |r| Ok(TxnPayoutRef { id: r.get(0)?, seq: r.get(1)?, status: r.get(2)? }),
+        )
+        .optional()?)
+}
+
+fn in_payout_error(p: &TxnPayoutRef) -> AppError {
+    AppError::invalid_transition(format!("الحوالة ضمن الدفعة {}؛ ألغِ الدفعة أولاً", p.seq))
+}
+
+/// Refuse changes to a transfer that a draft or sent payout covers.
+pub(crate) fn ensure_not_in_payout(conn: &Connection, txn_id: i64) -> AppResult<()> {
+    match payout_of(conn, txn_id)? {
+        Some(p) => Err(in_payout_error(&p)),
+        None => Ok(()),
+    }
+}
+
 pub fn allowed_actions(row: &TxnRow) -> Vec<TxnAction> {
+    allowed_actions_with(row, false)
+}
+
+pub fn allowed_actions_with(row: &TxnRow, in_payout: bool) -> Vec<TxnAction> {
     use TxnAction::*;
     let is_payment = row.kind == TxnType::Payment;
     let mut a = vec![];
@@ -489,7 +539,12 @@ pub fn allowed_actions(row: &TxnRow) -> Vec<TxnAction> {
             }
             a.push(Unassign);
         }
-        TxnStatus::Approved => a.push(Unapprove),
+        TxnStatus::Approved => {
+            if !in_payout {
+                a.push(Unapprove);
+            }
+            a.push(SetMatched);
+        }
         TxnStatus::Excluded => a.push(Include),
     }
     if row.needs_review {
@@ -499,7 +554,9 @@ pub fn allowed_actions(row: &TxnRow) -> Vec<TxnAction> {
         a.push(EditDetails);
     }
     a.push(EditNote);
-    a.push(Delete);
+    if !in_payout {
+        a.push(Delete);
+    }
     a
 }
 
@@ -528,7 +585,9 @@ fn to_dto(conn: &Connection, row: TxnRow) -> AppResult<Transaction> {
     } else {
         vec![]
     };
-    let allowed = allowed_actions(&row);
+    let payout = if row.status == TxnStatus::Approved { payout_of(conn, row.id)? } else { None };
+    let allowed = allowed_actions_with(&row, payout.is_some());
+    let (in_customer_excel, changed_after_excel) = crate::excel::customer::txn_flags(conn, &row)?;
     let review_reason_ar = if row.needs_review { row.review_reason.as_deref().map(review_reason_ar) } else { None };
     Ok(Transaction {
         id: row.id,
@@ -561,6 +620,11 @@ fn to_dto(conn: &Connection, row: TxnRow) -> AppResult<Transaction> {
         needs_review: row.needs_review,
         review_reason_ar,
         hold_status: row.hold_status,
+        in_customer_excel,
+        changed_after_excel,
+        customer_seq: row.customer_seq,
+        matched: row.matched,
+        payout,
     })
 }
 
@@ -768,6 +832,20 @@ pub(crate) fn unassign_in(conn: &Connection, now: &str, id: i64) -> AppResult<()
     Ok(())
 }
 
+/// Next transfer number of a customer in a currency (SPEC §4.8); numbers are never reused.
+pub(crate) fn next_customer_seq(conn: &Connection, customer_id: i64, currency: &str) -> AppResult<i64> {
+    conn.execute(
+        "INSERT INTO customer_seq_counters (customer_id, currency, last_seq) VALUES (?1, ?2, 1)
+         ON CONFLICT(customer_id, currency) DO UPDATE SET last_seq = last_seq + 1",
+        params![customer_id, currency],
+    )?;
+    Ok(conn.query_row(
+        "SELECT last_seq FROM customer_seq_counters WHERE customer_id = ?1 AND currency = ?2",
+        params![customer_id, currency],
+        |r| r.get(0),
+    )?)
+}
+
 pub(crate) fn approve_in(conn: &Connection, now: &str, today: &str, id: i64) -> AppResult<i64> {
     let row = load_row(conn, id)?;
     if row.status != TxnStatus::PendingApproval {
@@ -793,9 +871,11 @@ pub(crate) fn approve_in(conn: &Connection, now: &str, today: &str, id: i64) -> 
         params![customer_id, row.currency, amount, id, credit_description(&row), today, now],
     )?;
     let entry_id = conn.last_insert_rowid();
+    let seq = next_customer_seq(conn, customer_id, &row.currency)?;
     conn.execute(
-        "UPDATE paypal_transactions SET status = 'approved', approved_at = ?1, updated_at = ?1 WHERE id = ?2",
-        params![now, id],
+        "UPDATE paypal_transactions SET status = 'approved', approved_at = ?1, updated_at = ?1, customer_seq = ?3
+         WHERE id = ?2",
+        params![now, id, seq],
     )?;
     audit::log(
         conn,
@@ -817,6 +897,7 @@ pub(crate) fn unapprove_in(conn: &Connection, now: &str, today: &str, id: i64, r
     if row.status != TxnStatus::Approved {
         return Err(not_status("المعاملة ليست معتمدة"));
     }
+    ensure_not_in_payout(conn, id)?;
     // The active (not yet reversed) credit of this approval.
     let (entry_id, customer_id, currency, amount, description): (i64, i64, String, i64, String) = conn
         .query_row(
@@ -855,7 +936,7 @@ pub(crate) fn unapprove_in(conn: &Connection, now: &str, today: &str, id: i64, r
     conn.execute(
         "UPDATE paypal_transactions SET status = 'unassigned', customer_id = NULL, commission_mode = NULL,
          commission_bps = NULL, commission_minor = NULL, customer_amount_minor = NULL, assigned_at = NULL,
-         approved_at = NULL, updated_at = ?1 WHERE id = ?2",
+         approved_at = NULL, customer_seq = NULL, matched = 0, updated_at = ?1 WHERE id = ?2",
         params![now, id],
     )?;
     audit::log(

@@ -73,6 +73,18 @@ pub fn run() {
             commands::ledger::refund_alerts,
             commands::ledger::refund_confirm_reversal,
             commands::ledger::refund_dismiss,
+            // linked payouts & statement (SPEC 4.8, 6.5)
+            commands::payouts::customer_summary,
+            commands::payouts::customer_statement,
+            commands::payouts::payout_prepare,
+            commands::payouts::payout_create,
+            commands::payouts::payout_mark_sent,
+            commands::payouts::payout_update_details,
+            commands::payouts::payout_cancel,
+            commands::payouts::payouts_list,
+            commands::payouts::payout_defaults,
+            commands::payouts::payout_platform_suggestions,
+            commands::payouts::txn_set_matched,
             // mail & pull
             commands::mail::mailbox_list,
             commands::mail::mailbox_create,
