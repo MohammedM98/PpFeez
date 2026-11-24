@@ -34,13 +34,18 @@ export function parsePrefs(raw: string | undefined | null): UiPrefs {
 }
 
 let timer: ReturnType<typeof setTimeout> | undefined;
+let flush: (() => void) | undefined;
 function save(qc: QueryClient) {
   clearTimeout(timer);
-  timer = setTimeout(() => {
+  flush = () => {
+    flush = undefined;
     const s = qc.getQueryData<Settings>(KEY);
     if (s) void api.updateSettings({ uiPrefs: s.uiPrefs }).catch(() => undefined);
-  }, 400);
+  };
+  timer = setTimeout(() => flush?.(), 400);
 }
+// closing the window right after a change still keeps it
+window.addEventListener('pagehide', () => { clearTimeout(timer); flush?.(); });
 
 /** Change the preferences; the screen follows at once, the core is told shortly after. */
 export function updatePrefs(qc: QueryClient, fn: (p: UiPrefs) => UiPrefs) {

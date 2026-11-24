@@ -106,12 +106,12 @@ export function TableHeader<T extends object>({ columns, children, className }: 
   );
 }
 
-export function Column({ className, children, align = 'start', width, sticky, stickyOffset, ...props }: Omit<ColumnProps, 'width'> & { align?: Align } & Geometry) {
+export function Column({ className, children, align = 'start', width, sticky, stickyOffset, inner, ...props }: Omit<ColumnProps, 'width'> & { align?: Align; inner?: boolean } & Geometry) {
   return (
     <RacColumn
       {...props}
       style={geometry({ width, sticky, stickyOffset })}
-      {...stickyAttr(sticky)}
+      {...(inner ? { 'data-sticky': 'start-inner' } : stickyAttr(sticky))}
       data-align={align}
       className={composeRenderProps(className, (c) =>
         cx('t-head h-10 overflow-hidden border-b border-line px-2.5 font-normal outline-none whitespace-nowrap',

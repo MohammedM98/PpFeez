@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { cloneElement, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement, type ReactNode, type TdHTMLAttributes } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MenuTrigger, Menu, MenuItem, Popover, Tooltip, TooltipTrigger, Button as RacButton } from 'react-aria-components';
@@ -22,6 +22,7 @@ import { toast } from '@/components/ui/Toast';
 import { cx } from '@/components/ui/cx';
 import { DetailPanel } from '@/components/transactions/DetailPanel';
 import { InToolbar } from '@/components/layout/ToolbarSlot';
+import { ColumnResizer, ColumnsMenu, colAttrs, colStyle, useColumns, type ColDef } from '@/components/ui/Columns';
 import { actionLabel, useTxnActions } from '@/components/transactions/TxnActions';
 import { AddRangeDialog, AddToStatementDialog, excelWhy, sendUnexported } from './CustomerExcel';
 import { DeleteEntryDialog, ReverseDialog } from './EntryDialogs';
@@ -44,6 +45,9 @@ const typing = (e: KeyboardEvent) => {
   if (t instanceof HTMLInputElement && t.type !== 'checkbox' && t.type !== 'radio') return true;
   return !!t?.closest('textarea, select, [contenteditable=true], [role=dialog], [role=menu], [role=listbox]');
 };
+
+/** amount columns sit at the end edge */
+const END = new Set(['credit', 'debit', 'balance', 'gross', 'fee', 'net', 'commission']);
 
 const keyOf = (r: StatementRow) => (r.kind === 'txn' ? `t:${r.txn.id}` : r.kind === 'payout' ? `p:${r.payout.id}` : `e:${r.entry.id}`);
 const dateOf = (r: StatementRow) => (r.kind === 'txn' ? formatDateTime(r.txn.occurredAt).slice(0, 10) : r.kind === 'payout' ? r.payout.date : r.entry.entryDate);
@@ -125,16 +129,15 @@ function ItemFiles({ customerId, item }: { customerId: number; item: CustomerExc
   );
 }
 
-/** ✓ صُدّرت / ⏳ بانتظار التصدير / — لم تُصدَّر (SPEC 6.8.3): an icon and words, never the colour alone. */
-function ExcelCell({ status, excel, customerId, item }: { status: ExcelStatus; excel: Customer['excel']; customerId: number; item: CustomerExcelItemRef }) {
-  if (!excel) return <td />;
+function ExcelCell({ status, excel, customerId, item, ...td }: { status: ExcelStatus; excel: Customer['excel']; customerId: number; item: CustomerExcelItemRef } & TdHTMLAttributes<HTMLTableCellElement>) {
+  if (!excel) return <td {...td} />;
   const v = {
     exported: { icon: '✓', text: 'صُدّرت', cls: 'text-pos', title: excel.filesCount > 1 ? 'صُدّرت إلى الملف الحالي' : 'في ملف العميل' },
     pending: { icon: '⏳', text: 'بانتظار', cls: 'text-warn', title: `بانتظار التصدير${excel.lastError ? `: ${excelWhy(excel.lastError)}` : ''}` },
     not_exported: { icon: '—', text: 'لم تُصدَّر', cls: 'text-fg-3', title: excel.filesCount > 1 ? 'ليست في الملف الحالي' : 'ليست في ملف العميل. حدّدها ثم «إضافة إلى ملف العميل» أو اضغط E' },
   }[status];
   return (
-    <td data-excel={status}>
+    <td {...td} data-excel={status}>
       <TooltipTrigger delay={300}>
         <RacButton aria-label={`${v.text}: ${v.title}`} className={cx('inline-flex items-center gap-1 rounded-[4px] text-[12.5px] outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus', v.cls)}>
           <span aria-hidden>{v.icon}</span>{v.text}
@@ -224,10 +227,42 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
       commission: amountWidth(fit.commission, false, 76), credit: amountWidth(fit.credit, false, 64), debit: amountWidth(fit.debit, false, 64),
       balance: amountWidth(fit.balance, false, 80), sent: '124px', method: '148px', ref: '128px', matched: '76px', notes: '140px', excel: '100px', menu: '48px',
     };
-    return { ...w, min: sumWidths([...Object.values(w), '150px']) };
+    return w;
   }, [fit]);
-  // له / عليه / الرصيد / تم الإرسال come first after the description, so they fit at 1100 without scrolling
-  const widths = [W.select, W.seq, W.date, undefined, W.credit, W.debit, W.balance, W.sent, W.gross, W.fee, W.net, W.commission, W.method, W.ref, W.matched, W.notes, W.excel, W.menu];
+  // the movable columns (SPEC 6.10), in the default order: له / عليه / الرصيد / تم الإرسال first after the
+  // description, so they fit at 1100 without scrolling. #, the date and ⋯ stay put.
+  const defs: ColDef[] = useMemo(() => [
+    { id: 'desc', label: 'البيان', hideable: false },
+    { id: 'credit', label: 'له', width: W.credit, min: W.credit, hideable: false },
+    { id: 'debit', label: 'عليه', width: W.debit, min: W.debit, hideable: false },
+    { id: 'balance', label: 'الرصيد', width: W.balance, min: W.balance, hideable: false },
+    { id: 'sent', label: 'تم الإرسال؟', width: W.sent },
+    { id: 'gross', label: 'المبلغ الكامل من PayPal', width: W.gross, min: amountWidth(fit.gross, false) },
+    { id: 'fee', label: 'خصم PayPal', width: W.fee, min: amountWidth(fit.fee, false) },
+    { id: 'net', label: 'الصافي من PayPal', width: W.net, min: amountWidth(fit.net, false) },
+    { id: 'commission', label: 'العمولة', width: W.commission, min: amountWidth(fit.commission, false) },
+    { id: 'method', label: 'طريقة الدفع', width: W.method },
+    { id: 'ref', label: 'المرجع', width: W.ref },
+    { id: 'matched', label: 'المطابقة', width: W.matched },
+    { id: 'notes', label: 'ملاحظات', width: W.notes },
+    { id: 'excel', label: 'Excel', width: W.excel },
+  ], [W, fit]);
+  const DEFAULT_ORDER = defs.map((d) => d.id);
+  const cols = useColumns('statement', defs, `calc(${SELECT_W} + ${W.seq} + ${W.date})`);
+  const { columns } = cols;
+  const anyPinned = columns.some((c) => c.pinned);
+  const widths = [W.select, W.seq, W.date, ...columns.map((c) => c.w), W.menu];
+  const minWidth = sumWidths([...widths, '150px']);
+  /** a row's movable cells (given in the default order) in the owner's order, pinned ones sticky */
+  const place = (cells: ReactElement<{ className?: string; style?: CSSProperties }>[]) => columns.map((c) => {
+    const td = cells[DEFAULT_ORDER.indexOf(c.id)];
+    return cloneElement(td, {
+      key: c.id, ...colAttrs(c),
+      style: { ...td.props.style, ...colStyle(c) },
+      className: cx(td.props.className, c.pinned && 'sticky z-[1]'),
+    });
+  });
+  const balanceAt = columns.findIndex((c) => c.id === 'balance');
 
   const pickedRows = rows.filter((r) => picked.has(keyOf(r)));
   const pickedTxns = pickedRows.flatMap((r) => (r.kind === 'txn' ? [r.txn] : []));
@@ -301,8 +336,10 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
         <Select label="الفترة" value={preset} onChange={(k) => setPreset(k as PeriodPreset)} className="w-[132px]"
           options={(Object.keys(periodLabels) as PeriodPreset[]).map((k) => ({ id: k, label: periodLabels[k] }))} />
         {preset === 'custom' && <DateRangePicker label="الفترة المخصّصة" value={custom} onChange={setCustom} className="w-[250px]" />}
+        <div className="ms-auto" />
+        <ColumnsMenu cols={cols} />
         <MenuTrigger>
-          <Button variant="secondary" size="sm" className="ms-auto"><Download />تصدير وطباعة</Button>
+          <Button variant="secondary" size="sm"><Download />تصدير وطباعة</Button>
           <Popover placement="bottom end" className="min-w-56 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
             <Menu className="outline-none" onAction={(k) => {
               if (k === 'xlsx') void exportExcel();
@@ -345,7 +382,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
       )}
 
       <TableFrame fill>
-        <table className="w-full table-fixed border-separate border-spacing-0 text-sm" style={{ minWidth: W.min }} aria-label={`كشف ${currency}`}>
+        <table className="w-full table-fixed border-separate border-spacing-0 text-sm" style={{ minWidth }} aria-label={`كشف ${currency}`}>
           <colgroup>{widths.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
           <thead className="sticky top-0 z-10">
             <tr className="[&>th]:h-10 [&>th]:overflow-hidden [&>th]:border-b [&>th]:border-line [&>th]:bg-surface [&>th]:px-2.5 [&>th]:font-normal [&>th]:whitespace-nowrap">
@@ -355,30 +392,22 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                   onChange={(on) => setPicked(on ? new Set(rows.map(keyOf)) : new Set())} />
               </th>
               <th className="sticky z-[2] text-start" data-sticky="start-inner" style={{ insetInlineStart: SELECT_W }}><HeadLabel>#</HeadLabel></th>
-              <th className="sticky z-[2] text-start" data-sticky="start" style={{ insetInlineStart: `calc(${SELECT_W} + ${W.seq})` }}><HeadLabel>التاريخ</HeadLabel></th>
-              <th className="text-start"><HeadLabel>البيان</HeadLabel></th>
-              <th className="text-end"><HeadLabel>له</HeadLabel></th>
-              <th className="text-end"><HeadLabel>عليه</HeadLabel></th>
-              <th className="text-end"><HeadLabel>الرصيد</HeadLabel></th>
-              <th className="text-start"><HeadLabel>تم الإرسال؟</HeadLabel></th>
-              <th className="text-end"><HeadLabel>المبلغ الكامل من PayPal</HeadLabel></th>
-              <th className="text-end"><HeadLabel>خصم PayPal</HeadLabel></th>
-              <th className="text-end"><HeadLabel>الصافي من PayPal</HeadLabel></th>
-              <th className="text-end"><HeadLabel>العمولة</HeadLabel></th>
-              <th className="text-start"><HeadLabel>طريقة الدفع</HeadLabel></th>
-              <th className="text-start"><HeadLabel>المرجع</HeadLabel></th>
-              <th className="text-start"><HeadLabel>المطابقة</HeadLabel></th>
-              <th className="text-start"><HeadLabel>ملاحظات</HeadLabel></th>
-              <th className="text-start"><HeadLabel>Excel</HeadLabel></th>
+              <th className="sticky z-[2] text-start" data-sticky={anyPinned ? 'start-inner' : 'start'} style={{ insetInlineStart: `calc(${SELECT_W} + ${W.seq})` }}><HeadLabel>التاريخ</HeadLabel></th>
+              {columns.map((c) => (
+                <th key={c.id} {...colAttrs(c)} style={colStyle(c)} className={cx('relative', c.pinned && 'z-[2]', END.has(c.id) ? 'text-end' : 'text-start')}>
+                  <HeadLabel>{c.label}</HeadLabel>
+                  <ColumnResizer col={c} onResize={(px) => cols.setWidth(c.id, px)} />
+                </th>
+              ))}
               <th className="sticky z-[2]" data-sticky="end" style={{ insetInlineEnd: 0 }}><span className="sr-only">إجراءات</span></th>
             </tr>
           </thead>
           <tbody className="[&>tr>td]:h-(--row-h) [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:px-2.5 [&>tr>td]:leading-tight [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
             {st.data && period.from && (
               <tr className="t-row [--row-tint:color-mix(in_oklab,var(--raised)_40%,transparent)] text-fg-2">
-                <td colSpan={6}>رصيد سابق حتى <bdi dir="ltr" className="num">{period.from}</bdi></td>
+                <td colSpan={3 + balanceAt}>رصيد سابق حتى <bdi dir="ltr" className="num">{period.from}</bdi></td>
                 <td className="text-end"><Amount fit={fit.balance} minor={st.data.openingBalanceMinor} currency={currency} showCurrency={false} tone="signed" /></td>
-                <td colSpan={11} />
+                <td colSpan={columns.length - balanceAt} />
               </tr>
             )}
             {rows.map((r) => {
@@ -392,7 +421,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                 </td>
               );
               const seqCell = (text: ReactNode) => <td className="num sticky z-[1] text-fg-2" data-sticky="start-inner" style={{ insetInlineStart: SELECT_W }}>{text}</td>;
-              const dateCell = <td className="num sticky z-[1] text-fg-2" data-sticky="start" style={{ insetInlineStart: `calc(${SELECT_W} + ${W.seq})` }}><bdi dir="ltr">{dateOf(r)}</bdi></td>;
+              const dateCell = <td className="num sticky z-[1] text-fg-2" data-sticky={anyPinned ? 'start-inner' : 'start'} style={{ insetInlineStart: `calc(${SELECT_W} + ${W.seq})` }}><bdi dir="ltr">{dateOf(r)}</bdi></td>;
               const balance = <td className="text-end font-medium"><Amount fit={fit.balance} minor={r.runningBalanceMinor} currency={currency} showCurrency={false} className={r.runningBalanceMinor < 0 ? 'text-neg' : ''} /></td>;
 
               if (r.kind === 'txn') {
@@ -404,31 +433,33 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                     {sel}
                     {seqCell(t.customerSeq !== null ? `#${t.customerSeq}` : '—')}
                     {dateCell}
-                    <td>
-                      <button type="button" onClick={() => openDetail(t.id)} className="block w-full min-w-0 text-start outline-none focus-visible:outline-2 focus-visible:outline-focus">
-                        <div className="flex items-center gap-2">
-                          <Trunc className="min-w-0 flex-1">حوالة من {t.payerName || t.payerEmail || '—'}</Trunc>
-                          {t.holdStatus && <Badge tone="outline" className="shrink-0">{t.holdStatus === 'on_hold' ? 'محجوزة' : 'eCheck معلّق'}</Badge>}
-                        </div>
-                        {t.payerNote && <Trunc className="text-[12px] text-fg-3">{t.payerNote}</Trunc>}
-                      </button>
-                    </td>
-                    <td className="text-end"><Amount fit={fit.credit} minor={t.customerAmountMinor} currency={currency} showCurrency={false} className="font-medium text-pos" /></td>
-                    <td />
-                    {balance}
-                    <td><SentCell t={t} onPayout={toPayout} /></td>
-                    <td className="text-end"><Amount fit={fit.gross} minor={t.grossMinor} currency={currency} showCurrency={false} className="text-fg-2" /></td>
-                    <td className="text-end"><Amount fit={fit.fee} minor={t.feeMinor} currency={currency} showCurrency={false} className="text-fg-2" /></td>
-                    <td className="text-end"><Amount fit={fit.net} minor={t.netMinor} currency={currency} showCurrency={false} className="text-fg-2" /></td>
-                    <td className="text-end">
-                      <Amount fit={fit.commission} minor={t.commissionMinor} currency={currency} showCurrency={false} className="text-fg-2" />
-                      <div className="num text-[12px] text-fg-3">{t.commissionMode === 'percent' && t.commissionBps !== null ? <bdi dir="ltr">{formatBps(t.commissionBps)}</bdi> : t.commissionMode === 'fixed' ? 'ثابتة' : ''}</div>
-                    </td>
-                    <td className="text-fg-3">—</td>
-                    <td className="text-[13px] text-fg-3"><div dir="ltr" className="num truncate text-right" title={t.paypalTxnId}>{t.paypalTxnId}</div></td>
-                    <td>{t.matched ? <span className="inline-flex items-center gap-1 text-[13px] text-pos"><Check className="size-3.5" strokeWidth={2.2} />مطابق</span> : <span className="text-fg-3">—</span>}</td>
-                    <td><Trunc className="text-[13px] text-fg-2">{t.note ?? ''}</Trunc></td>
-                    <ExcelCell status={t.excelStatus} excel={customer.excel} customerId={customer.id} item={{ kind: 'txn', id: t.id }} />
+                    {place([
+                      <td>
+                        <button type="button" onClick={() => openDetail(t.id)} className="block w-full min-w-0 text-start outline-none focus-visible:outline-2 focus-visible:outline-focus">
+                          <div className="flex items-center gap-2">
+                            <Trunc className="min-w-0 flex-1">حوالة من {t.payerName || t.payerEmail || '—'}</Trunc>
+                            {t.holdStatus && <Badge tone="outline" className="shrink-0">{t.holdStatus === 'on_hold' ? 'محجوزة' : 'eCheck معلّق'}</Badge>}
+                          </div>
+                          {t.payerNote && <Trunc className="text-[12px] text-fg-3">{t.payerNote}</Trunc>}
+                        </button>
+                      </td>,
+                      <td className="text-end"><Amount fit={fit.credit} minor={t.customerAmountMinor} currency={currency} showCurrency={false} className="font-medium text-pos" /></td>,
+                      <td />,
+                      balance,
+                      <td><SentCell t={t} onPayout={toPayout} /></td>,
+                      <td className="text-end"><Amount fit={fit.gross} minor={t.grossMinor} currency={currency} showCurrency={false} className="text-fg-2" /></td>,
+                      <td className="text-end"><Amount fit={fit.fee} minor={t.feeMinor} currency={currency} showCurrency={false} className="text-fg-2" /></td>,
+                      <td className="text-end"><Amount fit={fit.net} minor={t.netMinor} currency={currency} showCurrency={false} className="text-fg-2" /></td>,
+                      <td className="text-end">
+                        <Amount fit={fit.commission} minor={t.commissionMinor} currency={currency} showCurrency={false} className="text-fg-2" />
+                        <div className="num text-[12px] text-fg-3">{t.commissionMode === 'percent' && t.commissionBps !== null ? <bdi dir="ltr">{formatBps(t.commissionBps)}</bdi> : t.commissionMode === 'fixed' ? 'ثابتة' : ''}</div>
+                      </td>,
+                      <td className="text-fg-3">—</td>,
+                      <td className="text-[13px] text-fg-3"><div dir="ltr" className="num truncate text-right" title={t.paypalTxnId}>{t.paypalTxnId}</div></td>,
+                      <td>{t.matched ? <span className="inline-flex items-center gap-1 text-[13px] text-pos"><Check className="size-3.5" strokeWidth={2.2} />مطابق</span> : <span className="text-fg-3">—</span>}</td>,
+                      <td><Trunc className="text-[13px] text-fg-2">{t.note ?? ''}</Trunc></td>,
+                      <ExcelCell status={t.excelStatus} excel={customer.excel} customerId={customer.id} item={{ kind: 'txn', id: t.id }} />,
+                    ])}
                     <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                       <MenuTrigger>
                         <Button variant="quiet" size="icon" aria-label="إجراءات الحوالة"><MoreHorizontal /></Button>
@@ -457,21 +488,26 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                     {sel}
                     {seqCell(<span className="font-medium text-fg">دفعة {p.seq}</span>)}
                     {dateCell}
-                    <td>
-                      <Trunc className={cx(cancelled && 'line-through')}>دفعة {payoutMethod[p.details.method]}{p.details.platform ? ` — ${p.details.platform}` : ''}</Trunc>
-                      <div className="num text-[12px] text-fg-3">{p.rangeLabel} · {transferCountLabel(p.txnCount)}</div>
-                    </td>
-                    <td />
-                    <td className="text-end"><Amount fit={fit.debit} minor={p.amountMinor} currency={currency} showCurrency={false}
-                      className={cx('font-medium', cancelled ? 'text-fg-3 line-through' : p.status === 'draft' ? 'text-fg-3' : 'text-fg')} /></td>
-                    {balance}
-                    <td><Badge tone={payoutTone[p.status]}>{payoutStatus[p.status]}</Badge></td>
-                    <td /><td /><td /><td />
-                    <td><Trunc className="text-[13px] text-fg-2">{[payoutMethod[p.details.method], p.details.platform, p.details.network].filter(Boolean).join(' · ')}</Trunc></td>
-                    <td className="text-[13px] text-fg-3">{p.details.reference && <div dir="ltr" className="num truncate text-right" title={p.details.reference}>{p.details.reference}</div>}</td>
-                    <td className="text-fg-3">—</td>
-                    <td><Trunc className="text-[13px] text-fg-2">{p.details.note ?? ''}</Trunc></td>
-                    {p.status === 'sent' ? <ExcelCell status={p.excelStatus} excel={customer.excel} customerId={customer.id} item={{ kind: 'payout', id: p.id }} /> : <td />}
+                    {place([
+                      <td>
+                        <Trunc className={cx(cancelled && 'line-through')}>دفعة {payoutMethod[p.details.method]}{p.details.platform ? ` — ${p.details.platform}` : ''}</Trunc>
+                        <div className="num text-[12px] text-fg-3">{p.rangeLabel} · {transferCountLabel(p.txnCount)}</div>
+                      </td>,
+                      <td />,
+                      <td className="text-end"><Amount fit={fit.debit} minor={p.amountMinor} currency={currency} showCurrency={false}
+                        className={cx('font-medium', cancelled ? 'text-fg-3 line-through' : p.status === 'draft' ? 'text-fg-3' : 'text-fg')} /></td>,
+                      balance,
+                      <td><Badge tone={payoutTone[p.status]}>{payoutStatus[p.status]}</Badge></td>,
+                      <td />,
+                      <td />,
+                      <td />,
+                      <td />,
+                      <td><Trunc className="text-[13px] text-fg-2">{[payoutMethod[p.details.method], p.details.platform, p.details.network].filter(Boolean).join(' · ')}</Trunc></td>,
+                      <td className="text-[13px] text-fg-3">{p.details.reference && <div dir="ltr" className="num truncate text-right" title={p.details.reference}>{p.details.reference}</div>}</td>,
+                      <td className="text-fg-3">—</td>,
+                      <td><Trunc className="text-[13px] text-fg-2">{p.details.note ?? ''}</Trunc></td>,
+                      p.status === 'sent' ? <ExcelCell status={p.excelStatus} excel={customer.excel} customerId={customer.id} item={{ kind: 'payout', id: p.id }} /> : <td />,
+                    ])}
                     <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                       <MenuTrigger>
                         <Button variant="quiet" size="icon" aria-label="إجراءات الدفعة"><MoreHorizontal /></Button>
@@ -497,22 +533,27 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                   {sel}
                   {seqCell(<span className="text-fg-3">—</span>)}
                   {dateCell}
-                  <td>
-                    <Trunc className={cx(reversed && 'text-fg-3 line-through decoration-fg-3/60')}>{e.description}</Trunc>
-                    {(e.payoutMethod || reversed || e.reversesEntryId !== null) && (
-                      <div className="text-[12px] text-fg-3">{e.payoutMethod ? payoutMethod[e.payoutMethod] : ''}{reversed ? ' عُكس بقيد لاحق' : ''}{e.reversesEntryId !== null ? ' يعكس قيداً سابقاً' : ''}</div>
-                    )}
-                  </td>
-                  <td className="text-end">{e.amountMinor > 0 && <Amount fit={fit.credit} minor={e.amountMinor} currency={currency} showCurrency={false} className={reversed ? 'text-fg-3 line-through' : 'text-pos'} />}</td>
-                  <td className="text-end">{e.amountMinor < 0 && <Amount fit={fit.debit} minor={-e.amountMinor} currency={currency} showCurrency={false} className={reversed ? 'text-fg-3 line-through' : ''} />}</td>
-                  {balance}
-                  <td className="text-fg-3">—</td>
-                  <td /><td /><td /><td />
-                  <td><Trunc className="text-[13px] text-fg-2">{e.payoutMethod ? payoutMethod[e.payoutMethod] : ''}</Trunc></td>
-                  <td className="text-[13px] text-fg-3">{e.reference && <div dir="ltr" className="truncate text-right" title={e.reference}>{e.reference}</div>}</td>
-                  <td className="text-fg-3">—</td>
-                  <td />
-                  <ExcelCell status={e.excelStatus} excel={customer.excel} customerId={customer.id} item={{ kind: 'ledger', id: e.id }} />
+                  {place([
+                    <td>
+                      <Trunc className={cx(reversed && 'text-fg-3 line-through decoration-fg-3/60')}>{e.description}</Trunc>
+                      {(e.payoutMethod || reversed || e.reversesEntryId !== null) && (
+                        <div className="text-[12px] text-fg-3">{e.payoutMethod ? payoutMethod[e.payoutMethod] : ''}{reversed ? ' عُكس بقيد لاحق' : ''}{e.reversesEntryId !== null ? ' يعكس قيداً سابقاً' : ''}</div>
+                      )}
+                    </td>,
+                    <td className="text-end">{e.amountMinor > 0 && <Amount fit={fit.credit} minor={e.amountMinor} currency={currency} showCurrency={false} className={reversed ? 'text-fg-3 line-through' : 'text-pos'} />}</td>,
+                    <td className="text-end">{e.amountMinor < 0 && <Amount fit={fit.debit} minor={-e.amountMinor} currency={currency} showCurrency={false} className={reversed ? 'text-fg-3 line-through' : ''} />}</td>,
+                    balance,
+                    <td className="text-fg-3">—</td>,
+                    <td />,
+                    <td />,
+                    <td />,
+                    <td />,
+                    <td><Trunc className="text-[13px] text-fg-2">{e.payoutMethod ? payoutMethod[e.payoutMethod] : ''}</Trunc></td>,
+                    <td className="text-[13px] text-fg-3">{e.reference && <div dir="ltr" className="truncate text-right" title={e.reference}>{e.reference}</div>}</td>,
+                    <td className="text-fg-3">—</td>,
+                    <td />,
+                    <ExcelCell status={e.excelStatus} excel={customer.excel} customerId={customer.id} item={{ kind: 'ledger', id: e.id }} />,
+                  ])}
                   <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                     <MenuTrigger>
                       <Button variant="quiet" size="icon" aria-label="إجراءات القيد"><MoreHorizontal /></Button>
@@ -533,17 +574,17 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
               );
             })}
             {st.data && rows.length === 0 && (
-              <tr><td colSpan={18} className="py-10 text-center text-fg-3">{show === 'unpaid' ? 'لا حوالات غير مدفوعة' : show === 'payouts' ? 'لا دفعات بعد' : 'لا أسطر في هذه الفترة'}</td></tr>
+              <tr><td colSpan={columns.length + 4} className="py-10 text-center text-fg-3">{show === 'unpaid' ? 'لا حوالات غير مدفوعة' : show === 'payouts' ? 'لا دفعات بعد' : 'لا أسطر في هذه الفترة'}</td></tr>
             )}
           </tbody>
         </table>
         {st.data && (
-          <TotalsTable label="الرصيد الختامي" minWidth={W.min} widths={widths}>
+          <TotalsTable label="الرصيد الختامي" minWidth={minWidth} widths={widths}>
             <tr>
               <TotalsCell sticky="start" colSpan={3} className="!ps-4 text-fg-2">الرصيد الختامي <span className="text-fg-3">{currency}</span></TotalsCell>
-              <TotalsCell colSpan={3} />
+              {balanceAt > 0 && <TotalsCell colSpan={balanceAt} />}
               <TotalsCell align="end" className="text-sm font-medium"><Amount fit={fit.balance} minor={st.data.closingBalanceMinor} currency={currency} showCurrency={false} className={st.data.closingBalanceMinor < 0 ? 'text-neg' : 'text-accent-ink'} /></TotalsCell>
-              <TotalsCell colSpan={10} />
+              {balanceAt < columns.length - 1 && <TotalsCell colSpan={columns.length - 1 - balanceAt} />}
               <TotalsCell sticky="end" />
             </tr>
           </TotalsTable>

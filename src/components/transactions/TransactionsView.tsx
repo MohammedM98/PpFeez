@@ -20,6 +20,7 @@ import { Table, TableFrame, TableHeader, Column, TableBody, Row, Cell, SELECT_W,
 import { cx } from '@/components/ui/cx';
 import { Trunc } from '@/components/ui/Trunc';
 import { DateCell, FeeCell, PayerCell } from './bits';
+import { ColumnResizer, ColumnsMenu, useColumns, type ColDef } from '@/components/ui/Columns';
 import { DetailPanel } from './DetailPanel';
 import { actionLabel, useTxnActions } from './TxnActions';
 
@@ -37,6 +38,8 @@ const TABS = {
 const PAGE_SIZE = 50;
 /** the payer column takes the remaining width, never less than this */
 const PAYER_MIN = '160px';
+const END = new Set(['grossMinor', 'feeMinor', 'netMinor', 'commission', 'customerAmountMinor']);
+const SORTABLE = new Set(['payerName', 'grossMinor', 'feeMinor', 'netMinor', 'customerAmountMinor']);
 
 /** Row menu entries: the core's allowedActions, plus "move to another customer" for a pending row. */
 type MenuKey = TxnAction | 'move' | 'detail';
@@ -144,11 +147,27 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
     const commission = inbox ? undefined : amountWidth(fit.commission, false, 72);
     const toCustomer = inbox ? undefined : amountWidth(fit.toCustomer, false, 72);
     const excel = showExcel ? '52px' : undefined;
-    return { ...base, commission, toCustomer, excel, min: sumWidths([SELECT_W, ...Object.values(base), commission, toCustomer, excel, PAYER_MIN]) };
+    return { ...base, commission, toCustomer, excel };
   }, [fit, inbox, showExcel]);
-  const widths = inbox
-    ? [SELECT_W, W.date, undefined, W.note, W.gross, W.fee, W.net, W.menu]
-    : [SELECT_W, W.date, undefined, W.note, W.gross, W.fee, W.net, W.commission, W.toCustomer, ...(showExcel ? [W.excel] : []), W.menu];
+  // movable columns (SPEC 6.10); the selection, date and ⋯ columns stay put
+  const defs: ColDef[] = useMemo(() => [
+    { id: 'payerName', label: s.cols.payer, hideable: false },
+    { id: 'payerNote', label: s.cols.payerNote, width: W.note },
+    { id: 'grossMinor', label: s.cols.gross, width: W.gross, min: amountWidth(fit.gross, true), hideable: false },
+    { id: 'feeMinor', label: s.cols.fee, width: W.fee, min: amountWidth(fit.fee, false) },
+    { id: 'netMinor', label: s.cols.net, width: W.net, min: amountWidth(fit.net, false) },
+    ...(inbox ? [] : [
+      { id: 'commission', label: 'العمولة', width: W.commission, min: amountWidth(fit.commission, false) },
+      { id: 'customerAmountMinor', label: s.cols.toCustomer, width: W.toCustomer, min: amountWidth(fit.toCustomer, false), hideable: false },
+    ]),
+    ...(showExcel ? [{ id: 'excel', label: 'في ملف العميل', width: W.excel }] : []),
+  ], [W, fit, inbox, showExcel]);
+  const cols = useColumns(inbox ? 'inbox' : 'customer_txns', defs, `calc(${SELECT_W} + ${W.date})`);
+  const { columns } = cols;
+  const anyPinned = columns.some((c) => c.pinned);
+  const widths = [SELECT_W, W.date, ...columns.map((c) => c.w), W.menu];
+  const minWidth = sumWidths([...widths, PAYER_MIN]);
+  const colKey = columns.map((c) => `${c.id}:${c.w}:${c.pinned}`).join('|');
 
   const exportExcel = async () => {
     const path = await native.saveXlsx(`PpFeez-معاملات-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -217,6 +236,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
             <Checkbox isSelected={needsReviewOnly} onChange={setNeedsReviewOnly}>تحتاج مراجعة<span className="num text-warn">{counts.data?.needsReview}</span></Checkbox>
           )}
         </div>
+        <div className="ms-auto"><ColumnsMenu cols={cols} /></div>
         {exportSlot && createPortal(
           <Button variant="secondary" onPress={exportExcel} isDisabled={!list.data?.total}><FileSpreadsheet />تصدير إلى Excel</Button>, exportSlot)}
       </div>
@@ -242,20 +262,21 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
 
       <TableFrame fill>
         <Table aria-label={inbox ? 'الوارد' : 'معاملات العميل'} selectionMode="multiple" selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
-          sortDescriptor={sort} onSortChange={setSort} onRowAction={(k: Key) => openDetail(Number(k))} minWidth={W.min}>
+          sortDescriptor={sort} onSortChange={setSort} onRowAction={(k: Key) => openDetail(Number(k))} minWidth={minWidth}>
           <TableHeader>
-            <Column id="occurredAt" allowsSorting isRowHeader width={W.date} sticky="start" stickyOffset={SELECT_W}>{s.cols.date}</Column>
-            <Column id="payerName" allowsSorting>{s.cols.payer}</Column>
-            <Column id="payerNote" width={W.note}>{s.cols.payerNote}</Column>
-            <Column id="grossMinor" allowsSorting align="end" width={W.gross}>{s.cols.gross}</Column>
-            <Column id="feeMinor" allowsSorting align="end" width={W.fee}>{s.cols.fee}</Column>
-            <Column id="netMinor" allowsSorting align="end" width={W.net}>{s.cols.net}</Column>
-            {!inbox && <Column id="commission" align="end" width={W.commission}>العمولة</Column>}
-            {!inbox && <Column id="customerAmountMinor" allowsSorting align="end" width={W.toCustomer}>{s.cols.toCustomer}</Column>}
-            {showExcel && <Column id="excel" width={W.excel}><span title="في ملف العميل" className="inline-flex"><FileCheck2 className="size-4" strokeWidth={1.7} aria-hidden /><span className="sr-only">في ملف العميل</span></span></Column>}
+            <Column id="occurredAt" allowsSorting isRowHeader width={W.date} sticky="start" stickyOffset={SELECT_W} inner={anyPinned}>{s.cols.date}</Column>
+            {columns.map((c) => (
+              <Column key={c.id} id={c.id} allowsSorting={SORTABLE.has(c.id)} align={END.has(c.id) ? 'end' : 'start'} width={c.w}
+                sticky={c.pinned ? 'start' : undefined} stickyOffset={c.offset} inner={c.pinned && !c.last} data-col={c.id} className="relative">
+                {c.id === 'excel'
+                  ? <span title="في ملف العميل" className="inline-flex"><FileCheck2 className="size-4" strokeWidth={1.7} aria-hidden /><span className="sr-only">في ملف العميل</span></span>
+                  : c.label}
+                <ColumnResizer col={c} onResize={(px) => cols.setWidth(c.id, px)} />
+              </Column>
+            ))}
             <Column id="menu" width={W.menu} sticky="end"><span className="sr-only">إجراءات</span></Column>
           </TableHeader>
-          <TableBody items={items} dependencies={[showExcel, inbox, flashId, detailId, fit]} renderEmptyState={() => (
+          <TableBody items={items} dependencies={[showExcel, inbox, flashId, detailId, fit, colKey]} renderEmptyState={() => (
             <div className="py-16 text-center">
               <p className="text-fg-2">{tab === 'unassigned' ? 'الوارد فارغ: كل المعاملات مخصّصة' : tab === 'pending_approval' ? 'لا شيء بانتظار الموافقة' : 'لا معاملات هنا'}</p>
               {inbox && tab === 'unassigned' && <p className="mt-1 text-[13px] text-fg-3">المعاملات المخصّصة في صفحات العملاء، وتجدها بالبحث <kbd className="num rounded border border-line px-1 text-[12px]">Ctrl K</kbd></p>}
@@ -263,20 +284,25 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
           )}>
             {(t) => (
               <Row id={t.id} data-opens-detail="" className={cx(flashId === t.id ? '[--row-tint:var(--accent-soft)]' : detailId === t.id && '[--row-tint:var(--raised)]')}>
-                <Cell sticky="start" stickyOffset={SELECT_W}><DateCell iso={t.occurredAt} /></Cell>
-                <Cell><PayerCell t={t} /></Cell>
-                <Cell><Trunc className="text-fg-2" title={t.payerNote ?? ''}>{t.payerNote ?? ''}</Trunc></Cell>
-                <Cell align="end"><Amount fit={fit.gross} minor={t.grossMinor} currency={t.currency} className={t.grossMinor < 0 ? 'text-neg' : ''} /></Cell>
-                <Cell align="end"><FeeCell t={t} fit={fit.fee} /></Cell>
-                <Cell align="end"><Amount fit={fit.net} minor={t.netMinor} currency={t.currency} showCurrency={false} /></Cell>
-                {!inbox && (
-                  <Cell align="end">
-                    <Amount fit={fit.commission} minor={t.commissionMinor} currency={t.currency} showCurrency={false} className="text-fg-2" />
-                    <div className="num text-[12px] text-fg-3">{t.commissionMode === 'percent' && t.commissionBps !== null ? <bdi dir="ltr">{formatBps(t.commissionBps)}</bdi> : t.commissionMode === 'fixed' ? 'ثابتة' : ''}</div>
-                  </Cell>
-                )}
-                {!inbox && <Cell align="end"><Amount fit={fit.toCustomer} minor={t.customerAmountMinor} currency={t.currency} showCurrency={false} className="font-medium" /></Cell>}
-                {showExcel && <Cell>{t.inCustomerExcel && <span title="في ملف العميل" aria-label="في ملف العميل" className="inline-flex text-pos"><Check className="size-4" strokeWidth={2} /></span>}</Cell>}
+                <Cell sticky="start" stickyOffset={SELECT_W} inner={anyPinned}><DateCell iso={t.occurredAt} /></Cell>
+                {columns.map((c) => {
+                  const g = { key: c.id, sticky: c.pinned ? 'start' as const : undefined, stickyOffset: c.offset, inner: c.pinned && !c.last };
+                  switch (c.id) {
+                    case 'payerName': return <Cell {...g}><PayerCell t={t} /></Cell>;
+                    case 'payerNote': return <Cell {...g}><Trunc className="text-fg-2" title={t.payerNote ?? ''}>{t.payerNote ?? ''}</Trunc></Cell>;
+                    case 'grossMinor': return <Cell {...g} align="end"><Amount fit={fit.gross} minor={t.grossMinor} currency={t.currency} className={t.grossMinor < 0 ? 'text-neg' : ''} /></Cell>;
+                    case 'feeMinor': return <Cell {...g} align="end"><FeeCell t={t} fit={fit.fee} /></Cell>;
+                    case 'netMinor': return <Cell {...g} align="end"><Amount fit={fit.net} minor={t.netMinor} currency={t.currency} showCurrency={false} /></Cell>;
+                    case 'commission': return (
+                      <Cell {...g} align="end">
+                        <Amount fit={fit.commission} minor={t.commissionMinor} currency={t.currency} showCurrency={false} className="text-fg-2" />
+                        <div className="num text-[12px] text-fg-3">{t.commissionMode === 'percent' && t.commissionBps !== null ? <bdi dir="ltr">{formatBps(t.commissionBps)}</bdi> : t.commissionMode === 'fixed' ? 'ثابتة' : ''}</div>
+                      </Cell>
+                    );
+                    case 'customerAmountMinor': return <Cell {...g} align="end"><Amount fit={fit.toCustomer} minor={t.customerAmountMinor} currency={t.currency} showCurrency={false} className="font-medium" /></Cell>;
+                    default: return <Cell {...g}>{t.inCustomerExcel && <span title="في ملف العميل" aria-label="في ملف العميل" className="inline-flex text-pos"><Check className="size-4" strokeWidth={2} /></span>}</Cell>;
+                  }
+                })}
                 <Cell sticky="end" className="pe-2">
                   <MenuTrigger>
                     <Button variant="quiet" size="icon" aria-label="إجراءات"><MoreHorizontal /></Button>
@@ -295,19 +321,22 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
           </TableBody>
         </Table>
         {!!totals?.length && (
-          <TotalsTable label={s.totals} minWidth={W.min} widths={widths}>
+          <TotalsTable label={s.totals} minWidth={minWidth} widths={widths}>
             {totals.map((x, i) => (
               <tr key={x.currency}>
                 <TotalsCell sticky="start" />
                 <TotalsCell sticky="start" stickyOffset={SELECT_W} className="text-[13px] text-fg-3">{i === 0 ? s.totals : ''}</TotalsCell>
-                <TotalsCell className="text-[13px] text-fg-3">{txnCountLabel(x.count)}</TotalsCell>
-                <TotalsCell />
-                <TotalsCell align="end"><Amount fit={fit.gross} minor={x.grossMinor} currency={x.currency} className="text-fg-2" /></TotalsCell>
-                <TotalsCell align="end"><Amount fit={fit.fee} minor={x.feeMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>
-                <TotalsCell align="end"><Amount fit={fit.net} minor={x.netMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>
-                {!inbox && <TotalsCell />}
-                {!inbox && <TotalsCell align="end"><Amount fit={fit.toCustomer} minor={x.customerAmountMinor} currency={x.currency} showCurrency={false} className="font-medium text-fg" /></TotalsCell>}
-                {showExcel && <TotalsCell />}
+                {columns.map((c) => {
+                  const g = { key: c.id, sticky: c.pinned ? 'start' as const : undefined, stickyOffset: c.offset };
+                  switch (c.id) {
+                    case 'payerName': return <TotalsCell {...g} className="text-[13px] text-fg-3">{txnCountLabel(x.count)}</TotalsCell>;
+                    case 'grossMinor': return <TotalsCell {...g} align="end"><Amount fit={fit.gross} minor={x.grossMinor} currency={x.currency} className="text-fg-2" /></TotalsCell>;
+                    case 'feeMinor': return <TotalsCell {...g} align="end"><Amount fit={fit.fee} minor={x.feeMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>;
+                    case 'netMinor': return <TotalsCell {...g} align="end"><Amount fit={fit.net} minor={x.netMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>;
+                    case 'customerAmountMinor': return <TotalsCell {...g} align="end"><Amount fit={fit.toCustomer} minor={x.customerAmountMinor} currency={x.currency} showCurrency={false} className="font-medium text-fg" /></TotalsCell>;
+                    default: return <TotalsCell {...g} />;
+                  }
+                })}
                 <TotalsCell sticky="end" />
               </tr>
             ))}
