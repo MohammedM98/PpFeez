@@ -136,6 +136,10 @@ fn app_and_settings_group() {
         &h.core.get_settings().unwrap(),
         &[
             "theme",
+            "accent",
+            "density",
+            "uiScale",
+            "uiPrefs",
             "defaultCommissionBps",
             "feeEstimateEnabled",
             "feeEstimateBps",

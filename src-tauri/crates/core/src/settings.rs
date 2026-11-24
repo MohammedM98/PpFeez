@@ -22,6 +22,12 @@ pub const K_EXCEL_EXPORT_PATH: &str = "excel_export_path";
 pub const K_EXCEL_LAST_EXPORTED_AT: &str = "excel_last_exported_at";
 pub const K_EXCEL_UPDATE_ON_CLOSE: &str = "excel_update_on_close";
 pub const K_EXCEL_MODE: &str = "excel_mode";
+pub const K_ACCENT: &str = "accent";
+pub const K_DENSITY: &str = "density";
+pub const K_UI_SCALE: &str = "ui_scale";
+pub const K_UI_PREFS: &str = "ui_prefs";
+/// SPEC §6.10: the UI's own JSON (column layouts, saved views…), stored as is.
+pub const UI_PREFS_MAX_BYTES: usize = 256 * 1024;
 pub const K_AUTO_CHECK_UPDATES: &str = "auto_check_updates";
 pub const K_EXTRA_PAYPAL_DOMAINS: &str = "extra_paypal_domains";
 
@@ -31,6 +37,7 @@ pub enum Theme {
     Dark,
     Light,
     System,
+    HighContrast,
 }
 
 impl Theme {
@@ -39,6 +46,54 @@ impl Theme {
             Theme::Dark => "dark",
             Theme::Light => "light",
             Theme::System => "system",
+            Theme::HighContrast => "high_contrast",
+        }
+    }
+}
+
+/// SPEC §6.10: accent colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Accent {
+    Blue,
+    Emerald,
+    Violet,
+    Amber,
+    Rose,
+    Slate,
+}
+
+impl Accent {
+    const ALL: [Accent; 6] =
+        [Accent::Blue, Accent::Emerald, Accent::Violet, Accent::Amber, Accent::Rose, Accent::Slate];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Accent::Blue => "blue",
+            Accent::Emerald => "emerald",
+            Accent::Violet => "violet",
+            Accent::Amber => "amber",
+            Accent::Rose => "rose",
+            Accent::Slate => "slate",
+        }
+    }
+}
+
+/// SPEC §6.10: table density.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Density {
+    Comfortable,
+    Regular,
+    Compact,
+}
+
+impl Density {
+    fn as_str(self) -> &'static str {
+        match self {
+            Density::Comfortable => "comfortable",
+            Density::Regular => "regular",
+            Density::Compact => "compact",
         }
     }
 }
@@ -66,6 +121,11 @@ impl ExcelMode {
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub theme: Theme,
+    pub accent: Accent,
+    pub density: Density,
+    /// 90..150 (percent).
+    pub ui_scale: i64,
+    pub ui_prefs: String,
     pub default_commission_bps: i64,
     pub fee_estimate_enabled: bool,
     pub fee_estimate_bps: i64,
@@ -100,6 +160,10 @@ where
 #[serde(rename_all = "camelCase")]
 pub struct SettingsPatch {
     pub theme: Option<Theme>,
+    pub accent: Option<Accent>,
+    pub density: Option<Density>,
+    pub ui_scale: Option<i64>,
+    pub ui_prefs: Option<String>,
     pub default_commission_bps: Option<i64>,
     pub fee_estimate_enabled: Option<bool>,
     pub fee_estimate_bps: Option<i64>,
@@ -178,10 +242,23 @@ pub fn load(conn: &Connection) -> AppResult<Settings> {
     let theme = match get_raw(conn, K_THEME)?.as_deref() {
         Some("dark") => Theme::Dark,
         Some("light") => Theme::Light,
+        Some("high_contrast") => Theme::HighContrast,
         _ => Theme::System,
+    };
+    let accent = get_raw(conn, K_ACCENT)?
+        .and_then(|a| Accent::ALL.into_iter().find(|x| x.as_str() == a))
+        .unwrap_or(Accent::Blue);
+    let density = match get_raw(conn, K_DENSITY)?.as_deref() {
+        Some("comfortable") => Density::Comfortable,
+        Some("compact") => Density::Compact,
+        _ => Density::Regular,
     };
     Ok(Settings {
         theme,
+        accent,
+        density,
+        ui_scale: get_i64(conn, K_UI_SCALE, 100)?.clamp(90, 150),
+        ui_prefs: get_raw(conn, K_UI_PREFS)?.unwrap_or_else(|| "{}".into()),
         default_commission_bps: get_i64(conn, K_DEFAULT_COMMISSION_BPS, 2500)?,
         fee_estimate_enabled: get_bool(conn, K_FEE_ESTIMATE_ENABLED, false)?,
         fee_estimate_bps: get_i64(conn, K_FEE_ESTIMATE_BPS, 440)?,
@@ -214,6 +291,21 @@ impl Core {
         let tx = conn.unchecked_transaction()?;
         if let Some(t) = patch.theme {
             set_raw(&tx, K_THEME, t.as_str())?;
+        }
+        if let Some(a) = patch.accent {
+            set_raw(&tx, K_ACCENT, a.as_str())?;
+        }
+        if let Some(d) = patch.density {
+            set_raw(&tx, K_DENSITY, d.as_str())?;
+        }
+        if let Some(sc) = patch.ui_scale {
+            set_raw(&tx, K_UI_SCALE, &sc.clamp(90, 150).to_string())?;
+        }
+        if let Some(p) = patch.ui_prefs {
+            if p.len() > UI_PREFS_MAX_BYTES {
+                return Err(AppError::validation("uiPrefs", "تفضيلات الواجهة أكبر من 256 كيلوبايت"));
+            }
+            set_raw(&tx, K_UI_PREFS, &p)?;
         }
         if let Some(b) = patch.default_commission_bps {
             validate_bps(b).map_err(|e| e.with_field("defaultCommissionBps"))?;
