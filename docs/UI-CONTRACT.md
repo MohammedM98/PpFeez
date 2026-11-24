@@ -415,9 +415,9 @@ export type ExcelExportResult = { path: string; sheets: number; rows: number; ex
 export type CustomerExcel = { path: string; updatedAt: IsoDate | null; exists: boolean; addToExcelByDefault: boolean };
 export type CustomerExcelItemRef = { kind: 'txn' | 'ledger' | 'payout'; id: number };
 export type CustomerExcelPreview = {
-  toAdd: { kind: 'txn' | 'ledger'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];
-  duplicates: { kind: 'txn' | 'ledger'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];
-  notAllowed: { kind: 'txn' | 'ledger'; id: number; reasonAr: string }[];   // غير معتمدة، قيد اعتماد، عميل آخر...
+  toAdd: { kind: 'txn' | 'ledger' | 'payout'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];
+  duplicates: { kind: 'txn' | 'ledger' | 'payout'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];
+  notAllowed: { kind: 'txn' | 'ledger' | 'payout'; id: number; reasonAr: string }[];   // غير معتمدة، قيد اعتماد، عميل آخر...
   olderThanLastRow: number;
 };
 // customer_excel_get({ customerId }): CustomerExcel | null
