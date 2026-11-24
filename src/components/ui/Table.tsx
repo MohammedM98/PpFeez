@@ -161,7 +161,7 @@ export function Cell({ className, align = 'start', sticky, stickyOffset, inner, 
       {...(inner ? { 'data-sticky': 'start-inner' } : stickyAttr(sticky))}
       data-align={align}
       className={composeRenderProps(className, (c) =>
-        cx('t-cell h-12 border-b border-(--row-rule) px-2.5 align-middle leading-tight outline-none whitespace-nowrap group-last/row:border-b-0',
+        cx('t-cell h-(--row-h) border-b border-(--row-rule) px-2.5 align-middle leading-tight outline-none whitespace-nowrap group-last/row:border-b-0',
           'data-[focus-visible]:outline-2 data-[focus-visible]:-outline-offset-2 data-[focus-visible]:outline-focus',
           sticky && 'sticky z-[1]', align === 'end' ? 'text-end' : 'text-start', c))}
     />

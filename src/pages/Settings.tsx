@@ -3,16 +3,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { MenuTrigger, Menu, MenuItem, Popover, Radio, RadioGroup, type Key } from 'react-aria-components';
 import { FileSpreadsheet, FolderOpen, HardDriveDownload, MoreHorizontal, Plus, RefreshCw, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
-import type { BackupFile, Mailbox, ResetScope, Settings as SettingsT, Theme } from '@/lib/contract';
+import type { BackupFile, Mailbox, ResetScope, Settings as SettingsT } from '@/lib/contract';
 import { amountTextToMinor2, bpsToPercentText, formatMinor, percentTextToBps } from '@/lib/money';
-import { useTheme } from '@/lib/theme';
 import { useAction } from '@/lib/useAction';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Switch } from '@/components/ui/Switch';
 import { Select } from '@/components/ui/Field';
-import { Segmented } from '@/components/ui/Segmented';
 import { TextField } from '@/components/ui/TextField';
 import { Dialog } from '@/components/ui/Dialog';
 import { DangerConfirm } from '@/components/ui/DangerConfirm';
@@ -24,6 +22,7 @@ import { DateCell } from '@/components/transactions/bits';
 import { cx } from '@/components/ui/cx';
 import { pullRangeLabel } from '@/lib/strings';
 import { UpdateSettingsRows } from '@/components/update/Updates';
+import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
 import { MailboxDialog } from '@/components/settings/MailboxForm';
 import { LockPasswordDialog } from '@/components/settings/LockPasswordDialog';
 import { useExcelUpdate } from '@/components/settings/useExcelUpdate';
@@ -198,7 +197,7 @@ function PullsSection() {
             <th className="text-start"><HeadLabel>البريد والنطاق</HeadLabel></th><th className="text-start"><HeadLabel>النتيجة</HeadLabel></th>
             {PULL_COUNTS.map((c, i) => <th key={c} className={cx('!px-1.5 text-end', i === PULL_COUNTS.length - 1 && '!pe-4')}><HeadLabel>{c}</HeadLabel></th>)}
           </tr></thead>
-          <tbody className="[&>tr>td]:h-12 [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:bg-surface [&>tr>td]:px-2.5 [&>tr>td]:leading-tight [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
+          <tbody className="[&>tr>td]:h-(--row-h) [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:bg-surface [&>tr>td]:px-2.5 [&>tr>td]:leading-tight [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
             {runs.data?.map((r) => (
               <tr key={r.id}>
                 <td className="sticky z-[1] !ps-4" data-sticky="start" style={{ insetInlineStart: 0 }}><DateCell iso={r.startedAt} /></td>
@@ -378,13 +377,9 @@ function SecuritySection({ s }: { s: SettingsT }) {
 }
 
 function AppearanceSection() {
-  const { theme, setTheme } = useTheme();
   return (
-    <Section id="appearance" title="المظهر">
-      <Row label="المظهر">
-        <Segmented<Theme> label="المظهر" value={theme} onChange={setTheme} className="w-[300px]"
-          options={[{ id: 'dark', label: 'داكن' }, { id: 'light', label: 'فاتح' }, { id: 'system', label: 'حسب النظام' }]} />
-      </Row>
+    <Section id="appearance" title="المظهر" description="الألوان والكثافة والحجم، تُطبَّق فوراً على كل الشاشات">
+      <AppearanceSettings />
     </Section>
   );
 }

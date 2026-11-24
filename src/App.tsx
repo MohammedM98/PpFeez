@@ -1,13 +1,12 @@
 import { createHashRouter, Navigate, RouterProvider } from 'react-router';
 import { QueryCache, QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import type { Theme } from '@/lib/contract';
 import { toAppError } from '@/lib/api';
 import { LockPage } from '@/pages/Lock';
 import { OnboardingPage } from '@/pages/Onboarding';
 import { I18nProvider } from 'react-aria-components';
 import { api } from '@/lib/api';
-import { ThemeProvider } from '@/lib/theme';
+import { ThemeProvider, rememberedAppearance, type Appearance } from '@/lib/theme';
 import { Shell } from '@/components/layout/Shell';
 import { TransactionsPage } from '@/pages/Transactions';
 import { CustomersPage } from '@/pages/Customers';
@@ -30,9 +29,6 @@ const queryClient: QueryClient = new QueryClient({
 });
 
 // Per-viewer convenience so the lock screen keeps the last theme (settings may be refused while locked).
-const THEME_KEY = 'ppfeez.theme';
-const lastTheme = (): Theme => { try { return (localStorage.getItem(THEME_KEY) as Theme) || 'dark'; } catch { return 'dark'; } };
-const rememberTheme = (t: Theme) => { try { localStorage.setItem(THEME_KEY, t); } catch { /* ignore */ } };
 
 /** Locks the app after N idle minutes when the lock is enabled (Settings.autoLockMinutes). */
 function useAutoLock(minutes: number | null | undefined, enabled: boolean) {
@@ -73,9 +69,9 @@ function Gate() {
   const open = !!status.data && !status.data.locked;
   const settings = useQuery({ queryKey: ['settings'], queryFn: api.getSettings, enabled: open });
   useAutoLock(settings.data?.autoLockMinutes, open && !!status.data?.lockEnabled && !!status.data?.onboardingDone);
-  useEffect(() => { if (settings.data) rememberTheme(settings.data.theme); }, [settings.data]);
   if (!status.data) return null;
-  const theme = settings.data?.theme ?? lastTheme();
+  const sd = settings.data;
+  const appearance: Appearance = sd ? { theme: sd.theme, accent: sd.accent ?? 'blue', density: sd.density ?? 'regular', uiScale: sd.uiScale ?? 100 } : rememberedAppearance();
   let body;
   if (status.data.locked) body = <LockPage status={status.data} />;
   else if (!status.data.onboardingDone) body = <OnboardingPage />;
@@ -90,7 +86,7 @@ function Gate() {
     </PullProvider>
   );
   return (
-    <ThemeProvider initial={theme} onChange={(t) => { rememberTheme(t); void api.updateSettings({ theme: t }); }}>
+    <ThemeProvider initial={appearance} onChange={(patch) => void api.updateSettings(patch)}>
       {body}
       <Toasts />
     </ThemeProvider>

@@ -254,7 +254,7 @@ export function DashboardPage() {
                   <th className="!pe-4 text-end"><HeadLabel>مستحق للعملاء الآن</HeadLabel></th>
                 </tr>
               </thead>
-              <tbody className="[&>tr>td]:h-12 [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:bg-surface [&>tr>td]:px-2.5 [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
+              <tbody className="[&>tr>td]:h-(--row-h) [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:bg-surface [&>tr>td]:px-2.5 [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
                 {s?.byCurrency.map((c) => (
                   <tr key={c.currency}>
                     <td className="sticky z-[1] !ps-4 font-medium" data-sticky="start" style={{ insetInlineStart: 0 }}>{c.currency}</td>

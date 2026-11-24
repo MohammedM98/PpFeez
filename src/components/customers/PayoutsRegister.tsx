@@ -61,7 +61,7 @@ export function PayoutsRegister({ customerId, currencies }: { customerId: number
               <th className="text-start"><HeadLabel>الحالة</HeadLabel></th>
             </tr>
           </thead>
-          <tbody className="[&>tr>td]:h-12 [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:bg-surface [&>tr>td]:px-2.5 [&>tr>td]:leading-tight [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
+          <tbody className="[&>tr>td]:h-(--row-h) [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:bg-surface [&>tr>td]:px-2.5 [&>tr>td]:leading-tight [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
             {rows.map((p) => {
               const [lo, hi] = rangeEnds(p.rangeLabel);
               const cancelled = p.status === 'cancelled';

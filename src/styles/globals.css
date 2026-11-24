@@ -1,11 +1,12 @@
-@import 'tailwindcss';
+/* HeroUI v3 (SPEC 6.10): brings Tailwind v4, its component styles and theme layer; our tokens below feed its variables */
+@import '@heroui/styles';
 @plugin 'tailwindcss-react-aria-components';
 
 @import '@fontsource/ibm-plex-sans-arabic/400.css';
 @import '@fontsource/ibm-plex-sans-arabic/500.css';
 @import '@fontsource/ibm-plex-sans-arabic/600.css';
 
-@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *, [data-theme='high_contrast'], [data-theme='high_contrast'] *));
 
 /*
  * Theme tokens ("Cobalt", chosen by the owner): graphite neutrals for every surface,
@@ -126,6 +127,85 @@
   body:has([data-detail-panel]) .toasts { left: calc(392px + 28px) !important; }
   .t-foot { background: linear-gradient(color-mix(in oklab, var(--raised) 40%, transparent), color-mix(in oklab, var(--raised) 40%, transparent)), var(--surface); }
 }
+
+/* ---------- high contrast (SPEC 6.10): black canvas, white text, solid borders, yellow focus ---------- */
+[data-theme='high_contrast'] {
+  color-scheme: dark;
+  --sunken: #000000;
+  --bg: #000000;
+  --surface: #000000;
+  --raised: #1f1f1f;
+  --fg: #ffffff;
+  --fg-2: #ffffff;
+  --fg-3: #e6e6e6;
+  --accent-fg: #000000;
+  --line: #a3a3a3;
+  --line-strong: #ffffff;
+  --pos: #5cf29a;
+  --pos-soft: color-mix(in oklab, #5cf29a 22%, transparent);
+  --neg: #ff8080;
+  --neg-soft: color-mix(in oklab, #ff8080 22%, transparent);
+  --warn: #ffd24d;
+  --warn-soft: color-mix(in oklab, #ffd24d 22%, transparent);
+  --focus: #ffd400;
+  --shadow-float: 0 0 0 1px #ffffff;
+  --sticky-shadow: rgb(255 255 255 / 0.35);
+}
+
+/* ---------- accents (SPEC 6.10): each checked for 4.5:1 — white on the fill, the ink on the surface ---------- */
+[data-theme='dark'][data-accent='emerald'] { --accent: #047857; --accent-ink: #34d399; }
+[data-theme='light'][data-accent='emerald'] { --accent: #047857; --accent-ink: #047857; }
+[data-theme='dark'][data-accent='violet'] { --accent: #6d28d9; --accent-ink: #a78bfa; }
+[data-theme='light'][data-accent='violet'] { --accent: #6d28d9; --accent-ink: #6d28d9; }
+[data-theme='dark'][data-accent='amber'] { --accent: #b45309; --accent-ink: #fbbf24; }
+[data-theme='light'][data-accent='amber'] { --accent: #b45309; --accent-ink: #b45309; }
+[data-theme='dark'][data-accent='rose'] { --accent: #be123c; --accent-ink: #fb7185; }
+[data-theme='light'][data-accent='rose'] { --accent: #be123c; --accent-ink: #be123c; }
+[data-theme='dark'][data-accent='slate'] { --accent: #475569; --accent-ink: #cbd5e1; }
+[data-theme='light'][data-accent='slate'] { --accent: #475569; --accent-ink: #334155; }
+[data-theme='dark'] { --accent-soft: color-mix(in oklab, var(--accent) 22%, transparent); }
+[data-theme='light'] { --accent-soft: color-mix(in oklab, var(--accent) 10%, transparent); }
+/* high contrast: the accent is a bright fill with black text, its ink the same bright colour */
+[data-theme='high_contrast'] { --accent: #7fa2ff; --accent-ink: #9db8ff; --accent-soft: color-mix(in oklab, #7fa2ff 28%, transparent); }
+[data-theme='high_contrast'][data-accent='emerald'] { --accent: #34d399; --accent-ink: #5eead4; }
+[data-theme='high_contrast'][data-accent='violet'] { --accent: #c4b5fd; --accent-ink: #c4b5fd; }
+[data-theme='high_contrast'][data-accent='amber'] { --accent: #fbbf24; --accent-ink: #fcd34d; }
+[data-theme='high_contrast'][data-accent='rose'] { --accent: #fda4af; --accent-ink: #fda4af; }
+[data-theme='high_contrast'][data-accent='slate'] { --accent: #e2e8f0; --accent-ink: #e2e8f0; }
+
+/* ---------- HeroUI v3 variables follow ours, so its components match every theme and accent ---------- */
+:root, [data-theme] {
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --surface-foreground: var(--fg);
+  --surface-secondary: var(--raised);
+  --surface-secondary-foreground: var(--fg);
+  --surface-tertiary: var(--raised);
+  --surface-tertiary-foreground: var(--fg);
+  --overlay: var(--surface);
+  --overlay-foreground: var(--fg);
+  --muted: var(--fg-3);
+  --default: var(--raised);
+  --default-foreground: var(--fg);
+  --accent-foreground: var(--accent-fg);
+  --field-background: var(--surface);
+  --field-foreground: var(--fg);
+  --field-placeholder: var(--fg-3);
+  --success: var(--pos);
+  --warning: var(--warn);
+  --danger: var(--neg);
+  --border: var(--line);
+  --separator: var(--line);
+  --link: var(--accent-ink);
+  --segment: var(--raised);
+  --segment-foreground: var(--fg);
+  --radius: var(--r-ctl);
+}
+
+/* ---------- density (SPEC 6.10): row height of every table ---------- */
+:root, [data-density='regular'] { --row-h: 48px; }
+[data-density='comfortable'] { --row-h: 56px; }
+[data-density='compact'] { --row-h: 36px; }
 
 @layer base {
   html {

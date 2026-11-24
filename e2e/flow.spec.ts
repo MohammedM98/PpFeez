@@ -637,3 +637,23 @@ for (const theme of ['dark', 'light'] as const) {
     expect(errors).toEqual([]);
   });
 }
+
+test('0.6.0 appearance: theme × accent, density and scale apply at once and stay', async ({ page }) => {
+  await page.goto('/?theme=dark#/settings');
+  await page.getByRole('link', { name: 'المظهر' }).click();
+  const html = page.locator('html');
+  await page.getByRole('radio', { name: 'زمردي' }).click({ force: true });
+  await expect(html).toHaveAttribute('data-accent', 'emerald');
+  await page.getByRole('radio', { name: /مضغوط/ }).click({ force: true });
+  await expect(html).toHaveAttribute('data-density', 'compact');
+  await page.getByRole('radio', { name: /تباين عالٍ/ }).click({ force: true });
+  await expect(html).toHaveAttribute('data-theme', 'high_contrast');
+  // compact rows are shorter in every table
+  await page.getByRole('link', { name: 'المعاملات' }).click();
+  const h = await page.locator('main table tbody tr').first().evaluate((tr) => tr.getBoundingClientRect().height);
+  expect(h).toBeLessThan(40);
+  // the choice is saved: a later visit in the same session keeps it (settings) and so does start-up (local copy)
+  const stored = await page.evaluate(() => localStorage.getItem('ppfeez.appearance'));
+  expect(JSON.parse(stored!)).toMatchObject({ theme: 'high_contrast', accent: 'emerald', density: 'compact' });
+  await page.screenshot({ animations: 'disabled', path: 'e2e/screenshots/hc-40-appearance.png' });
+});
