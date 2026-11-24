@@ -25,6 +25,9 @@ for (const [theme, accent] of [['light', 'blue'], ['dark', 'blue'], ['high_contr
       await expect(page.locator('main h1, main [role=heading]').first()).toBeVisible();
       await page.waitForTimeout(300);
       problems.push(...await scan(page, s));
+      if (s === 'customers/8' || s === 'transactions') {
+        await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/mode-${theme}-${accent}-${s.replace('/', '-')}.png` });
+      }
     }
     // dialogs: assign, the shortcuts sheet, the palette
     await page.goto(`/?theme=${theme}&accent=${accent}#/transactions`);
