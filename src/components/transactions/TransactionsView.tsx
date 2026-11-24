@@ -2,12 +2,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEve
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router';
 import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
-import { Tabs, TabList, Tab, TabPanel, Menu, MenuItem, Popover, type SortDescriptor, type Selection, type Key } from 'react-aria-components';
+import { DialogTrigger, Dialog as RacDialog, Tabs, TabList, Tab, TabPanel, Menu, MenuItem, Popover, type SortDescriptor, type Selection, type Key } from 'react-aria-components';
 import { Check, CornerDownLeft, FileCheck2, FileSpreadsheet, MoreHorizontal, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
 import { useAction } from '@/lib/useAction';
 import { toast } from '@/components/ui/Toast';
-import type { CustomerExcelItemRef, Period, Transaction, TxnAction, TxnFilter, TxnSortKey, TxnStatus } from '@/lib/contract';
+import type { CustomerExcelItemRef, TxnListResult, Period, Transaction, TxnAction, TxnFilter, TxnSortKey, TxnStatus } from '@/lib/contract';
 import { AddToStatementDialog } from '@/components/customers/CustomerExcel';
 import { txn as s, txnCountLabel, txnStatus } from '@/lib/strings';
 import { formatBps } from '@/lib/money';
@@ -446,7 +446,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
           </Popover>
         )}
         {padBottom > 0 && <div aria-hidden style={{ height: padBottom }} />}
-        {!!totals?.length && (
+        {totals?.length === 1 && (
           <TotalsTable label={s.totals} minWidth={minWidth} widths={widths}>
             {totals.map((x, i) => (
               <tr key={x.currency}>
@@ -468,6 +468,8 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
             ))}
           </TotalsTable>
         )}
+        {/* several currencies: one compact line at the end instead of a totals row each; details on demand */}
+        {(totals?.length ?? 0) > 1 && <TotalsLine totals={totals!} inbox={inbox} />}
       </TableFrame>
       </div>
 
@@ -476,6 +478,53 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
       {statementItems && customer.data && (
         <AddToStatementDialog customer={customer.data} items={statementItems} onClose={() => setStatementItems(null)} onDone={() => setSelected(new Set())} />
       )}
+    </div>
+  );
+}
+
+type Totals = NonNullable<TxnListResult['totals']>;
+
+/** "إجمالي المعروض: USD 466.94 · EUR 200.46 …" with the full breakdown per currency in a popover. */
+function TotalsLine({ totals, inbox }: { totals: Totals; inbox: boolean }) {
+  const pick = (x: Totals[number]) => (inbox ? x.netMinor : x.customerAmountMinor);
+  return (
+    <div className="sticky start-0 flex h-10 w-full min-w-0 items-center gap-3 border-t border-line bg-surface px-4 text-[13px]" role="group" aria-label={s.totals}>
+      <span className="shrink-0 text-fg-3">{s.totals} ({inbox ? 'الصافي' : 'للعميل'}):</span>
+      <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        {totals.map((x, i) => (
+          <span key={x.currency} className="flex shrink-0 items-center gap-2">
+            {i > 0 && <span className="text-fg-3">·</span>}
+            <Amount minor={pick(x)} currency={x.currency} className="font-medium text-fg" />
+          </span>
+        ))}
+      </span>
+      <DialogTrigger>
+        <Button size="sm" variant="quiet" className="shrink-0">التفاصيل</Button>
+        <Popover placement="top end" className="rounded-card border border-line bg-surface p-3 shadow-(--shadow-float) outline-none">
+          <RacDialog aria-label={`${s.totals} لكل عملة`} className="outline-none">
+            <table className="text-[13px]" aria-label={`${s.totals} لكل عملة`}>
+              <thead>
+                <tr className="text-fg-3 [&>th]:px-2 [&>th]:pb-1.5 [&>th]:font-normal">
+                  <th className="text-start">العملة</th><th className="text-end">العدد</th><th className="text-end">{s.cols.gross}</th>
+                  <th className="text-end">{s.cols.fee}</th><th className="text-end">{s.cols.net}</th>{!inbox && <th className="text-end">{s.cols.toCustomer}</th>}
+                </tr>
+              </thead>
+              <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1">
+                {totals.map((x) => (
+                  <tr key={x.currency} className="border-t border-line">
+                    <td className="num">{x.currency}</td>
+                    <td className="num text-end text-fg-2">{x.count}</td>
+                    <td className="text-end"><Amount minor={x.grossMinor} currency={x.currency} showCurrency={false} /></td>
+                    <td className="text-end"><Amount minor={x.feeMinor} currency={x.currency} showCurrency={false} /></td>
+                    <td className="text-end"><Amount minor={x.netMinor} currency={x.currency} showCurrency={false} /></td>
+                    {!inbox && <td className="text-end"><Amount minor={x.customerAmountMinor} currency={x.currency} showCurrency={false} className="font-medium" /></td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </RacDialog>
+        </Popover>
+      </DialogTrigger>
     </div>
   );
 }
