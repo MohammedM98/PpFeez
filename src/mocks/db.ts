@@ -388,3 +388,18 @@ export function addStressData(db: Db) {
     runningBalanceMinor: 0, reversedByEntryId: null,
   });
 }
+
+/** `?rows=N`: N more unassigned transactions in the inbox, for the long-list checks (SPEC 6.10). */
+export function addManyRows(db: Db, n: number) {
+  const names = ['Liam Turner', 'Ava Collins', 'Noah Bennett', 'Chloe Price', 'Ethan Brooks', 'Mia Foster', 'Lucas Gray', 'Emma Reed'];
+  const curs = ['USD', 'EUR', 'TRY'];
+  for (let i = 0; i < n; i++) {
+    const t = mkTxn({
+      id: 100000 + i, d: Math.floor(i / 40), h: 23 - (i % 20), payer: `${names[i % names.length]} ${i + 1}`, email: `buyer${i + 1}@example.com`,
+      note: i % 3 ? `Order #${10000 + i}` : null, cur: curs[i % curs.length], gross: 1000 + ((i * 7919) % 250000), fee: i % 9 ? 50 + (i % 400) : null,
+      pp: `9ZZ${String(i).padStart(14, '0')}`,
+    });
+    t.rawEmailId = null;
+    db.txns.push(t);
+  }
+}

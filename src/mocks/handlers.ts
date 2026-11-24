@@ -67,6 +67,13 @@ function allowedActions(t: TxnRow): TxnAction[] {
   }
 }
 
+/** refunds and reversals (few), looked up once per change of the list rather than once per row */
+let refundCache: { n: TxnRow[]; len: number; rows: TxnRow[] } | null = null;
+function refundRows() {
+  if (!refundCache || refundCache.n !== db.txns || refundCache.len !== db.txns.length) refundCache = { n: db.txns, len: db.txns.length, rows: db.txns.filter((r) => r.type !== 'payment') };
+  return refundCache.rows;
+}
+
 function view(t: TxnRow): Transaction {
   const c = customerName(t.customerId);
   const mb = t.mailboxId ? db.mailboxes.find((m) => m.id === t.mailboxId) : null;
@@ -75,7 +82,7 @@ function view(t: TxnRow): Transaction {
     ...rest,
     customer: c ? { id: c.id, name: c.name } : null,
     mailbox: mb ? { id: mb.id, label: mb.label } : null,
-    refundedBy: db.txns.filter((r) => r.type !== 'payment' && r.relatedTxnId === t.paypalTxnId).map((r) => ({ id: r.id, type: r.type, grossMinor: r.grossMinor })),
+    refundedBy: refundRows().filter((r) => r.relatedTxnId === t.paypalTxnId).map((r) => ({ id: r.id, type: r.type, grossMinor: r.grossMinor })),
     allowedActions: allowedActions(t),
     payout: payoutOf(t.id),
     inCustomerExcel: !!t.customerId && inExcel(t.customerId, 'txn', t.id),

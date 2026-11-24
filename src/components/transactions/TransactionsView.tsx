@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, MenuTrigger, Menu, MenuItem, Popover, type SortDescriptor, type Selection, type Key } from 'react-aria-components';
-import { Check, ChevronLeft, ChevronRight, CornerDownLeft, FileCheck2, FileSpreadsheet, MoreHorizontal, X } from 'lucide-react';
+import { Check, CornerDownLeft, FileCheck2, FileSpreadsheet, MoreHorizontal, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
 import { useAction } from '@/lib/useAction';
 import { toast } from '@/components/ui/Toast';
@@ -20,6 +20,7 @@ import { Table, TableFrame, TableHeader, Column, TableBody, Row, Cell, SELECT_W,
 import { cx } from '@/components/ui/cx';
 import { Trunc } from '@/components/ui/Trunc';
 import { DateCell, FeeCell, PayerCell } from './bits';
+import { useRowWindow } from '@/components/ui/useRowWindow';
 import { ColumnResizer, ColumnsMenu, useColumns, type ColDef } from '@/components/ui/Columns';
 import { DetailPanel } from './DetailPanel';
 import { actionLabel, useTxnActions } from './TxnActions';
@@ -35,7 +36,7 @@ const TABS = {
   // approved transfers live in the customer's statement (SPEC 6.5); this tab is what awaits approval
   customer: ['pending_approval'] as TxnStatus[],
 };
-const PAGE_SIZE = 50;
+const BATCH = 500; // rows per request (the contract's maximum)
 /** the payer column takes the remaining width, never less than this */
 const PAYER_MIN = '160px';
 const END = new Set(['grossMinor', 'feeMinor', 'netMinor', 'commission', 'customerAmountMinor']);
@@ -60,10 +61,10 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
   const [needsFeeOnly, setNeedsFeeOnly] = useState(params.get('needsFee') === '1');
   const [needsReviewOnly, setNeedsReviewOnly] = useState(params.get('needsReview') === '1');
   const [sort, setSort] = useState<SortDescriptor>({ column: 'occurredAt', direction: 'descending' });
-  const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Selection>(new Set());
   const [detailId, setDetailId] = useState<number | null>(params.get('detail') ? Number(params.get('detail')) : null);
   const [flashId, setFlashId] = useState<number | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const actions = useTxnActions();
   const { run } = useAction();
   const customer = useQuery({ queryKey: ['customer', customerId], queryFn: () => api.customerGet(customerId!), enabled: !inbox });
@@ -94,7 +95,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
     needsReviewOnly: (inbox && needsReviewOnly) || undefined,
   }), [currency, mailboxId, inbox, customerId, period.from, period.to, needsFeeOnly, needsReviewOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { setPage(1); setSelected(new Set()); }, [filter, tab, sort]);
+  useEffect(() => { setSelected(new Set()); scrollRef.current?.scrollTo({ top: 0 }); }, [filter, tab, sort]);
 
   const counts = useQuery({ queryKey: ['txn_counts', filter], queryFn: () => api.txnCounts(filter) });
   // the customer page opens on "awaiting approval" when there is something there, otherwise on "approved"
@@ -105,40 +106,77 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
   }, [inbox, counts.data]);
 
   const sortInput = { key: sort.column as TxnSortKey, dir: sort.direction === 'ascending' ? 'asc' as const : 'desc' as const };
-  const list = useQuery({
-    queryKey: ['txn_list', filter, tab, sort, page],
-    queryFn: () => api.txnList({ ...filter, status: tab }, sortInput, page, PAGE_SIZE),
-    placeholderData: keepPreviousData,
-  });
+  // long lists (SPEC 6.10): no pages on screen. The first batch gives the count and totals; the rows in
+  // view are drawn and the batch they sit in is fetched from the core when it is needed (and kept).
+  const listKey = ['txn_list', filter, tab, sort] as const;
+  const fetchPage = (n: number) => api.txnList({ ...filter, status: tab }, sortInput, n, BATCH);
+  const list = useQuery({ queryKey: [...listKey, 1], queryFn: () => fetchPage(1), placeholderData: keepPreviousData });
   const mailboxes = useQuery({ queryKey: ['mailboxes'], queryFn: api.mailboxList, enabled: inbox });
-  const currencies = useMemo(() => [...new Set(['USD', 'EUR', 'TRY', ...(list.data?.totals.map((t) => t.currency) ?? [])])], [list.data]);
-
-  const items = useMemo(() => list.data?.items ?? [], [list.data]);
-  const selectedRows: Transaction[] = selected === 'all' ? items : items.filter((t) => selected.has(t.id));
-  const pages = Math.max(1, Math.ceil((list.data?.total ?? 0) / PAGE_SIZE));
-  const totals = list.data?.totals;
+  const first = list.data;
+  const currencies = useMemo(() => [...new Set(['USD', 'EUR', 'TRY', ...(first?.totals.map((t) => t.currency) ?? [])])], [first]);
+  const total = first?.total ?? 0;
+  const win = useRowWindow(scrollRef, total);
+  const pageNos = useMemo(() => {
+    const out: number[] = [];
+    for (let n = Math.floor(win.start / BATCH) + 1; n <= Math.floor(Math.max(win.end - 1, 0) / BATCH) + 1; n++) if (n > 1) out.push(n);
+    return out;
+  }, [win.start, win.end]);
+  const more = useQueries({ queries: pageNos.map((n) => ({ queryKey: [...listKey, n], queryFn: () => fetchPage(n) })) });
+  const batches = new Map<number, Transaction[]>([[1, first?.items ?? []]]);
+  more.forEach((q, i) => { if (q.data) batches.set(pageNos[i], q.data.items); });
+  const batchKey = [...batches.keys()].join(',') + more.map((q) => q.dataUpdatedAt).join(',') + (list.dataUpdatedAt ?? 0);
+  // the rows of the loaded batches, in order (what the window draws and the selection refers to)
+  const items = useMemo(() => [...batches.entries()].sort((x, y) => x[0] - y[0]).flatMap(([, rows]) => rows), [batchKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const shown = useMemo(() => {
+    const out: Transaction[] = [];
+    for (let i = win.start; i < win.end; i++) {
+      const n = Math.floor(i / BATCH) + 1;
+      const row = batches.get(n)?.[i - (n - 1) * BATCH];
+      if (row) out.push(row);
+    }
+    return out;
+  }, [win.start, win.end, batchKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // rows picked stay known while their batch scrolls away
+  const known = useRef(new Map<number, Transaction>());
+  const fitMax = useRef<{ key: string; f: Record<'gross' | 'fee' | 'net' | 'commission' | 'toCustomer', number> } | null>(null);
+  useEffect(() => { known.current = new Map(); }, [filter, tab, sort]);
+  for (const t of items) known.current.set(t.id, t);
+  const selectedRows: Transaction[] = selected === 'all' ? items : [...selected].flatMap((k) => known.current.get(Number(k)) ?? []);
+  const totals = first?.totals;
+  // while the batch in view is on its way, its "loading" line sits where the eye is, not above the view
+  const waiting = win.windowed && shown.length === 0 && total > 0;
+  const marginTop = waiting ? Math.max(0, win.top - win.head) : win.padTop;
+  const padBottom = waiting ? Math.max(0, win.padBottom + win.padTop + (win.end - win.start) * win.rowH - marginTop - win.rowH) : win.padBottom;
 
   // a row opened from search: bring it into view and mark it for a moment
   useEffect(() => {
     if (flashId === null || !items.some((t) => t.id === flashId)) return;
-    document.querySelector(`[role=row][data-key="${flashId}"]`)?.scrollIntoView({ block: 'center' });
+    const row = document.querySelector(`[role=row][data-key="${flashId}"]`);
+    if (row) row.scrollIntoView({ block: 'center' });
+    else if (scrollRef.current) scrollRef.current.scrollTop = items.findIndex((t) => t.id === flashId) * win.rowH; // not drawn yet
     const t = setTimeout(() => setFlashId(null), 1800);
     return () => clearTimeout(t);
-  }, [flashId, items]);
+  }, [flashId, items, win.rowH]);
 
   // SPEC 6.8.2: approved transfers show whether they are already in the customer's statement
   const showExcel = tab === 'approved';
   const fit = useMemo(() => {
     const col = (row: (t: Transaction) => number | null, tot?: (x: NonNullable<typeof totals>[number]) => number) =>
       amountFit([...items.map((t) => ({ minor: row(t), currency: t.currency })), ...(tot ? (totals ?? []).map((x) => ({ minor: tot(x), currency: x.currency })) : [])]);
-    return {
+    const f = {
       gross: col((t) => t.grossMinor, (x) => x.grossMinor),
       fee: col((t) => t.feeMinor, (x) => x.feeMinor),
       net: col((t) => t.netMinor, (x) => x.netMinor),
       commission: col((t) => t.commissionMinor),
       toCustomer: col((t) => t.customerAmountMinor, (x) => x.customerAmountMinor),
     };
-  }, [items, totals]);
+    // batches come and go while scrolling a long list: columns only ever widen, so nothing jumps
+    const key = JSON.stringify([filter, tab]);
+    const prev = fitMax.current?.key === key ? fitMax.current.f : null;
+    if (prev) for (const k of Object.keys(f) as (keyof typeof f)[]) f[k] = Math.max(f[k], prev[k]);
+    fitMax.current = { key, f };
+    return f;
+  }, [items, totals, filter, tab]);
   const W = useMemo(() => {
     const base = {
       date: '96px', note: inbox ? '130px' : '110px', menu: '48px',
@@ -238,7 +276,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
         </div>
         <div className="ms-auto"><ColumnsMenu cols={cols} /></div>
         {exportSlot && createPortal(
-          <Button variant="secondary" onPress={exportExcel} isDisabled={!list.data?.total}><FileSpreadsheet />تصدير إلى Excel</Button>, exportSlot)}
+          <Button variant="secondary" onPress={exportExcel} isDisabled={!total}><FileSpreadsheet />تصدير إلى Excel</Button>, exportSlot)}
       </div>
 
       {selectedRows.length > 0 && (
@@ -260,8 +298,8 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
         </div>
       )}
 
-      <TableFrame fill>
-        <Table aria-label={inbox ? 'الوارد' : 'معاملات العميل'} selectionMode="multiple" selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
+      <TableFrame fill scrollRef={scrollRef}>
+        <Table style={marginTop ? { marginTop } : undefined} aria-rowcount={total + 1} aria-label={inbox ? 'الوارد' : 'معاملات العميل'} selectionMode="multiple" selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
           sortDescriptor={sort} onSortChange={setSort} onRowAction={(k: Key) => openDetail(Number(k))} minWidth={minWidth}>
           <TableHeader>
             <Column id="occurredAt" allowsSorting isRowHeader width={W.date} sticky="start" stickyOffset={SELECT_W} inner={anyPinned}>{s.cols.date}</Column>
@@ -276,7 +314,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
             ))}
             <Column id="menu" width={W.menu} sticky="end"><span className="sr-only">إجراءات</span></Column>
           </TableHeader>
-          <TableBody items={items} dependencies={[showExcel, inbox, flashId, detailId, fit, colKey]} renderEmptyState={() => (
+          <TableBody items={shown} dependencies={[showExcel, inbox, flashId, detailId, fit, colKey]} renderEmptyState={() => total > 0 ? <p className="py-6 text-center text-fg-3" role="status">جارٍ التحميل…</p> : (
             <div className="py-16 text-center">
               <p className="text-fg-2">{tab === 'unassigned' ? 'الوارد فارغ: كل المعاملات مخصّصة' : tab === 'pending_approval' ? 'لا شيء بانتظار الموافقة' : 'لا معاملات هنا'}</p>
               {inbox && tab === 'unassigned' && <p className="mt-1 text-[13px] text-fg-3">المعاملات المخصّصة في صفحات العملاء، وتجدها بالبحث <kbd className="num rounded border border-line px-1 text-[12px]">Ctrl K</kbd></p>}
@@ -286,21 +324,21 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
               <Row id={t.id} data-opens-detail="" className={cx(flashId === t.id ? '[--row-tint:var(--accent-soft)]' : detailId === t.id && '[--row-tint:var(--raised)]')}>
                 <Cell sticky="start" stickyOffset={SELECT_W} inner={anyPinned}><DateCell iso={t.occurredAt} /></Cell>
                 {columns.map((c) => {
-                  const g = { key: c.id, sticky: c.pinned ? 'start' as const : undefined, stickyOffset: c.offset, inner: c.pinned && !c.last };
+                  const g = { sticky: c.pinned ? 'start' as const : undefined, stickyOffset: c.offset, inner: c.pinned && !c.last };
                   switch (c.id) {
-                    case 'payerName': return <Cell {...g}><PayerCell t={t} /></Cell>;
-                    case 'payerNote': return <Cell {...g}><Trunc className="text-fg-2" title={t.payerNote ?? ''}>{t.payerNote ?? ''}</Trunc></Cell>;
-                    case 'grossMinor': return <Cell {...g} align="end"><Amount fit={fit.gross} minor={t.grossMinor} currency={t.currency} className={t.grossMinor < 0 ? 'text-neg' : ''} /></Cell>;
-                    case 'feeMinor': return <Cell {...g} align="end"><FeeCell t={t} fit={fit.fee} /></Cell>;
-                    case 'netMinor': return <Cell {...g} align="end"><Amount fit={fit.net} minor={t.netMinor} currency={t.currency} showCurrency={false} /></Cell>;
+                    case 'payerName': return <Cell key={c.id} {...g}><PayerCell t={t} /></Cell>;
+                    case 'payerNote': return <Cell key={c.id} {...g}><Trunc className="text-fg-2" title={t.payerNote ?? ''}>{t.payerNote ?? ''}</Trunc></Cell>;
+                    case 'grossMinor': return <Cell key={c.id} {...g} align="end"><Amount fit={fit.gross} minor={t.grossMinor} currency={t.currency} className={t.grossMinor < 0 ? 'text-neg' : ''} /></Cell>;
+                    case 'feeMinor': return <Cell key={c.id} {...g} align="end"><FeeCell t={t} fit={fit.fee} /></Cell>;
+                    case 'netMinor': return <Cell key={c.id} {...g} align="end"><Amount fit={fit.net} minor={t.netMinor} currency={t.currency} showCurrency={false} /></Cell>;
                     case 'commission': return (
-                      <Cell {...g} align="end">
+                      <Cell key={c.id} {...g} align="end">
                         <Amount fit={fit.commission} minor={t.commissionMinor} currency={t.currency} showCurrency={false} className="text-fg-2" />
                         <div className="num text-[12px] text-fg-3">{t.commissionMode === 'percent' && t.commissionBps !== null ? <bdi dir="ltr">{formatBps(t.commissionBps)}</bdi> : t.commissionMode === 'fixed' ? 'ثابتة' : ''}</div>
                       </Cell>
                     );
-                    case 'customerAmountMinor': return <Cell {...g} align="end"><Amount fit={fit.toCustomer} minor={t.customerAmountMinor} currency={t.currency} showCurrency={false} className="font-medium" /></Cell>;
-                    default: return <Cell {...g}>{t.inCustomerExcel && <span title="في ملف العميل" aria-label="في ملف العميل" className="inline-flex text-pos"><Check className="size-4" strokeWidth={2} /></span>}</Cell>;
+                    case 'customerAmountMinor': return <Cell key={c.id} {...g} align="end"><Amount fit={fit.toCustomer} minor={t.customerAmountMinor} currency={t.currency} showCurrency={false} className="font-medium" /></Cell>;
+                    default: return <Cell key={c.id} {...g}>{t.inCustomerExcel && <span title="في ملف العميل" aria-label="في ملف العميل" className="inline-flex text-pos"><Check className="size-4" strokeWidth={2} /></span>}</Cell>;
                   }
                 })}
                 <Cell sticky="end" className="pe-2">
@@ -320,6 +358,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
             )}
           </TableBody>
         </Table>
+        {padBottom > 0 && <div aria-hidden style={{ height: padBottom }} />}
         {!!totals?.length && (
           <TotalsTable label={s.totals} minWidth={minWidth} widths={widths}>
             {totals.map((x, i) => (
@@ -327,14 +366,14 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
                 <TotalsCell sticky="start" />
                 <TotalsCell sticky="start" stickyOffset={SELECT_W} className="text-[13px] text-fg-3">{i === 0 ? s.totals : ''}</TotalsCell>
                 {columns.map((c) => {
-                  const g = { key: c.id, sticky: c.pinned ? 'start' as const : undefined, stickyOffset: c.offset };
+                  const g = { sticky: c.pinned ? 'start' as const : undefined, stickyOffset: c.offset };
                   switch (c.id) {
-                    case 'payerName': return <TotalsCell {...g} className="text-[13px] text-fg-3">{txnCountLabel(x.count)}</TotalsCell>;
-                    case 'grossMinor': return <TotalsCell {...g} align="end"><Amount fit={fit.gross} minor={x.grossMinor} currency={x.currency} className="text-fg-2" /></TotalsCell>;
-                    case 'feeMinor': return <TotalsCell {...g} align="end"><Amount fit={fit.fee} minor={x.feeMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>;
-                    case 'netMinor': return <TotalsCell {...g} align="end"><Amount fit={fit.net} minor={x.netMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>;
-                    case 'customerAmountMinor': return <TotalsCell {...g} align="end"><Amount fit={fit.toCustomer} minor={x.customerAmountMinor} currency={x.currency} showCurrency={false} className="font-medium text-fg" /></TotalsCell>;
-                    default: return <TotalsCell {...g} />;
+                    case 'payerName': return <TotalsCell key={c.id} {...g} className="text-[13px] text-fg-3">{txnCountLabel(x.count)}</TotalsCell>;
+                    case 'grossMinor': return <TotalsCell key={c.id} {...g} align="end"><Amount fit={fit.gross} minor={x.grossMinor} currency={x.currency} className="text-fg-2" /></TotalsCell>;
+                    case 'feeMinor': return <TotalsCell key={c.id} {...g} align="end"><Amount fit={fit.fee} minor={x.feeMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>;
+                    case 'netMinor': return <TotalsCell key={c.id} {...g} align="end"><Amount fit={fit.net} minor={x.netMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>;
+                    case 'customerAmountMinor': return <TotalsCell key={c.id} {...g} align="end"><Amount fit={fit.toCustomer} minor={x.customerAmountMinor} currency={x.currency} showCurrency={false} className="font-medium text-fg" /></TotalsCell>;
+                    default: return <TotalsCell key={c.id} {...g} />;
                   }
                 })}
                 <TotalsCell sticky="end" />
@@ -344,16 +383,6 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
         )}
       </TableFrame>
 
-      {pages > 1 && (
-        <nav className="mt-3 flex items-center justify-between text-[13px] text-fg-3" aria-label="الصفحات">
-          <span className="num">{(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, list.data?.total ?? 0)} من {list.data?.total}</span>
-          <div className="flex items-center gap-1">
-            <Button size="sm" variant="quiet" isDisabled={page <= 1} onPress={() => setPage(page - 1)}><ChevronRight />السابقة</Button>
-            <span className="num px-2">{page} / {pages}</span>
-            <Button size="sm" variant="quiet" isDisabled={page >= pages} onPress={() => setPage(page + 1)}>التالية<ChevronLeft /></Button>
-          </div>
-        </nav>
-      )}
 
       {detailId !== null && <DetailPanel id={detailId} onClose={() => openDetail(null)} />}
       {statementItems && customer.data && (

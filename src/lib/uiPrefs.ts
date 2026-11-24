@@ -35,31 +35,43 @@ export function parsePrefs(raw: string | undefined | null): UiPrefs {
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 let flush: (() => void) | undefined;
+/**
+ * The latest preferences not yet confirmed by the core. A settings refetch that lands before the
+ * write would otherwise bring back the older value; until the write is confirmed this one wins.
+ */
+let pending: string | null = null;
+
 function save(qc: QueryClient) {
   clearTimeout(timer);
   flush = () => {
     flush = undefined;
-    const s = qc.getQueryData<Settings>(KEY);
-    if (s) void api.updateSettings({ uiPrefs: s.uiPrefs }).catch(() => undefined);
+    const sent = pending;
+    if (sent === null) return;
+    void api.updateSettings({ uiPrefs: sent })
+      .then(() => { if (pending === sent) pending = null; })
+      .catch(() => undefined);
   };
   timer = setTimeout(() => flush?.(), 400);
+  void qc; // the cache already shows the change
 }
 // closing the window right after a change still keeps it
 window.addEventListener('pagehide', () => { clearTimeout(timer); flush?.(); });
+
+const current = (s: Settings | undefined) => pending ?? s?.uiPrefs;
 
 /** Change the preferences; the screen follows at once, the core is told shortly after. */
 export function updatePrefs(qc: QueryClient, fn: (p: UiPrefs) => UiPrefs) {
   const s = qc.getQueryData<Settings>(KEY);
   if (!s) return;
-  const next = fn(parsePrefs(s.uiPrefs));
-  qc.setQueryData<Settings>(KEY, { ...s, uiPrefs: JSON.stringify(next) });
+  pending = JSON.stringify(fn(parsePrefs(current(s))));
+  qc.setQueryData<Settings>(KEY, { ...s, uiPrefs: pending });
   save(qc);
 }
 
 export function useUiPrefs() {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: KEY, queryFn: api.getSettings });
-  const prefs = parsePrefs(settings.data?.uiPrefs);
+  const prefs = parsePrefs(current(settings.data));
   const update = useCallback((fn: (p: UiPrefs) => UiPrefs) => updatePrefs(qc, fn), [qc]);
   return { prefs, update, ready: !!settings.data };
 }

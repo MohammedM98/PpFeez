@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import {
   Table as RacTable, TableHeader as RacHeader, Column as RacColumn, TableBody as RacBody, Row as RacRow, Cell as RacCell,
   Collection, useTableOptions, type TableProps, type ColumnProps, type RowProps, type CellProps, type TableHeaderProps,
@@ -51,8 +51,9 @@ export function Table({ className, minWidth, style, ...props }: TableProps & { m
  * than what is left of the window below it, so the horizontal scrollbar is always in view, and
  * the header stays in place while the rows scroll.
  */
-export function TableFrame({ children, footer, className, fill }: { children: ReactNode; footer?: ReactNode; className?: string; fill?: boolean }) {
-  const ref = useRef<HTMLDivElement>(null);
+export function TableFrame({ children, footer, className, fill, scrollRef }: { children: ReactNode; footer?: ReactNode; className?: string; fill?: boolean; scrollRef?: RefObject<HTMLDivElement | null> }) {
+  const own = useRef<HTMLDivElement>(null);
+  const ref = scrollRef ?? own;
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -78,11 +79,11 @@ export function TableFrame({ children, footer, className, fill }: { children: Re
     el.addEventListener('scroll', edges, { passive: true });
     window.addEventListener('resize', fit);
     return () => { window.removeEventListener('resize', fit); el.removeEventListener('scroll', edges); ro.disconnect(); };
-  });
+  }, [fill, ref]); // the observer follows size changes; no need to redo this on every render
   return (
     // `fill` (SPEC 6.5 "the table is the page"): the frame takes the rest of the page's height and scrolls inside
     <div className={cx('overflow-hidden rounded-card border border-line bg-surface', fill && 'flex min-h-0 flex-1 flex-col', className)}>
-      <div ref={ref} className={cx('overflow-auto overscroll-contain', fill && 'min-h-0 flex-1')} data-table-scroll="">{children}</div>
+      <div ref={ref} className={cx('overflow-auto overscroll-contain [overflow-anchor:none]', fill && 'min-h-0 flex-1')} data-table-scroll="">{children}</div>
       {footer}
     </div>
   );

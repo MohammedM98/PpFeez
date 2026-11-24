@@ -2,7 +2,7 @@
 // command from the in-memory mock backend in ./handlers.ts.
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { getDb, handle, resetDb, setExcelLocked } from './handlers';
-import { addStressData } from './db';
+import { addManyRows, addStressData } from './db';
 import { mockUpdater } from './updater';
 import { setUpdaterImpl } from '@/lib/updater';
 
@@ -28,6 +28,7 @@ export function installMocks() {
     db.txns = []; db.customers = []; db.ledger = []; db.emails = []; db.history = [];
   }
   if (params.get('stress') === '1') addStressData(getDb());
+  if (params.get('rows')) addManyRows(getDb(), Number(params.get('rows')));
   if (params.get('theme')) getDb().settings.theme = params.get('theme') as 'dark' | 'light' | 'system';
   const latency = Number(params.get('latency') ?? 60);
 

@@ -73,7 +73,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.locator('table[aria-label="الوارد"] thead th[data-col="grossMinor"]')).toBeVisible();
     await page.goBack();
     await expect(page.locator('table[aria-label="كشف USD"] th[data-col="ref"]')).toHaveCSS('position', 'sticky');
-    expect(await headers(page, 'كشف USD')).toEqual(after);
+    await expect.poll(() => headers(page, 'كشف USD')).toEqual(after);
     // written back to the core shortly after the last change
     await expect.poll(async () => {
       const saved = await page.evaluate(() => (window as unknown as { __ppfeezMock: { getDb: () => { settings: { uiPrefs: string } } } }).__ppfeezMock.getDb().settings.uiPrefs);
@@ -84,8 +84,34 @@ for (const theme of ['dark', 'light'] as const) {
     await page.getByRole('button', { name: 'الأعمدة' }).click();
     await page.getByRole('dialog', { name: 'الأعمدة' }).getByRole('button', { name: 'إعادة ضبط الأعمدة' }).click();
     await page.keyboard.press('Escape');
-    expect(await headers(page, 'كشف USD')).toEqual(before);
+    await expect.poll(() => headers(page, 'كشف USD')).toEqual(before);
     await expect(th).toHaveCSS('width', `${Math.round(w0)}px`);
     expect(errors).toEqual([]);
   });
 }
+
+test('0.6.0 a long inbox scrolls without pages (5000 rows)', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/?theme=dark&rows=5000#/transactions');
+  const table = page.locator('table[aria-label="الوارد"]');
+  await expect(table.locator('tbody tr').first()).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'الصفحات' })).toHaveCount(0);
+  const scroll = page.locator('[data-table-scroll]').first();
+  const drawn = () => table.locator('tbody tr[data-key]').count();
+  expect(await drawn()).toBeLessThan(80);
+
+  // far down: the rows there are fetched and drawn, still only a window of them, the header stays on top
+  for (const y of [40_000, 200_000]) {
+    await scroll.evaluate((el, y) => { el.scrollTop = y; }, y);
+    await expect(table.locator('tbody tr[data-key]').first()).toBeVisible();
+    await expect.poll(drawn).toBeGreaterThan(10);
+    expect(await drawn()).toBeLessThan(80);
+    const frame = await scroll.boundingBox();
+    await expect.poll(async () => Math.abs((await table.locator('thead').boundingBox())!.y - frame!.y)).toBeLessThan(2);
+  }
+  // newest first all the way down: the rows drawn at 200,000px are older than the ones at the top
+  const firstDate = (await table.locator('tbody tr[data-key]').first().locator('td').nth(1).innerText()).trim();
+  await scroll.evaluate((el) => { el.scrollTop = 0; });
+  await expect.poll(async () => (await table.locator('tbody tr[data-key]').first().locator('td').nth(1).innerText()).trim() > firstDate).toBe(true);
+  await page.screenshot({ animations: 'disabled', path: 'e2e/screenshots/dark-52-long-inbox.png' });
+});
