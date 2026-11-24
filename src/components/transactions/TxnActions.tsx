@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { BulkResult, CommissionInput, CommissionMode, FeeInput, Transaction, TxnAction } from '@/lib/contract';
 import { bpsToPercentText, formatBps, formatMinor, percentTextToBps } from '@/lib/money';
@@ -19,6 +19,7 @@ import { toast } from '@/components/ui/Toast';
 import { DangerConfirm, deletedToast } from '@/components/ui/DangerConfirm';
 import { Breakdown, fromTxn } from './bits';
 import { usePreview } from './usePreview';
+import { StatementCheckbox, addToStatementAfter, useStatementChoice } from '@/components/customers/CustomerExcel';
 
 export const CURRENCIES = ['USD', 'EUR', 'TRY', 'GBP', 'SAR', 'AED', 'CAD', 'AUD', 'JPY'];
 
@@ -306,11 +307,22 @@ function CommissionDialog({ txn, onClose }: { txn: Transaction; onClose: () => v
 // ---------------------------------------------------------------- approve / unapprove
 function ApproveDialog({ txn, onClose }: { txn: Transaction; onClose: () => void }) {
   const { run, pending } = useAction();
+  const customerId = txn.customer?.id;
+  const statement = useStatementChoice(customerId);
+  const qc = useQueryClient();
   return (
     <ConfirmMoney isOpen onOpenChange={(o) => !o && onClose()} title="اعتماد المعاملة" amount={txn.customerAmountMinor} currency={txn.currency}
       confirmLabel="اعتماد" pending={pending}
-      onConfirm={async () => { const r = await run(() => api.txnApprove(txn.id), `اعتُمدت وأُضيفت لرصيد ${txn.customer?.name}`); if (r.ok) onClose(); }}>
-      <p className="text-sm text-fg-2">يُضاف هذا المبلغ إلى رصيد <b className="font-medium text-fg">{txn.customer?.name}</b> كقيد جديد في دفتره، وتُقفل المعاملة عن التعديل.</p>
+      onConfirm={async () => {
+        const r = await run(() => api.txnApprove(txn.id), `اعتُمدت وأُضيفت لرصيد ${txn.customer?.name}`);
+        if (!r.ok) return;
+        onClose();
+        if (customerId !== undefined && statement.on) void addToStatementAfter(customerId, { kind: 'txn', id: txn.id }, qc);
+      }}>
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-fg-2">يُضاف هذا المبلغ إلى رصيد <b className="font-medium text-fg">{txn.customer?.name}</b> كقيد جديد في دفتره، وتُقفل المعاملة عن التعديل.</p>
+        {customerId !== undefined && <StatementCheckbox customerId={customerId} value={statement.value} onChange={statement.setValue} />}
+      </div>
     </ConfirmMoney>
   );
 }

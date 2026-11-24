@@ -47,6 +47,7 @@ export function PayerCell({ t }: { t: Transaction }) {
     t.source === 'manual' && <Badge key="manual" tone="outline">يدوية</Badge>,
     t.needsReview && <span key="review" title={t.reviewReasonAr ?? undefined}><Badge tone="warn">تحتاج مراجعة</Badge></span>,
     t.holdStatus && <span key="hold" title={holdHint[t.holdStatus]}><Badge tone="outline">{holdStatus[t.holdStatus]}</Badge></span>,
+    t.changedAfterExcel && <span key="excel" title="أُضيفت لملف العميل ثم أُلغي اعتمادها أو تغيّرت؛ قرّر إن كنت تضيف سطر العكس"><Badge tone="warn">تغيّرت بعد إضافتها لملف العميل</Badge></span>,
   ].filter(Boolean);
   return (
     <div className="flex items-center gap-2" title={title}>

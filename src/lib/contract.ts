@@ -89,6 +89,7 @@ export type Customer = {
   balances: Money[];          // رصيد لكل عملة (سالب = عليه)
   pendingCount: number;       // معاملات بانتظار الموافقة
   createdAt: IsoDate;
+  excel: CustomerExcel | null; // SPEC §6.8.2
 };
 export type CustomerInput = {
   name: string; phone?: string | null; defaultCommissionBps: number; notes?: string | null; isActive?: boolean;
@@ -136,6 +137,8 @@ export type Transaction = {
   needsReview: boolean;          // SPEC §5.3: من المحلّل العام، لا يُعتمد قبل التأكيد
   reviewReasonAr: string | null;
   holdStatus: 'pending_echeck' | 'on_hold' | null;
+  inCustomerExcel: boolean;      // SPEC §6.8.2
+  changedAfterExcel: boolean;    // أُضيفت ثم أُلغي اعتمادها
 };
 export type TxnAction =
   | 'assign' | 'unassign' | 'set_fee' | 'set_commission' | 'approve'
@@ -225,6 +228,7 @@ export type LedgerEntry = {
   reversesEntryId: number | null;
   reversedByEntryId: number | null; // إن كان معكوساً => اعرضه مشطوباً
   deletable: boolean;               // SPEC §4.7
+  inCustomerExcel: boolean;         // SPEC §6.8.2
   notDeletableReasonAr: string | null;
   payoutMethod: PayoutMethod | null;
   reference: string | null;
@@ -323,4 +327,22 @@ export type ExcelExportResult = { path: string; sheets: number; rows: number; ex
 // excel_update(): ExcelExportResult                     // append (افتراضي): يضيف الجديد ويحدّث أعمدة البرنامج ويحفظ تعديلات المدير؛ rewrite: إعادة كتابة   throws no_export_path | file_locked | excel_layout | export_failed
 // excel_export_transactions({ filter: TxnFilter, sort: TxnSort, path }): ExcelExportResult
 // excel_export_ledger({ customerId, currency?: Currency, period?: Period, path }): ExcelExportResult  // بلا currency => ورقة لكل عملة
+
+// ===== ملف Excel للعميل (SPEC §6.8.2) =====
+export type CustomerExcel = { path: string; updatedAt: IsoDate | null; exists: boolean; addToExcelByDefault: boolean };
+export type CustomerExcelItemRef = { kind: 'txn' | 'ledger'; id: number };
+export type CustomerExcelPreview = {
+  toAdd: { kind: 'txn' | 'ledger'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];
+  duplicates: { kind: 'txn' | 'ledger'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];
+  notAllowed: { kind: 'txn' | 'ledger'; id: number; reasonAr: string }[];   // غير معتمدة، قيد اعتماد، عميل آخر...
+  olderThanLastRow: number;
+};
+// customer_excel_get({ customerId }): CustomerExcel | null
+// customer_excel_create({ customerId, path, includeExisting: boolean }): { path: string; added: number; sheets: string[] }
+// customer_excel_link({ customerId, path }): CustomerExcel            throws excel_layout (ليس كشفاً لهذا العميل)
+// customer_excel_unlink({ customerId }): void
+// customer_excel_set_default({ customerId, addToExcelByDefault: boolean }): CustomerExcel   // خيار نافذتي الاعتماد والدفعة
+// customer_excel_preview({ customerId, items: CustomerExcelItemRef[] }): CustomerExcelPreview
+// customer_excel_add({ customerId, items: CustomerExcelItemRef[] }): { path: string; added: number; skippedDuplicates: number; sheets: string[] }
+//   throws no_export_path (لا ملف مرتبط) | file_locked | excel_layout | export_failed
 // open_path({ path }): void                             // فتح الملف في Excel

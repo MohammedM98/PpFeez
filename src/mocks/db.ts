@@ -6,14 +6,16 @@ import type {
   Transaction, TxnAction, TxnStatus, TxnType, CommissionMode, PayoutMethod, LedgerType, BackupFile,
 } from '@/lib/contract';
 
-export type TxnRow = Omit<Transaction, 'customer' | 'mailbox' | 'refundedBy' | 'allowedActions'> & {
+export type TxnRow = Omit<Transaction, 'customer' | 'mailbox' | 'refundedBy' | 'allowedActions' | 'inCustomerExcel' | 'changedAfterExcel'> & {
   customerId: number | null;
   mailboxId: number | null;
   refundHandled: boolean; // refund alert confirmed or dismissed
 };
-export type CustomerRow = Omit<Customer, 'balances' | 'pendingCount'>;
+export type CustomerRow = Omit<Customer, 'balances' | 'pendingCount' | 'excel'>;
 /** Stored entry; deletable/notDeletableReasonAr are computed when read (SPEC 4.7). */
-export type LedgerRow = Omit<LedgerEntry, 'deletable' | 'notDeletableReasonAr'>;
+export type LedgerRow = Omit<LedgerEntry, 'deletable' | 'notDeletableReasonAr' | 'inCustomerExcel'>;
+/** SPEC 6.8.2: the customer's linked statement file and what was added to it. */
+export type CustomerExcelRow = { path: string; updatedAt: string | null; addToExcelByDefault: boolean; items: { kind: 'txn' | 'ledger'; id: number; currency: string; date: string }[] };
 
 export type Db = {
   status: AppStatus;
@@ -28,6 +30,7 @@ export type Db = {
   pullRuns: PullRun[];
   emails: RawEmail[];
   backups: BackupFile[];
+  customerExcel: Record<number, CustomerExcelRow>;
   seq: number;
 };
 
@@ -221,6 +224,16 @@ export function seed(): Db {
       { path: 'D:\\Backups\\PpFeez\\ppfeez-2026-11-21-2245.db', createdAt: daysAgo(2, 22, 45), sizeBytes: 1_437_696 },
       { path: 'D:\\Backups\\PpFeez\\ppfeez-2026-11-19-2002.db', createdAt: daysAgo(4, 20, 2), sizeBytes: 1_392_640 },
     ],
+    // علي حسن already has a statement with his opening balance and one transfer in it (SPEC 6.8.2)
+    customerExcel: {
+      2: {
+        path: 'D:\\العملاء\\كشف حساب - علي حسن.xlsx', updatedAt: daysAgo(3, 18, 5), addToExcelByDefault: true,
+        items: [
+          { kind: 'ledger', id: 1, currency: 'USD', date: dayStr(40) },
+          { kind: 'txn', id: 11, currency: 'EUR', date: daysAgo(14).slice(0, 10) },
+        ],
+      },
+    },
     seq: 5000,
   };
 

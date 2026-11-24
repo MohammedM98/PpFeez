@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, MenuTrigger, Menu, MenuItem, Popover, type SortDescriptor, type Selection, type Key } from 'react-aria-components';
-import { ChevronLeft, ChevronRight, CornerDownLeft, FileSpreadsheet, MoreHorizontal, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, CornerDownLeft, FileCheck2, FileSpreadsheet, MoreHorizontal, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
 import { useAction } from '@/lib/useAction';
 import { toast } from '@/components/ui/Toast';
-import type { Period, Transaction, TxnAction, TxnFilter, TxnSortKey, TxnStatus } from '@/lib/contract';
+import type { CustomerExcelItemRef, Period, Transaction, TxnAction, TxnFilter, TxnSortKey, TxnStatus } from '@/lib/contract';
+import { AddToStatementDialog } from '@/components/customers/CustomerExcel';
 import { txn as s, txnCountLabel, txnStatus } from '@/lib/strings';
 import { formatBps } from '@/lib/money';
 import { periodLabels, presetPeriod, type PeriodPreset } from '@/lib/period';
@@ -61,6 +62,8 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
   const [flashId, setFlashId] = useState<number | null>(null);
   const actions = useTxnActions();
   const { run } = useAction();
+  const customer = useQuery({ queryKey: ['customer', customerId], queryFn: () => api.customerGet(customerId!), enabled: !inbox });
+  const [statementItems, setStatementItems] = useState<CustomerExcelItemRef[] | null>(null);
 
   const setTab = (t: TxnStatus) => {
     tabChosen.current = true;
@@ -119,6 +122,8 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
     return () => clearTimeout(t);
   }, [flashId, items]);
 
+  // SPEC 6.8.2: approved transfers show whether they are already in the customer's statement
+  const showExcel = tab === 'approved';
   const fit = useMemo(() => {
     const col = (row: (t: Transaction) => number | null, tot?: (x: NonNullable<typeof totals>[number]) => number) =>
       amountFit([...items.map((t) => ({ minor: row(t), currency: t.currency })), ...(tot ? (totals ?? []).map((x) => ({ minor: tot(x), currency: x.currency })) : [])]);
@@ -137,11 +142,12 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
     };
     const commission = inbox ? undefined : amountWidth(fit.commission, false, 72);
     const toCustomer = inbox ? undefined : amountWidth(fit.toCustomer, false, 72);
-    return { ...base, commission, toCustomer, min: sumWidths([SELECT_W, ...Object.values(base), commission, toCustomer, PAYER_MIN]) };
-  }, [fit, inbox]);
+    const excel = showExcel ? '52px' : undefined;
+    return { ...base, commission, toCustomer, excel, min: sumWidths([SELECT_W, ...Object.values(base), commission, toCustomer, excel, PAYER_MIN]) };
+  }, [fit, inbox, showExcel]);
   const widths = inbox
     ? [SELECT_W, W.date, undefined, W.note, W.gross, W.fee, W.net, W.menu]
-    : [SELECT_W, W.date, undefined, W.note, W.gross, W.fee, W.net, W.commission, W.toCustomer, W.menu];
+    : [SELECT_W, W.date, undefined, W.note, W.gross, W.fee, W.net, W.commission, W.toCustomer, ...(showExcel ? [W.excel] : []), W.menu];
 
   const exportExcel = async () => {
     const path = await native.saveXlsx(`PpFeez-معاملات-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -222,6 +228,9 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
             <Button size="sm" variant="quiet" onPress={() => actions.open({ kind: 'bulk_approve', rows: selectedRows })}>اعتماد</Button>
             <Button size="sm" variant="quiet" onPress={() => actions.bulk('unassign', selectedRows)}>إلغاء التخصيص</Button>
           </>}
+          {tab === 'approved' && customer.data && (
+            <Button size="sm" variant="quiet" onPress={() => setStatementItems(selectedRows.map((t) => ({ kind: 'txn', id: t.id })))}><FileSpreadsheet />إضافة إلى ملف العميل</Button>
+          )}
           <Button size="sm" variant="quiet" className="text-neg" onPress={() => actions.open({ kind: 'delete', rows: selectedRows })}>حذف</Button>
           <Button size="icon" variant="quiet" aria-label="إلغاء التحديد" className="ms-auto" onPress={() => setSelected(new Set())}><X /></Button>
         </div>
@@ -239,9 +248,10 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
             <Column id="netMinor" allowsSorting align="end" width={W.net}>{s.cols.net}</Column>
             {!inbox && <Column id="commission" align="end" width={W.commission}>العمولة</Column>}
             {!inbox && <Column id="customerAmountMinor" allowsSorting align="end" width={W.toCustomer}>{s.cols.toCustomer}</Column>}
+            {showExcel && <Column id="excel" width={W.excel}><span title="في ملف العميل" className="inline-flex"><FileCheck2 className="size-4" strokeWidth={1.7} aria-hidden /><span className="sr-only">في ملف العميل</span></span></Column>}
             <Column id="menu" width={W.menu} sticky="end"><span className="sr-only">إجراءات</span></Column>
           </TableHeader>
-          <TableBody items={items} renderEmptyState={() => (
+          <TableBody items={items} dependencies={[showExcel, inbox, flashId, detailId, fit]} renderEmptyState={() => (
             <div className="py-16 text-center">
               <p className="text-fg-2">{tab === 'unassigned' ? 'الوارد فارغ: كل المعاملات مخصّصة' : tab === 'pending_approval' ? 'لا شيء بانتظار الموافقة' : 'لا معاملات هنا'}</p>
               {inbox && tab === 'unassigned' && <p className="mt-1 text-[13px] text-fg-3">المعاملات المخصّصة في صفحات العملاء، وتجدها بالبحث <kbd className="num rounded border border-line px-1 text-[12px]">Ctrl K</kbd></p>}
@@ -262,6 +272,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
                   </Cell>
                 )}
                 {!inbox && <Cell align="end"><Amount fit={fit.toCustomer} minor={t.customerAmountMinor} currency={t.currency} showCurrency={false} className="font-medium" /></Cell>}
+                {showExcel && <Cell>{t.inCustomerExcel && <span title="في ملف العميل" aria-label="في ملف العميل" className="inline-flex text-pos"><Check className="size-4" strokeWidth={2} /></span>}</Cell>}
                 <Cell sticky="end" className="pe-2">
                   <MenuTrigger>
                     <Button variant="quiet" size="icon" aria-label="إجراءات"><MoreHorizontal /></Button>
@@ -292,6 +303,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
                 <TotalsCell align="end"><Amount fit={fit.net} minor={x.netMinor} currency={x.currency} showCurrency={false} className="text-fg-2" /></TotalsCell>
                 {!inbox && <TotalsCell />}
                 {!inbox && <TotalsCell align="end"><Amount fit={fit.toCustomer} minor={x.customerAmountMinor} currency={x.currency} showCurrency={false} className="font-medium text-fg" /></TotalsCell>}
+                {showExcel && <TotalsCell />}
                 <TotalsCell sticky="end" />
               </tr>
             ))}
@@ -311,6 +323,9 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
       )}
 
       {detailId !== null && <DetailPanel id={detailId} onClose={() => openDetail(null)} />}
+      {statementItems && customer.data && (
+        <AddToStatementDialog customer={customer.data} items={statementItems} onClose={() => setStatementItems(null)} onDone={() => setSelected(new Set())} />
+      )}
     </div>
   );
 }

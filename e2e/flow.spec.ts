@@ -445,3 +445,99 @@ for (const theme of ['dark', 'light'] as const) {
     expect(errors).toEqual([]);
   });
 }
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`0.4.2 customer Excel statement (${theme})`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    const shot = (n: string) => page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-${n}.png` });
+    const toast = (text: string) => page.locator('[role=alertdialog]').filter({ hasText: text });
+
+    // linked statement: ✓ on what is already in it; duplicates are listed and skipped
+    await page.goto(`/?theme=${theme}#/customers/2?tab=txns&sub=approved`);
+    const card = page.getByTestId('customer-excel');
+    await expect(card).toContainText('كشف حساب - علي حسن.xlsx');
+    const hans = page.getByRole('row').filter({ hasText: 'Hans Müller' });
+    await expect(hans.getByLabel('في ملف العميل')).toBeVisible();
+    await hans.getByRole('checkbox').check({ force: true });
+    await page.getByRole('row').filter({ hasText: 'Noah Smith' }).getByRole('checkbox').check({ force: true });
+    await page.getByRole('toolbar', { name: 'إجراءات جماعية' }).getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
+    const add = page.getByRole('dialog');
+    await expect(add).toContainText('ستُضاف سطر واحد');
+    await expect(add).toContainText('موجودة أصلاً في ملف العميل: 1');
+    await expect(add).toContainText('Hans Müller');
+    await shot('33-statement-preview');
+    await add.getByRole('button', { name: 'إضافة سطر واحد' }).click();
+    await expect(toast('أُضيف سطر واحد إلى ملف العميل')).toBeVisible();
+    await expect(toast('أُضيف سطر واحد إلى ملف العميل').getByRole('button', { name: 'فتح الملف' })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'Noah Smith' }).getByLabel('في ملف العميل')).toBeVisible();
+
+    // ledger: payouts are added; an approval credit is refused with its reason
+    await page.getByRole('tab', { name: 'دفتر USD' }).click();
+    await expect(page.getByRole('row').filter({ hasText: 'رصيد افتتاحي' })).toBeVisible();
+    await page.getByRole('checkbox', { name: 'تحديد كل القيود' }).check({ force: true });
+    await page.getByRole('toolbar', { name: 'إجراءات على القيود المحددة' }).getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
+    const fromLedger = page.getByRole('dialog');
+    await expect(fromLedger).toContainText('لا تُضاف');
+    await expect(fromLedger).toContainText('قيد اعتماد');
+    await fromLedger.getByRole('button', { name: /^إضافة/ }).click();
+    await expect(toast('إلى ملف العميل')).toBeVisible();
+    await shot('34-statement-ledger');
+
+    // unapproving a transfer that is in the statement marks it as changed
+    await page.getByRole('tab', { name: /معاملاته/ }).click();
+    await page.getByRole('tab', { name: /معتمدة/ }).click();
+    await page.getByRole('row').filter({ hasText: 'Hans Müller' }).getByRole('button', { name: 'إجراءات' }).click();
+    await page.getByRole('menuitem', { name: 'إلغاء الاعتماد' }).click();
+    await page.getByRole('dialog').getByRole('textbox', { name: 'السبب' }).fill('خطأ');
+    await page.getByRole('dialog').getByRole('button', { name: 'إلغاء الاعتماد' }).click();
+    await page.getByRole('link', { name: 'المعاملات' }).click();
+    await expect(page.getByRole('row').filter({ hasText: 'Hans Müller' })).toContainText('تغيّرت بعد إضافتها لملف العميل');
+
+    // no statement yet: create one (with what exists), then approve with "add to the statement" on
+    await page.getByRole('link', { name: 'العملاء' }).click();
+    await page.getByRole('row').filter({ hasText: 'أحمد يلماز' }).getByRole('rowheader').click();
+    await page.getByRole('button', { name: 'إنشاء ملف للعميل' }).click();
+    const create = page.getByRole('dialog');
+    await expect(create).toContainText('(1 حوالة، 1 قيد)');
+    await create.getByRole('checkbox', { name: /أضف كل الحوالات المعتمدة/ }).check({ force: true });
+    await shot('35-statement-create');
+    await create.getByRole('button', { name: 'اختيار مكان الحفظ وإنشاء' }).click();
+    await expect(toast('أُنشئ ملف العميل')).toContainText('أُضيف سطران');
+    await expect(page.getByTestId('customer-excel')).toContainText('كشف حساب - أحمد يلماز.xlsx');
+    await page.getByRole('tab', { name: /معاملاته/ }).click();
+    await page.getByRole('row').filter({ hasText: 'Website hosting' }).getByRole('button', { name: 'إجراءات' }).click();
+    await page.getByRole('menuitem', { name: 'اعتماد' }).click();
+    const approve = page.getByRole('dialog');
+    await expect(approve.getByRole('checkbox', { name: /أضف إلى ملف العميل/ })).toBeChecked();
+    await shot('36-statement-approve');
+    await approve.getByRole('button', { name: 'اعتماد' }).click();
+    await expect(toast('أُضيفت إلى ملف العميل')).toBeVisible();
+    await page.getByRole('tab', { name: /معتمدة/ }).click();
+    await expect(page.getByRole('row').filter({ hasText: 'Website hosting' }).getByLabel('في ملف العميل')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test(`0.4.2 customer Excel statement errors (${theme})`, async ({ page }) => {
+    // the file is open in Excel: nothing is written, the dialog says so
+    await page.goto(`/?theme=${theme}&customerExcelLocked=1#/customers/2?tab=txns&sub=approved`);
+    await page.getByRole('row').filter({ hasText: 'Noah Smith' }).getByRole('checkbox').check({ force: true });
+    await page.getByRole('toolbar', { name: 'إجراءات جماعية' }).getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'إضافة سطر واحد' }).click();
+    await expect(page.getByRole('dialog')).toContainText('الملف مفتوح في Excel');
+
+    // a customer without a statement is offered to create one
+    await page.goto(`/?theme=${theme}#/customers/3?tab=txns&sub=approved`);
+    await page.reload();
+    await page.getByRole('row').filter({ hasText: 'Olivia Wilson' }).getByRole('checkbox').check({ force: true });
+    await page.getByRole('toolbar', { name: 'إجراءات جماعية' }).getByRole('button', { name: 'إضافة إلى ملف العميل' }).click();
+    await expect(page.getByRole('dialog')).toContainText('لا ملف Excel لهذا العميل');
+    await expect(page.getByRole('dialog').getByRole('button', { name: 'إنشاء ملف للعميل' })).toBeVisible();
+
+    // linking a file that is not this customer's statement
+    await page.goto(`/?theme=${theme}&wrongStatement=1#/customers/3`);
+    await page.reload();
+    await page.getByRole('button', { name: 'ربط ملف موجود' }).click();
+    await expect(page.getByRole('dialog')).toContainText('ليس كشف حساب أنشأه البرنامج لهذا العميل');
+  });
+}

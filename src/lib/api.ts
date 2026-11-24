@@ -10,7 +10,7 @@ import type {
   LedgerView, Mailbox, MailboxInput, ManualTxnInput, Page, PayoutInput, Period, PullRun,
   RawEmail, RawEmailSummary, ParseStatus, RefundAlert, Settings, Transaction, TxnCounts,
   TxnFilter, TxnListResult, TxnPreview, TxnSort, Currency, ExcelExportResult, PullRange,
-  DeleteEffect, ResetScope, ResetPreview, Money, TxnSearchHit,
+  DeleteEffect, ResetScope, ResetPreview, Money, TxnSearchHit, CustomerExcel, CustomerExcelItemRef, CustomerExcelPreview,
 } from './contract';
 
 const KNOWN_CODES = new Set<ErrorCode>([
@@ -156,6 +156,19 @@ export const api = {
   excelExportLedger: (customerId: number, path: string, currency?: Currency, period?: Period) =>
     call<ExcelExportResult>('excel_export_ledger', { customerId, currency, period, path }),
   openPath: (path: string) => call<void>('open_path', { path }),
+
+  // the customer's Excel statement (SPEC 6.8.2)
+  customerExcelGet: (customerId: number) => call<CustomerExcel | null>('customer_excel_get', { customerId }),
+  customerExcelCreate: (customerId: number, path: string, includeExisting: boolean) =>
+    call<{ path: string; added: number; sheets: string[] }>('customer_excel_create', { customerId, path, includeExisting }),
+  customerExcelLink: (customerId: number, path: string) => call<CustomerExcel>('customer_excel_link', { customerId, path }),
+  customerExcelUnlink: (customerId: number) => call<void>('customer_excel_unlink', { customerId }),
+  customerExcelSetDefault: (customerId: number, addToExcelByDefault: boolean) =>
+    call<CustomerExcel>('customer_excel_set_default', { customerId, addToExcelByDefault }),
+  customerExcelPreview: (customerId: number, items: CustomerExcelItemRef[]) =>
+    call<CustomerExcelPreview>('customer_excel_preview', { customerId, items }),
+  customerExcelAdd: (customerId: number, items: CustomerExcelItemRef[]) =>
+    call<{ path: string; added: number; skippedDuplicates: number; sheets: string[] }>('customer_excel_add', { customerId, items }),
 };
 
 export const events = {
@@ -169,6 +182,7 @@ export const native = {
   saveCsv: (defaultPath: string) => saveDialog({ defaultPath, filters: [{ name: 'CSV', extensions: ['csv'] }] }),
   saveXlsx: (defaultPath: string) => saveDialog({ defaultPath, filters: [{ name: 'Excel', extensions: ['xlsx'] }] }),
   pickFolder: () => openDialog({ directory: true, multiple: false }) as Promise<string | null>,
+  pickXlsx: () => openDialog({ multiple: false, filters: [{ name: 'Excel', extensions: ['xlsx'] }] }) as Promise<string | null>,
   pickBackupFile: () => openDialog({ multiple: false, filters: [{ name: 'PpFeez backup', extensions: ['db', 'sqlite', 'bak'] }] }) as Promise<string | null>,
   openUrl: (url: string) => openUrl(url),
 };

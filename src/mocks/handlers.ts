@@ -4,7 +4,7 @@ import type {
   AppError, BalanceCard, BulkResult, CommissionInput, Customer, CustomerInput, DashboardSummary, ErrorCode,
   FeeInput, LedgerEntry, LedgerView, ManualTxnInput, Money, Page, Period, PullRun, RawEmailSummary,
   RefundAlert, Transaction, TxnAction, TxnCounts, TxnFilter, TxnListResult, TxnPreview, TxnSort, AdjustmentInput, PayoutInput,
-  MailboxInput, ParseStatus, PullRange, TxnLocation, TxnSearchHit,
+  MailboxInput, ParseStatus, PullRange, TxnLocation, TxnSearchHit, CustomerExcel, CustomerExcelItemRef, CustomerExcelPreview,
 } from '@/lib/contract';
 import { decimalsOf, formatMinor } from '@/lib/money';
 import { creditDescription, halfUp, ltr, seed, type Db, type LedgerRow, type TxnRow } from './db';
@@ -76,8 +76,13 @@ function view(t: TxnRow): Transaction {
     mailbox: mb ? { id: mb.id, label: mb.label } : null,
     refundedBy: db.txns.filter((r) => r.type !== 'payment' && r.relatedTxnId === t.paypalTxnId).map((r) => ({ id: r.id, type: r.type, grossMinor: r.grossMinor })),
     allowedActions: allowedActions(t),
+    inCustomerExcel: !!t.customerId && inExcel(t.customerId, 'txn', t.id),
+    changedAfterExcel: t.status !== 'approved' && Object.values(db.customerExcel).some((x) => x.items.some((i) => i.kind === 'txn' && i.id === t.id)),
   };
 }
+
+const inExcel = (customerId: number, kind: 'txn' | 'ledger', id: number) =>
+  !!db.customerExcel[customerId]?.items.some((i) => i.kind === kind && i.id === id);
 
 function getTxn(id: number) {
   return db.txns.find((t) => t.id === id) ?? fail('not_found', 'المعاملة غير موجودة');
@@ -268,7 +273,7 @@ function deletability(e: LedgerRow): Pick<LedgerEntry, 'deletable' | 'notDeletab
   }
   return { deletable: true, notDeletableReasonAr: null };
 }
-const asEntry = (e: LedgerRow, running = e.runningBalanceMinor): LedgerEntry => ({ ...e, runningBalanceMinor: running, ...deletability(e) });
+const asEntry = (e: LedgerRow, running = e.runningBalanceMinor): LedgerEntry => ({ ...e, runningBalanceMinor: running, ...deletability(e), inCustomerExcel: inExcel(e.customerId, 'ledger', e.id) });
 
 function addLedger(e: Partial<LedgerRow> & Pick<LedgerRow, 'customerId' | 'currency' | 'type' | 'amountMinor' | 'description' | 'entryDate'>): LedgerEntry {
   const entry: LedgerRow = {
@@ -337,7 +342,65 @@ function customerView(c: Db['customers'][number]): Customer {
     ...c,
     balances: curs.map<Money>((currency) => ({ currency, minor: balanceOf(c.id, currency) })),
     pendingCount: db.txns.filter((t) => t.customerId === c.id && t.status === 'pending_approval').length,
+    excel: excelView(c.id),
   };
+}
+
+// ---------------------------------------------------------------- customer Excel statement (SPEC 6.8.2)
+function excelView(customerId: number): CustomerExcel | null {
+  const x = db.customerExcel[customerId];
+  return x ? { path: x.path, updatedAt: x.updatedAt, exists: true, addToExcelByDefault: x.addToExcelByDefault } : null;
+}
+
+type ExcelLine = CustomerExcelPreview['toAdd'][number];
+function excelLine(customerId: number, ref: CustomerExcelItemRef): ExcelLine | { kind: 'txn' | 'ledger'; id: number; reasonAr: string } {
+  if (ref.kind === 'txn') {
+    const t = db.txns.find((x) => x.id === ref.id);
+    if (!t) return { ...ref, reasonAr: 'المعاملة غير موجودة' };
+    if (t.customerId !== customerId) return { ...ref, reasonAr: 'معاملة عميل آخر' };
+    if (t.status !== 'approved') return { ...ref, reasonAr: 'غير معتمدة؛ يُضاف للكشف ما اعتُمد فقط' };
+    return { ...ref, date: t.occurredAt.slice(0, 10), labelAr: `حوالة PayPal من ${t.payerName || t.payerEmail}`, currency: t.currency, amountMinor: t.customerAmountMinor ?? 0 };
+  }
+  const e = db.ledger.find((x) => x.id === ref.id);
+  if (!e) return { ...ref, reasonAr: 'القيد غير موجود' };
+  if (e.customerId !== customerId) return { ...ref, reasonAr: 'قيد عميل آخر' };
+  if (e.type === 'credit') return { ...ref, reasonAr: 'قيد اعتماد؛ أضف الحوالة نفسها من «معتمدة»' };
+  return { ...ref, date: e.entryDate, labelAr: e.description, currency: e.currency, amountMinor: e.amountMinor };
+}
+
+function excelPreview(customerId: number, items: CustomerExcelItemRef[]): CustomerExcelPreview {
+  const out: CustomerExcelPreview = { toAdd: [], duplicates: [], notAllowed: [], olderThanLastRow: 0 };
+  const x = db.customerExcel[customerId];
+  const last = x?.items.reduce((m, i) => (i.date > m ? i.date : m), '') ?? '';
+  for (const ref of items) {
+    const line = excelLine(customerId, ref);
+    if ('reasonAr' in line) out.notAllowed.push(line);
+    else if (inExcel(customerId, ref.kind, ref.id)) out.duplicates.push(line);
+    else {
+      out.toAdd.push(line);
+      if (last && line.date < last) out.olderThanLastRow++;
+    }
+  }
+  out.toAdd.sort((a, b) => (a.date < b.date ? -1 : 1));
+  return out;
+}
+
+function excelAdd(customerId: number, items: CustomerExcelItemRef[]) {
+  const x = db.customerExcel[customerId];
+  if (!x) fail('no_export_path', 'لا ملف Excel مرتبط بهذا العميل');
+  if (new URLSearchParams(location.search).get('customerExcelLocked') === '1') fail('file_locked', 'أغلق الملف في Excel ثم أعد المحاولة');
+  const p = excelPreview(customerId, items);
+  for (const l of p.toAdd) x.items.push({ kind: l.kind, id: l.id, currency: l.currency, date: l.date });
+  x.updatedAt = nowIso();
+  return { path: x.path, added: p.toAdd.length, skippedDuplicates: p.duplicates.length, sheets: [...new Set(x.items.map((i) => `كشف ${i.currency}`))] };
+}
+
+/** Everything that can go into a statement today: approved transfers, and ledger lines that are not approval credits. */
+function excelAllItems(customerId: number): CustomerExcelItemRef[] {
+  return [
+    ...db.txns.filter((t) => t.customerId === customerId && t.status === 'approved').map((t) => ({ kind: 'txn' as const, id: t.id })),
+    ...db.ledger.filter((e) => e.customerId === customerId && e.type !== 'credit').map((e) => ({ kind: 'ledger' as const, id: e.id })),
+  ];
 }
 
 function refundAlerts(): RefundAlert[] {
@@ -581,6 +644,27 @@ export function handle(cmd: string, a: Args = {}): unknown {
         .map(customerView)
         .filter((c) => a.hasPending === undefined || (c.pendingCount > 0) === a.hasPending);
     }
+    case 'customer_excel_get': return excelView(a.customerId);
+    case 'customer_excel_create': {
+      db.customerExcel[a.customerId] = { path: a.path, updatedAt: nowIso(), addToExcelByDefault: true, items: [] };
+      if (!a.includeExisting) return { path: a.path, added: 0, sheets: [] };
+      const r = excelAdd(a.customerId, excelAllItems(a.customerId));
+      return { path: r.path, added: r.added, sheets: r.sheets };
+    }
+    case 'customer_excel_link': {
+      // ?wrongStatement=1: the chosen file is not this customer's statement
+      if (new URLSearchParams(location.search).get('wrongStatement') === '1') fail('excel_layout', 'هذا الملف ليس كشف حساب أنشأه البرنامج لهذا العميل.');
+      db.customerExcel[a.customerId] = { path: a.path, updatedAt: nowIso(), addToExcelByDefault: true, items: db.customerExcel[a.customerId]?.items ?? [] };
+      return excelView(a.customerId);
+    }
+    case 'customer_excel_unlink': delete db.customerExcel[a.customerId]; return null;
+    case 'customer_excel_set_default': {
+      const x = db.customerExcel[a.customerId] ?? fail('no_export_path', 'لا ملف Excel مرتبط بهذا العميل');
+      x.addToExcelByDefault = !!a.addToExcelByDefault;
+      return excelView(a.customerId);
+    }
+    case 'customer_excel_preview': return excelPreview(a.customerId, a.items ?? []);
+    case 'customer_excel_add': return excelAdd(a.customerId, a.items ?? []);
     case 'customer_get': return customerView(db.customers.find((c) => c.id === a.id) ?? fail('not_found', 'العميل غير موجود'));
     case 'customer_create': case 'customer_update': {
       const input = a.input as CustomerInput;
@@ -863,6 +947,7 @@ export function handle(cmd: string, a: Args = {}): unknown {
       }
       db.ledger = db.ledger.filter((e) => e.customerId !== c.id);
       db.customers = db.customers.filter((x) => x.id !== c.id);
+      delete db.customerExcel[c.id]; // the file itself is not touched
       return { backup };
     }
     case 'ledger_delete_preview': {
@@ -941,7 +1026,11 @@ export function handle(cmd: string, a: Args = {}): unknown {
     case 'open_path': return null;
 
     // plugins
-    case 'plugin:dialog|open': return a.options?.directory ? 'D:\\Backups\\PpFeez' : 'D:\\Backups\\PpFeez\\ppfeez-2026-11-22-2310.db';
+    case 'plugin:dialog|open': {
+      if (a.options?.directory) return 'D:\\Backups\\PpFeez';
+      const xlsx = (a.options?.filters as { extensions: string[] }[] | undefined)?.some((f) => f.extensions.includes('xlsx'));
+      return xlsx ? 'D:\\العملاء\\كشف حساب.xlsx' : 'D:\\Backups\\PpFeez\\ppfeez-2026-11-22-2310.db';
+    }
     case 'plugin:dialog|save': {
       const name = String(a.options?.defaultPath ?? 'export.csv');
       return `C:\\Users\\Mohammed\\Documents\\${name}`;

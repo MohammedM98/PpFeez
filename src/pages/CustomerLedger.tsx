@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, TabPanel, MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
-import { ArrowRight, Download, FileSpreadsheet, HandCoins, MoreHorizontal, Pencil, Printer, Scale, Trash2 } from 'lucide-react';
+import { ArrowRight, Check, Download, FileCheck2, FileSpreadsheet, HandCoins, MoreHorizontal, Pencil, Printer, Scale, Trash2, X } from 'lucide-react';
 import { toast } from '@/components/ui/Toast';
 import { api, native } from '@/lib/api';
 import type { BalanceCard, Customer, LedgerEntry, PayoutMethod, Period } from '@/lib/contract';
@@ -14,10 +14,10 @@ import { useAction } from '@/lib/useAction';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Amount, amountFit, amountWidth } from '@/components/ui/Amount';
-import { HeadLabel, TableFrame, TotalsCell, TotalsTable, sumWidths } from '@/components/ui/Table';
+import { HeadLabel, SELECT_W, TableFrame, TotalsCell, TotalsTable, sumWidths } from '@/components/ui/Table';
 import { Trunc } from '@/components/ui/Trunc';
 import { Badge } from '@/components/ui/Badge';
-import { Select } from '@/components/ui/Field';
+import { Checkbox, Select } from '@/components/ui/Field';
 import { DatePicker, DateRangePicker } from '@/components/ui/DateFields';
 import { Dialog } from '@/components/ui/Dialog';
 import { TextField } from '@/components/ui/TextField';
@@ -28,6 +28,7 @@ import { TransactionsView } from '@/components/transactions/TransactionsView';
 import { CURRENCIES } from '@/components/transactions/TxnActions';
 import { CustomerDialog, DeleteCustomerDialog } from './Customers';
 import { DangerConfirm, deletedToast } from '@/components/ui/DangerConfirm';
+import { AddToStatementDialog, CustomerExcelCard, StatementCheckbox, addToStatementAfter, useStatementChoice } from '@/components/customers/CustomerExcel';
 
 const tabCls = ({ isSelected }: { isSelected: boolean }) => cx(
   'relative -mb-px flex h-10 cursor-default items-center gap-2 px-3 text-sm outline-none transition-colors duration-150',
@@ -65,6 +66,9 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
   const [reversing, setReversing] = useState<LedgerEntry | null>(null);
   const [deleting, setDeleting] = useState<LedgerEntry | null>(null);
   const [flash, setFlash] = useState<number | null>(null);
+  // SPEC 6.8.2: pick entries to add to the customer's Excel statement
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [adding, setAdding] = useState(false);
   const period = preset === 'custom' ? custom : presetPeriod(preset);
   const view = useQuery({ queryKey: ['ledger_entries', customer.id, currency, period], queryFn: () => api.ledgerEntries(customer.id, currency, period.from || period.to ? period : undefined) });
   const { run } = useAction();
@@ -101,10 +105,10 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
   }, [v, currency]);
   const LW = useMemo(() => {
     const w = {
-      date: '96px', type: '80px', ref: '100px', menu: '48px',
+      select: SELECT_W, date: '96px', type: '76px', ref: '96px', excel: '40px', menu: '48px',
       credit: amountWidth(fit.credit, false, 76), debit: amountWidth(fit.debit, false, 76), running: amountWidth(fit.running, false, 96),
     };
-    return { ...w, min: sumWidths([...Object.values(w), '170px']) };
+    return { ...w, min: sumWidths([...Object.values(w), '150px']) };
   }, [fit]);
   return (
     <div>
@@ -118,38 +122,55 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
           <Button variant="secondary" size="sm" onPress={print}><Printer />طباعة كشف</Button>
         </div>
       </div>
+      {picked.size > 0 && (
+        <div className="mb-3 flex h-11 items-center gap-1 rounded-card bg-accent-soft pe-2 ps-4 text-sm" role="toolbar" aria-label="إجراءات على القيود المحددة">
+          <span className="me-3 text-fg">محدّد <span className="num">{picked.size}</span></span>
+          <Button size="sm" variant="quiet" onPress={() => setAdding(true)}><FileSpreadsheet />إضافة إلى ملف العميل</Button>
+          <Button size="icon" variant="quiet" aria-label="إلغاء التحديد" className="ms-auto" onPress={() => setPicked(new Set())}><X /></Button>
+        </div>
+      )}
       <TableFrame>
         <table className="w-full table-fixed border-separate border-spacing-0 text-sm" style={{ minWidth: LW.min }} aria-label={`دفتر ${currency}`}>
           <colgroup>
-            <col style={{ width: LW.date }} /><col style={{ width: LW.type }} /><col />
+            <col style={{ width: LW.select }} /><col style={{ width: LW.date }} /><col style={{ width: LW.type }} /><col />
             <col style={{ width: LW.credit }} /><col style={{ width: LW.debit }} /><col style={{ width: LW.running }} />
-            <col style={{ width: LW.ref }} /><col style={{ width: LW.menu }} />
+            <col style={{ width: LW.ref }} /><col style={{ width: LW.excel }} /><col style={{ width: LW.menu }} />
           </colgroup>
           <thead className="sticky top-0 z-10">
             <tr className="[&>th]:bg-surface [&>th]:h-10 [&>th]:overflow-hidden [&>th]:border-b [&>th]:border-line [&>th]:px-2.5 [&>th]:font-normal [&>th]:whitespace-nowrap">
-              <th className="sticky z-[2] text-start" data-sticky="start" style={{ insetInlineStart: 0 }}><HeadLabel>التاريخ</HeadLabel></th>
+              <th className="sticky z-[2] !ps-4 text-start" data-sticky="start-inner" style={{ insetInlineStart: 0 }}>
+                <Checkbox aria-label="تحديد كل القيود" isSelected={!!v?.entries.length && picked.size === v.entries.length}
+                  isIndeterminate={picked.size > 0 && picked.size < (v?.entries.length ?? 0)}
+                  onChange={(on) => setPicked(on ? new Set(v?.entries.map((e) => e.id)) : new Set())} />
+              </th>
+              <th className="sticky z-[2] text-start" data-sticky="start" style={{ insetInlineStart: SELECT_W }}><HeadLabel>التاريخ</HeadLabel></th>
               <th className="text-start"><HeadLabel>النوع</HeadLabel></th>
               <th className="text-start"><HeadLabel>الوصف</HeadLabel></th>
               <th className="text-end"><HeadLabel>له (+)</HeadLabel></th>
               <th className="text-end"><HeadLabel>عليه (−)</HeadLabel></th>
               <th className="text-end"><HeadLabel>الرصيد الجاري</HeadLabel></th>
               <th className="text-start"><HeadLabel>المرجع</HeadLabel></th>
+              <th className="text-start"><span title="في ملف العميل" className="inline-flex text-fg-3"><FileCheck2 className="size-4" strokeWidth={1.7} aria-hidden /><span className="sr-only">في ملف العميل</span></span></th>
               <th className="sticky z-[2]" data-sticky="end" style={{ insetInlineEnd: 0 }}><span className="sr-only">إجراءات</span></th>
             </tr>
           </thead>
           <tbody className="[&>tr>td]:h-12 [&>tr>td]:border-b [&>tr>td]:border-line [&>tr>td]:px-2.5 [&>tr>td]:leading-tight [&>tr>td]:whitespace-nowrap [&>tr:last-child>td]:border-b-0">
             {v && period.from && (
               <tr className="t-row [--row-tint:color-mix(in_oklab,var(--raised)_40%,transparent)] text-fg-2">
-                <td colSpan={5}>رصيد سابق حتى <bdi dir="ltr" className="num">{period.from}</bdi></td>
+                <td colSpan={6}>رصيد سابق حتى <bdi dir="ltr" className="num">{period.from}</bdi></td>
                 <td className="text-end"><Amount fit={fit.running} minor={v.openingBalanceMinor} currency={currency} showCurrency={false} tone="signed" /></td>
-                <td colSpan={2} />
+                <td colSpan={3} />
               </tr>
             )}
             {v?.entries.map((e) => {
               const reversed = e.reversedByEntryId !== null;
               return (
                 <tr key={e.id} id={`entry-${e.id}`} className={cx('t-row hover:[--row-tint:color-mix(in_oklab,var(--raised)_55%,transparent)]', flash === e.id && '[--row-tint:var(--accent-soft)]')}>
-                  <td className="num sticky z-[1] text-fg-2" data-sticky="start" style={{ insetInlineStart: 0 }}><bdi dir="ltr">{e.entryDate}</bdi></td>
+                  <td className="sticky z-[1] !ps-4" data-sticky="start-inner" style={{ insetInlineStart: 0 }}>
+                    <Checkbox aria-label="تحديد القيد" isSelected={picked.has(e.id)}
+                      onChange={(on) => setPicked((prev) => { const n = new Set(prev); if (on) n.add(e.id); else n.delete(e.id); return n; })} />
+                  </td>
+                  <td className="num sticky z-[1] text-fg-2" data-sticky="start" style={{ insetInlineStart: SELECT_W }}><bdi dir="ltr">{e.entryDate}</bdi></td>
                   <td><Badge tone={e.type === 'credit' ? 'pos' : e.type === 'payout' ? 'neutral' : e.type === 'reversal' ? 'neg' : 'outline'}>{ledgerType[e.type]}</Badge></td>
                   <td>
                     <Trunc className={cx(reversed && 'text-fg-3 line-through decoration-fg-3/60')}>{e.description}</Trunc>
@@ -163,6 +184,7 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
                   <td className="text-end">{e.amountMinor < 0 ? <Amount fit={fit.debit} minor={-e.amountMinor} currency={currency} showCurrency={false} className={reversed ? 'text-fg-3 line-through' : ''} /> : ''}</td>
                   <td className="text-end font-medium"><Amount fit={fit.running} minor={e.runningBalanceMinor} currency={currency} showCurrency={false} className={e.runningBalanceMinor < 0 ? 'text-neg' : ''} /></td>
                   <td className="text-[13px] text-fg-3">{e.reference ? <div dir="ltr" className="truncate text-right" title={e.reference}>{e.reference}</div> : ''}</td>
+                  <td>{e.inCustomerExcel && <span title="في ملف العميل" aria-label="في ملف العميل" className="inline-flex text-pos"><Check className="size-4" strokeWidth={2} /></span>}</td>
                   <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                     <MenuTrigger>
                       <Button variant="quiet" size="icon" aria-label="إجراءات القيد"><MoreHorizontal /></Button>
@@ -183,16 +205,16 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
                 </tr>
               );
             })}
-            {v && v.entries.length === 0 && <tr><td colSpan={8} className="py-10 text-center text-fg-3">لا قيود في هذه الفترة</td></tr>}
+            {v && v.entries.length === 0 && <tr><td colSpan={10} className="py-10 text-center text-fg-3">لا قيود في هذه الفترة</td></tr>}
           </tbody>
         </table>
         {v && (
-          <TotalsTable label="الرصيد الختامي" minWidth={LW.min} widths={[LW.date, LW.type, undefined, LW.credit, LW.debit, LW.running, LW.ref, LW.menu]}>
+          <TotalsTable label="الرصيد الختامي" minWidth={LW.min} widths={[LW.select, LW.date, LW.type, undefined, LW.credit, LW.debit, LW.running, LW.ref, LW.excel, LW.menu]}>
             <tr>
-              <TotalsCell sticky="start" colSpan={2} className="text-fg-2">الرصيد الختامي <span className="text-fg-3">{currency}</span></TotalsCell>
+              <TotalsCell sticky="start" colSpan={3} className="!ps-4 text-fg-2">الرصيد الختامي <span className="text-fg-3">{currency}</span></TotalsCell>
               <TotalsCell colSpan={3} />
               <TotalsCell align="end" className="text-sm font-medium"><Amount fit={fit.running} minor={v.closingBalanceMinor} currency={currency} showCurrency={false} className={v.closingBalanceMinor < 0 ? 'text-neg' : 'text-accent-ink'} /></TotalsCell>
-              <TotalsCell />
+              <TotalsCell colSpan={2} />
               <TotalsCell sticky="end" />
             </tr>
           </TotalsTable>
@@ -200,6 +222,7 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
       </TableFrame>
       {reversing && <ReverseDialog entry={reversing} onClose={() => setReversing(null)} />}
       {deleting && <DeleteEntryDialog entry={deleting} onClose={() => setDeleting(null)} />}
+      {adding && <AddToStatementDialog customer={customer} items={[...picked].map((id) => ({ kind: 'ledger' as const, id }))} onClose={() => setAdding(false)} onDone={() => setPicked(new Set())} />}
     </div>
   );
 }
@@ -270,6 +293,8 @@ function MoneyEntryDialog({ kind, customer, currencies, defaultCurrency, onClose
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { run, pending } = useAction();
   const isPayout = kind === 'payout';
+  const statement = useStatementChoice(customer.id);
+  const qc = useQueryClient();
 
   const next = () => {
     const e: Record<string, string> = {};
@@ -282,7 +307,10 @@ function MoneyEntryDialog({ kind, customer, currencies, defaultCurrency, onClose
     const r = isPayout
       ? await run(() => api.ledgerAddPayout(customer.id, { currency, amountText: amountText.trim(), entryDate, method, reference: reference.trim() || undefined, description: description.trim() || undefined, confirmOverdraw }), 'سُجّلت الدفعة', { quiet: (e) => e.field === 'overdraw' })
       : await run(() => api.ledgerAddAdjustment(customer.id, { currency, amountText: amountText.trim(), direction, entryDate, description: description.trim() }), 'سُجّل قيد التسوية');
-    if (r.ok) onClose();
+    if (r.ok) {
+      onClose();
+      if (statement.on) void addToStatementAfter(customer.id, { kind: 'ledger', id: r.value.id }, qc);
+    }
     else if (r.error.field === 'overdraw') setOverdraw(r.error.messageAr);
     else if (r.error.field || r.error.code === 'invalid_amount') { setErrors({ [r.error.field ?? 'amount']: r.error.messageAr }); setStep('form'); }
   };
@@ -298,6 +326,7 @@ function MoneyEntryDialog({ kind, customer, currencies, defaultCurrency, onClose
           <p>{isPayout ? `${payoutMethod[method]}، بتاريخ ` : `${direction === 'credit' ? 'تُضاف إلى رصيده' : 'تُخصم من رصيده'}، بتاريخ `}<bdi dir="ltr" className="num">{entryDate}</bdi></p>
           {description && <p>{description}</p>}
           {overdraw && <p className="rounded-card bg-neg-soft px-3 py-2 text-neg">{overdraw}. بعد التسجيل يصبح الرصيد سالباً ويظهر «عليه».</p>}
+          <StatementCheckbox customerId={customer.id} value={statement.value} onChange={statement.setValue} />
           <button className="self-start text-[13px] text-accent-ink hover:underline" onClick={() => { setStep('form'); setOverdraw(null); }}>تعديل البيانات</button>
         </div>
       </ConfirmMoney>
@@ -374,6 +403,7 @@ function CustomerPage({ customerId }: { customerId: number }) {
         </>}
       />
       <BalanceCards cards={cards.data ?? []} />
+      <CustomerExcelCard customer={c} />
 
       {tab !== null && (
         <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(String(k))}>
