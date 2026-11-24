@@ -99,3 +99,33 @@ fn inbox_query_uses_the_status_index() {
         .collect();
     assert!(plan.iter().any(|p| p.contains("idx_txn_status")), "{plan:?}");
 }
+
+#[test]
+fn filter_ids_limits_rows_and_totals_per_currency() {
+    // SPEC §6.5: the bulk-approve confirmation shows the core's totals for exactly the selection.
+    let h = harness();
+    let c = h.customer("Ali", 2500);
+    let a = h.manual("USD", "100.00", Some("5"));
+    let b = h.manual("USD", "20.00", Some("0"));
+    let e = h.manual("EUR", "50.00", Some("0"));
+    let other = h.manual("USD", "999.00", Some("0"));
+    for t in [&a, &b, &e, &other] {
+        h.core.txn_assign(t.id, c.id, None, false).unwrap();
+    }
+    let f = TxnFilter { ids: Some(vec![a.id, b.id, e.id]), ..Default::default() };
+    let r = h.core.txn_list(&f, Default::default(), 1, 50).unwrap();
+    assert_eq!(r.total, 3);
+    let usd = r.totals.iter().find(|t| t.currency == "USD").unwrap();
+    assert_eq!((usd.count, usd.gross_minor), (2, 12000), "the unselected USD row is not counted");
+    assert_eq!(usd.customer_amount_minor, 7125 + 1500);
+    let eur = r.totals.iter().find(|t| t.currency == "EUR").unwrap();
+    assert_eq!((eur.count, eur.customer_amount_minor), (1, 3750));
+    // Empty ids: no limit. Unknown ids: nothing.
+    let all = TxnFilter { ids: Some(vec![]), ..Default::default() };
+    assert_eq!(h.core.txn_list(&all, Default::default(), 1, 50).unwrap().total, 4);
+    let none = TxnFilter { ids: Some(vec![987654]), ..Default::default() };
+    assert_eq!(h.core.txn_list(&none, Default::default(), 1, 50).unwrap().total, 0);
+    // Deserialized from the contract's camelCase JSON.
+    let f: TxnFilter = serde_json::from_value(json!({ "ids": [a.id], "customerId": c.id })).unwrap();
+    assert_eq!(h.core.txn_list(&f, Default::default(), 1, 50).unwrap().items[0].id, a.id);
+}

@@ -196,6 +196,8 @@ pub struct TxnFilter {
     pub needs_review_only: Option<bool>,
     #[serde(rename = "type")]
     pub kind: Option<TxnType>,
+    /// Only these transactions (bulk-approve confirmation totals, SPEC §6.5). Empty or absent: no limit.
+    pub ids: Option<Vec<i64>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -1372,6 +1374,11 @@ impl Core {
         if let Some(k) = f.kind {
             w.push("t.type = ?".into());
             a.push(k.as_str().to_string().into());
+        }
+        if let Some(ids) = f.ids.as_ref().filter(|ids| !ids.is_empty()) {
+            // One JSON parameter instead of one per id: no SQLite parameter limit on large selections.
+            w.push("t.id IN (SELECT value FROM json_each(?))".into());
+            a.push(serde_json::to_string(ids).map_err(AppError::internal)?.into());
         }
         if f.needs_review_only.unwrap_or(false) {
             w.push("t.needs_review = 1".into());
