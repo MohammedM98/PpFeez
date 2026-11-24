@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Tabs, TabList, Tab, MenuTrigger, Menu, MenuItem, Popover, type Selection, type Key } from 'react-aria-components';
+import { Tabs, TabList, Tab, TabPanel, MenuTrigger, Menu, MenuItem, Popover, type Selection, type Key } from 'react-aria-components';
 import { ChevronLeft, ChevronRight, MoreHorizontal, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { BulkResult, ParseStatus, RawEmailSummary } from '@/lib/contract';
@@ -123,6 +123,7 @@ export function EmailsPage() {
               </Tab>
             ))}
           </TabList>
+          {TABS.map((k) => <TabPanel key={k} id={k} className="sr-only">الجدول أدناه: {parseStatus[k]}</TabPanel>)}
         </Tabs>
         <div className="flex min-w-0 flex-1 items-center gap-2 py-1">
           <SearchField label="بحث بالموضوع أو المرسل" value={search} onChange={setSearch} className="w-[280px]" />

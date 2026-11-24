@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router';
 import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
-import { Tabs, TabList, Tab, MenuTrigger, Menu, MenuItem, Popover, type SortDescriptor, type Selection, type Key } from 'react-aria-components';
+import { Tabs, TabList, Tab, TabPanel, Menu, MenuItem, Popover, type SortDescriptor, type Selection, type Key } from 'react-aria-components';
 import { Check, CornerDownLeft, FileCheck2, FileSpreadsheet, MoreHorizontal, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
 import { useAction } from '@/lib/useAction';
@@ -40,7 +40,7 @@ const TABS = {
   // approved transfers live in the customer's statement (SPEC 6.5); this tab is what awaits approval
   customer: ['pending_approval'] as TxnStatus[],
 };
-const BATCH = 500; // rows per request (the contract's maximum)
+const BATCH = 200; // rows per request: a screenful many times over, small enough to answer fast
 /** the payer column takes the remaining width, never less than this */
 const PAYER_MIN = '160px';
 const END = new Set(['grossMinor', 'feeMinor', 'netMinor', 'commission', 'customerAmountMinor']);
@@ -74,6 +74,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
   const [detailId, setDetailId] = useState<number | null>(params.get('detail') ? Number(params.get('detail')) : null);
   const [flashId, setFlashId] = useState<number | null>(null);
   const [editing, setEditing] = useState<{ id: number; field: InlineField } | null>(null);
+  const [rowMenu, setRowMenu] = useState<{ t: Transaction; el: HTMLElement } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const actions = useTxnActions();
   const { run } = useAction();
@@ -176,6 +177,14 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
   const marginTop = waiting ? Math.max(0, win.top - win.head) : win.padTop;
   const padBottom = waiting ? Math.max(0, win.padBottom + win.padTop + (win.end - win.start) * win.rowH - marginTop - win.rowH) : win.padBottom;
 
+  // a long list draws only some rows: tell screen readers the whole count and where each drawn row sits
+  useLayoutEffect(() => {
+    const table = scrollRef.current?.querySelector('table[role=grid]');
+    if (!table || !win.windowed) return;
+    table.setAttribute('aria-rowcount', String(total + 1));
+    table.querySelectorAll<HTMLElement>('tbody tr[data-key]').forEach((tr, i) => tr.setAttribute('aria-rowindex', String(win.start + i + 2)));
+  });
+
   // a row opened from search: bring it into view and mark it for a moment
   useEffect(() => {
     if (flashId === null || !items.some((t) => t.id === flashId)) return;
@@ -202,6 +211,9 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
     const key = JSON.stringify([filter, tab]);
     const prev = fitMax.current?.key === key ? fitMax.current.f : null;
     if (prev) for (const k of Object.keys(f) as (keyof typeof f)[]) f[k] = Math.max(f[k], prev[k]);
+    // the same widths keep the same object, so the table doesn't redraw every cell for nothing
+    const same = prev && (Object.keys(f) as (keyof typeof f)[]).every((k) => f[k] === prev[k]);
+    if (same) return prev;
     fitMax.current = { key, f };
     return f;
   }, [items, totals, filter, tab]);
@@ -310,6 +322,8 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
             </Tab>
           ))}
         </TabList>
+        {/* the tab's content is the table below; this keeps each tab tied to a panel for screen readers */}
+        {tabs.map((k) => <TabPanel key={k} id={k} className="sr-only">الجدول أدناه: {txnStatus[k]}</TabPanel>)}
       </Tabs>
 
 
@@ -359,7 +373,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
 
       <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onTableKey}>
       <TableFrame fill scrollRef={scrollRef}>
-        <Table style={marginTop ? { marginTop } : undefined} aria-rowcount={total + 1} aria-label={inbox ? 'الوارد' : 'معاملات العميل'} selectionMode="multiple" selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
+        <Table style={marginTop ? { marginTop } : undefined} aria-label={inbox ? 'الوارد' : 'معاملات العميل'} selectionMode="multiple" selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
           sortDescriptor={sort} onSortChange={setSort} onRowAction={(k: Key) => openDetail(Number(k))} minWidth={minWidth}>
           <TableHeader>
             <Column id="occurredAt" allowsSorting isRowHeader width={W.date} sticky="start" stickyOffset={SELECT_W} inner={anyPinned}>{s.cols.date}</Column>
@@ -374,7 +388,7 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
             ))}
             <Column id="menu" width={W.menu} sticky="end"><span className="sr-only">إجراءات</span></Column>
           </TableHeader>
-          <TableBody items={shown} dependencies={[showExcel, inbox, flashId, detailId, fit, colKey, editing]} renderEmptyState={() => total > 0 ? <p className="py-6 text-center text-fg-3" role="status">جارٍ التحميل…</p> : (
+          <TableBody items={shown} dependencies={[showExcel, inbox, flashId, detailId, fit, colKey, editing, rowMenu]} renderEmptyState={() => total > 0 ? <p className="py-6 text-center text-fg-3" role="status">جارٍ التحميل…</p> : (
             <div className="py-16 text-center">
               <p className="text-fg-2">{tab === 'unassigned' ? 'الوارد فارغ: كل المعاملات مخصّصة' : tab === 'pending_approval' ? 'لا شيء بانتظار الموافقة' : 'لا معاملات هنا'}</p>
               {inbox && tab === 'unassigned' && <p className="mt-1 text-[13px] text-fg-3">المعاملات المخصّصة في صفحات العملاء، وتجدها بالبحث <kbd className="num rounded border border-line px-1 text-[12px]">Ctrl K</kbd></p>}
@@ -412,22 +426,25 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
                   }
                 })}
                 <Cell sticky="end" className="pe-2">
-                  <MenuTrigger>
-                    <Button variant="quiet" size="icon" aria-label="إجراءات"><MoreHorizontal /></Button>
-                    <Popover placement="bottom end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                      <Menu className="outline-none" onAction={(k) => onMenu(t, k as MenuKey)}>
-                        {menuKeys(t).map((a) => (
-                          <MenuItem key={a} id={a} className={cx('flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised', (a === 'unapprove' || a === 'delete') && 'text-neg')}>{label(a)}</MenuItem>
-                        ))}
-                        <MenuItem id="detail" className="flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm text-fg-2 outline-none data-[focused]:bg-raised">عرض التفاصيل <CornerDownLeft className="ms-auto size-3.5" /></MenuItem>
-                      </Menu>
-                    </Popover>
-                  </MenuTrigger>
+                  {/* one shared menu for all rows (below): a closed menu per row costs time on every redraw */}
+                  <Button variant="quiet" size="icon" aria-label="إجراءات" aria-haspopup="menu" aria-expanded={rowMenu?.t.id === t.id}
+                    onPress={(e) => setRowMenu({ t, el: e.target as HTMLElement })}><MoreHorizontal /></Button>
                 </Cell>
               </Row>
             )}
           </TableBody>
         </Table>
+        {rowMenu && (
+          <Popover triggerRef={{ current: rowMenu.el }} isOpen onOpenChange={(o) => { if (!o) { const el = rowMenu.el; setRowMenu(null); requestAnimationFrame(() => el.isConnected && el.focus()); } }}
+            placement="bottom end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
+            <Menu aria-label="إجراءات" autoFocus="first" className="outline-none" onAction={(k) => { const t = rowMenu.t; setRowMenu(null); onMenu(t, k as MenuKey); }}>
+              {menuKeys(rowMenu.t).map((a) => (
+                <MenuItem key={a} id={a} className={cx('flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised', (a === 'unapprove' || a === 'delete') && 'text-neg')}>{label(a)}</MenuItem>
+              ))}
+              <MenuItem id="detail" className="flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm text-fg-2 outline-none data-[focused]:bg-raised">عرض التفاصيل <CornerDownLeft className="ms-auto size-3.5" /></MenuItem>
+            </Menu>
+          </Popover>
+        )}
         {padBottom > 0 && <div aria-hidden style={{ height: padBottom }} />}
         {!!totals?.length && (
           <TotalsTable label={s.totals} minWidth={minWidth} widths={widths}>

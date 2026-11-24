@@ -1,3 +1,4 @@
+import type { Accent } from '@/lib/contract';
 // Browser-only mode (contract §1): when there is no Tauri runtime, answer every
 // command from the in-memory mock backend in ./handlers.ts.
 import { mockIPC } from '@tauri-apps/api/mocks';
@@ -30,6 +31,7 @@ export function installMocks() {
   if (params.get('stress') === '1') addStressData(getDb());
   if (params.get('rows')) addManyRows(getDb(), Number(params.get('rows')));
   if (params.get('theme')) getDb().settings.theme = params.get('theme') as 'dark' | 'light' | 'system';
+  if (params.get('accent')) getDb().settings.accent = params.get('accent') as Accent;
   const latency = Number(params.get('latency') ?? 60);
 
   mockIPC(

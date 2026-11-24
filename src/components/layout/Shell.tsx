@@ -115,6 +115,15 @@ export function Shell() {
   const fold = () => update((p) => ({ ...p, sidebarCollapsed: !narrow }));
   return (
     <div className="flex h-screen min-h-[700px]">
+      {/* first stop of the keyboard (SPEC 6.10): straight to the screen's table, or its content */}
+      <a href="#main" onClick={(e) => {
+        e.preventDefault();
+        // in order of preference (a selector list would return <main> itself, the first in the document)
+        const target = ['main [role=grid] [role=row][data-key]', 'main [role=grid]', 'main table[aria-label] tbody tr', 'main']
+          .map((q) => document.querySelector<HTMLElement>(q)).find(Boolean);
+        if (target && !target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
+        target?.focus();
+      }} className="sr-only z-50 rounded-ctl bg-accent px-3 py-2 text-sm text-accent-fg focus:not-sr-only focus:fixed focus:start-3 focus:top-3">تخطَّ إلى الجدول</a>
       {!full && (
         <aside data-sidebar={narrow ? 'narrow' : 'wide'} className={cx('flex shrink-0 flex-col border-e border-line bg-sunken pb-3 pt-4 transition-[width] duration-200', narrow ? 'w-[64px] items-center px-2' : 'w-[232px] px-3')}>
           <div className={cx('pb-6', narrow ? '' : 'px-2.5')}>{narrow ? <LogoMark /> : <Logo />}</div>
@@ -142,7 +151,7 @@ export function Shell() {
           </div>
         </aside>
       )}
-      <main className="relative min-w-0 flex-1 overflow-auto">
+      <main id="main" className="relative min-w-0 flex-1 overflow-auto">
         <Outlet />
         {full && (
           <button onClick={exit} className="fixed end-6 top-2 z-40 inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface px-3 text-[12.5px] text-fg-2 shadow-(--shadow-float) outline-none hover:text-fg focus-visible:outline-2 focus-visible:outline-focus">

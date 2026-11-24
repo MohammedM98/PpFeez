@@ -284,7 +284,7 @@ function ExcelSection({ s }: { s: SettingsT }) {
               'data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-1 data-[focus-visible]:outline-focus',
               isSelected ? 'border-accent bg-accent-soft' : 'border-line hover:border-line-strong')}>
               <span className="text-sm text-fg">{m.label}</span>
-              <span className="text-[12.5px] leading-snug text-fg-3">{m.hint}</span>
+              <span className="text-[12.5px] leading-snug text-fg-2">{m.hint}</span>
             </Radio>
           ))}
         </RadioGroup>

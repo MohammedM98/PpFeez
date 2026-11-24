@@ -62,7 +62,7 @@
   --raised: #232325;
   --fg: #ededed;
   --fg-2: #a1a1a6;
-  --fg-3: #85858b;
+  --fg-3: #8b8b91; /* ≥ 4.6:1 on --raised (WCAG AA for small text) */
   --accent: #2f5fe8;
   --accent-fg: #ffffff;
   --accent-ink: #7fa2ff;

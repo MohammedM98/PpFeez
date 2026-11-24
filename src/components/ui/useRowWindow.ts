@@ -6,7 +6,7 @@ import { useEffect, useState, type RefObject } from 'react';
  * column widths, sticky columns and the alignment rules are unchanged. Short lists draw every row.
  */
 
-const OVERSCAN = 12;
+const OVERSCAN = 6;
 export const WINDOW_FROM = 150; // rows; below this everything is drawn
 
 export function useRowWindow(scrollRef: RefObject<HTMLElement | null>, count: number) {

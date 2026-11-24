@@ -1,7 +1,6 @@
-import { useCallback } from 'react';
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useCallback, useSyncExternalStore } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from './api';
-import type { Settings } from './contract';
 
 /*
  * The UI's own preferences (SPEC 6.10), kept by the core as an opaque JSON string in
@@ -43,47 +42,44 @@ export function parsePrefs(raw: string | undefined | null): UiPrefs {
   }
 }
 
-let timer: ReturnType<typeof setTimeout> | undefined;
-let flush: (() => void) | undefined;
-/**
- * The latest preferences not yet confirmed by the core. A settings refetch that lands before the
- * write would otherwise bring back the older value; until the write is confirmed this one wins.
+/*
+ * The preferences live in their own small store, read once from the settings. Changing them re-renders
+ * only what reads them (not the whole app, which follows the settings query) and is written back to the
+ * core after a short pause, and at once when the window closes.
  */
-let pending: string | null = null;
+let state: UiPrefs = {};
+let loaded = false;
+const listeners = new Set<() => void>();
+const subscribe = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
+const snapshot = () => state;
 
-function save(qc: QueryClient) {
+let timer: ReturnType<typeof setTimeout> | undefined;
+let dirty = false;
+function flush() {
   clearTimeout(timer);
-  flush = () => {
-    flush = undefined;
-    const sent = pending;
-    if (sent === null) return;
-    void api.updateSettings({ uiPrefs: sent })
-      .then(() => { if (pending === sent) pending = null; })
-      .catch(() => undefined);
-  };
-  timer = setTimeout(() => flush?.(), 400);
-  void qc; // the cache already shows the change
+  if (!dirty) return;
+  dirty = false;
+  void api.updateSettings({ uiPrefs: JSON.stringify(state) }).catch(() => { dirty = true; });
 }
-// closing the window right after a change still keeps it
-window.addEventListener('pagehide', () => { clearTimeout(timer); flush?.(); });
-
-const current = (s: Settings | undefined) => pending ?? s?.uiPrefs;
+window.addEventListener('pagehide', flush);
 
 /** Change the preferences; the screen follows at once, the core is told shortly after. */
-export function updatePrefs(qc: QueryClient, fn: (p: UiPrefs) => UiPrefs) {
-  const s = qc.getQueryData<Settings>(KEY);
-  if (!s) return;
-  pending = JSON.stringify(fn(parsePrefs(current(s))));
-  qc.setQueryData<Settings>(KEY, { ...s, uiPrefs: pending });
-  save(qc);
+export function updatePrefs(fn: (p: UiPrefs) => UiPrefs) {
+  const next = fn(state);
+  if (next === state) return;
+  state = next;
+  dirty = true;
+  listeners.forEach((l) => l());
+  clearTimeout(timer);
+  timer = setTimeout(flush, 400);
 }
 
 export function useUiPrefs() {
-  const qc = useQueryClient();
   const settings = useQuery({ queryKey: KEY, queryFn: api.getSettings });
-  const prefs = parsePrefs(current(settings.data));
-  const update = useCallback((fn: (p: UiPrefs) => UiPrefs) => updatePrefs(qc, fn), [qc]);
-  return { prefs, update, ready: !!settings.data };
+  if (!loaded && settings.data) { state = parsePrefs(settings.data.uiPrefs); loaded = true; }
+  const prefs = useSyncExternalStore(subscribe, snapshot);
+  const update = useCallback((fn: (p: UiPrefs) => UiPrefs) => updatePrefs(fn), []);
+  return { prefs, update, ready: loaded };
 }
 
 /** One table's column preferences and setters (SPEC 6.10 "الأعمدة… تُحفظ لكل جدول"). */

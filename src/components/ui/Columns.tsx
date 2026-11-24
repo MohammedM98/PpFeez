@@ -1,4 +1,4 @@
-import { useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Button as RacButton, DialogTrigger, Dialog as RacDialog, GridList, GridListItem, Popover, useDragAndDrop } from 'react-aria-components';
 import { Columns3, GripVertical, Pin, PinOff, RotateCcw } from 'lucide-react';
 import { useColumnPrefs, type ColumnPrefs } from '@/lib/uiPrefs';
@@ -94,6 +94,16 @@ export function colAttrs(c: ColView) {
  */
 export function ColumnResizer({ col, onResize }: { col: ColView; onResize: (px: number) => void }) {
   const start = useRef<{ x: number; w: number; rtl: boolean } | null>(null);
+  // the width the column has now, for screen readers (a separator that can be focused carries its value)
+  const self = useRef<HTMLDivElement>(null);
+  const [px, setPx] = useState(0);
+  useLayoutEffect(() => {
+    const th = self.current?.closest('th');
+    if (!th) return;
+    const ro = new ResizeObserver(() => setPx(Math.round(th.getBoundingClientRect().width)));
+    ro.observe(th);
+    return () => ro.disconnect();
+  }, []);
   const pendingKey = useRef<number | null>(null);
   const clearKey = useRef<ReturnType<typeof setTimeout>>(undefined);
   if (!col.width) return null;
@@ -128,6 +138,7 @@ export function ColumnResizer({ col, onResize }: { col: ColView; onResize: (px: 
   };
   return (
     <div role="separator" aria-orientation="vertical" aria-label={`عرض عمود ${col.label}`} tabIndex={0}
+      ref={self} aria-valuenow={px} aria-valuemin={48} aria-valuemax={1200} aria-valuetext={`${px} بكسل`}
       onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onKeyDown={key} onClick={(e) => e.stopPropagation()}
       className="absolute inset-y-1.5 end-0 z-[3] w-2 cursor-col-resize touch-none rounded-full outline-none after:absolute after:inset-y-1 after:end-0.5 after:w-px after:bg-line hover:after:w-0.5 hover:after:bg-accent focus-visible:after:w-0.5 focus-visible:after:bg-focus" />
   );

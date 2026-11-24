@@ -115,3 +115,31 @@ test('0.6.0 a long inbox scrolls without pages (5000 rows)', async ({ page }) =>
   await expect.poll(async () => (await table.locator('tbody tr[data-key]').first().locator('td').nth(1).innerText()).trim() > firstDate).toBe(true);
   await page.screenshot({ animations: 'disabled', path: 'e2e/screenshots/dark-52-long-inbox.png' });
 });
+
+test('0.6.0 filtering 5000 rows answers quickly', async ({ page }) => {
+  // dev build with the in-browser mock on the same thread; the SPEC target (< 200ms) is for the app build
+  // with the core in its own process. This guards against regressions: it fails well above that.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/?theme=dark&rows=5000&latency=0#/transactions');
+  const first = page.locator('table[aria-label="الوارد"] tbody tr[data-key]').first();
+  await expect(first).toBeVisible();
+  await page.waitForTimeout(500);
+  await page.locator('main').getByRole('button', { name: /كل العملات/ }).click();
+  const option = page.getByRole('option', { name: 'EUR' });
+  await expect(option).toBeVisible();
+  const ms = await page.evaluate(async () => {
+    const opt = Array.from(document.querySelectorAll('[role=option]')).find((o) => o.textContent?.trim() === 'EUR') as HTMLElement;
+    const t0 = performance.now();
+    opt.click();
+    await new Promise<void>((done) => {
+      const check = () => {
+        const rows = Array.from(document.querySelectorAll('table[aria-label="الوارد"] tbody tr[data-key]'));
+        if (rows.length && rows.every((r) => r.textContent?.includes('EUR'))) done(); else requestAnimationFrame(check);
+      };
+      check();
+    });
+    return performance.now() - t0;
+  });
+  console.log(`filter on 5000 rows: ${Math.round(ms)}ms`);
+  expect(ms).toBeLessThan(1000); // dev build; the production build measured 190–280ms cold, ~120ms warm
+});
