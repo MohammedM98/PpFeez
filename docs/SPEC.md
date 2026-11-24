@@ -145,6 +145,9 @@ CREATE TABLE paypal_transactions (
   assigned_at            TEXT,
   approved_at            TEXT,
   note                   TEXT,                   -- ملاحظة المدير
+  needs_review           INTEGER NOT NULL DEFAULT 0,  -- 5.3: من المحلّل العام
+  review_reason          TEXT,
+  hold_status            TEXT CHECK (hold_status IN ('pending_echeck','on_hold')),  -- 5.3
   created_at             TEXT NOT NULL,
   updated_at             TEXT NOT NULL,
   CHECK (fee_minor IS NULL OR net_minor = gross_minor - fee_minor),
@@ -271,14 +274,20 @@ commission = percent: round_half_up(net × bps / 10000)
 6. بعد كل دفعة: تحديث `last_uid` والعدّادات، وإرسال حدث `pull://progress` للواجهة. يمكن الإلغاء بين الدفعات.
 7. النهاية: `done` + `last_pulled_at`. عند خطأ: `failed` مع الرسالة، وما حُفظ يبقى (السحب التالي يكمل من `last_uid`).
 
-### 5.6 نطاقات PayPal حسب الدولة
+### 5.6 نطاقات PayPal حسب الدولة (كل الاحتمالات)
 
-PayPal يرسل من نطاق الدولة: صاحب المشروع يستقبل من **`service@paypal.co.il`**. البحث على `paypal.com` وحده لا يجد هذه الرسائل (سبب خلل 0.2.0: سحب ناجح بصفر رسائل).
+PayPal يرسل من نطاق الدولة: صاحب المشروع يستقبل من **`service@paypal.co.il`**. البحث على `paypal.com` وحده لا يجد هذه الرسائل (سبب خلل 0.2.0: سحب ناجح بصفر رسائل). الهدف: إيجاد **أي** رسالة PayPal حقيقية من أي دولة، دون فتح الباب لرسائل مزوّرة.
 
-- **القائمة المدمجة**: `paypal.com`, `paypal.co.il`, `paypal.com.tr`, `paypal.co.uk`, `paypal.de`, `paypal.fr`, `paypal.it`, `paypal.es`, `paypal.nl`, `paypal.ca`, `paypal.com.au`, `paypal.com.br`, `paypal.com.mx`, `paypal.jp`, `paypal.com.sg`, `paypal.com.hk`, `paypal.ae` (ونطاقاتها الفرعية).
-- **نطاقات إضافية**: الإعدادات ← البريد ← "نطاقات PayPal الإضافية" (قائمة يكتبها المدير، تُتحقق صيغتها؛ يجب أن تحتوي كلمة `paypal`).
-- **`{PAYPAL_FROM}`** في البحث = `OR` متداخل لكل النطاقات المعتمدة: `OR FROM "paypal.com" OR FROM "paypal.co.il" ...`. البحث يقلّص المرشحين فقط؛ القبول الفعلي في التحقق 5.2.
-- **بعد التحديث**: سحب "كل الرسائل" يجد الرسائل التي فاتت؛ لا شيء يُكرَّر.
+**ثلاث طبقات للنطاقات**
+1. **القائمة المدمجة الموثوقة**: كل نطاقات PayPal الدولية الرسمية ونطاقاتها الفرعية. على جلسة القلب جمعها والتحقق منها من مصادر PayPal الرسمية (صفحات PayPal الدولية وروابطها) وليس من الذاكرة؛ تشمل على الأقل: `paypal.com`, `paypal.co.il`, `paypal.com.tr`, `paypal.co.uk`, `paypal.de`, `paypal.fr`, `paypal.it`, `paypal.es`, `paypal.nl`, `paypal.be`, `paypal.at`, `paypal.ch`, `paypal.pl`, `paypal.se`, `paypal.dk`, `paypal.no`, `paypal.fi`, `paypal.ie`, `paypal.pt`, `paypal.ca`, `paypal.com.au`, `paypal.com.br`, `paypal.com.mx`, `paypal.jp`, `paypal.cn`, `paypal.com.sg`, `paypal.com.hk`, `paypal.ae`, `paypal.in` — أي نطاق في هذه القائمة لم يثبت أنه لـ PayPal يُحذف منها (يبقى متاحاً بالطبقة 3).
+2. **نطاقات يضيفها المدير**: الإعدادات ← البريد ← "نطاقات PayPal الإضافية".
+3. **نطاق PayPal غير معروف**: أي مرسل نطاقه المسجَّل (eTLD+1 حسب Public Suffix List) هو `paypal.<لاحقة عامة>` ولم يكن في الطبقتين 1-2، مع `dkim=pass` لنفس النطاق ⇒ لا يُرفض نهائياً ولا يُقبل تلقائياً: يُحفظ `ignored` بسبب `unknown_paypal_domain`، ويظهر في "الرسائل ← متجاهلة" مع زر **"الوثوق بهذا النطاق"** (يضيفه للطبقة 2 بعد تأكيد يعرض النطاق، ثم يعيد تحليل كل رسائله المتجاهلة لهذا السبب). وتنبيه في لوحة التحكم: "رسائل من نطاق PayPal غير معروف: {domain} (N)".
+
+**البحث**: `{PAYPAL_FROM}` = `FROM "paypal"` (مطابقة جزئية واسعة، تشمل كل الدول والنطاقات الفرعية). البحث يجمع المرشحين فقط؛ القبول الفعلي في التحقق 5.2. الرسائل التي فيها "paypal" لكنها ليست من PayPal (مثل رسالة من متجر يذكر PayPal في اسم المرسل) تُحفظ `ignored: not_paypal_sender` كما هي اليوم.
+
+**الحماية** (تبقى كما هي، على كل الطبقات): نطاق `From` الفعلي = نطاق معتمد أو فرعي منه؛ `dkim=pass` من ترويسة Google لنطاق معتمد متوافق مع `From`. تُرفض: `paypal.co.il.evil.com`، `paypal-co-il.com`، `paypa1.com`، `paypal.com@evil.com` في الاسم الظاهر، و`From` معتمد مع DKIM لنطاق آخر.
+
+**بعد التحديث**: سحب "كل الرسائل" يجد الرسائل التي فاتت؛ لا شيء يُكرَّر.
 
 ### 5.5 نطاق السحب (الجديد / آخر N يوم / من تاريخ إلى تاريخ / الكل)
 
@@ -316,21 +325,36 @@ trait PaypalParser {
     fn parse(&self, email: &ParsedEmail) -> Result<ParsedTransaction, ParseError>;
 }
 ```
-- `PaymentReceivedParser` — "You've got money" / "You received a payment" / "Payment received from ...".
-- `RefundParser` — "You sent a refund" / "Refund to ...".
-- `ReversalParser` — نزاع/chargeback/"payment reversed".
-- رسائل PayPal غير المالية (تسجيل دخول، عروض، كشوف، "You sent a payment") ⇒ `ignored: not_transactional`.
-- رسالة مالية لم يطابقها محلّل أو فشل استخراج حقل إلزامي ⇒ `failed` مع اسم الحقل.
+**أنواع الرسائل المالية المغطّاة** (كلها واردة إلى صاحب الحساب):
+
+| النوع | أمثلة الموضوع (EN) | النتيجة |
+|---|---|---|
+| استلام مبلغ (أصدقاء وعائلة) | "You've got money", "You received money" | `payment` |
+| استلام دفعة بضائع/خدمات | "You received a payment", "Payment received from …", "Notification of payment received" | `payment` |
+| دفع طلب أموال/فاتورة | "… paid your request", "Invoice … paid" | `payment` |
+| دفعة اشتراك/دفعة جماعية | "You received a subscription payment", "You've received a mass payment" | `payment` |
+| eCheck معلّق ثم مكتمل | "eCheck pending", "eCheck cleared" | `payment`؛ المعلّق يُعلَّم "معلّق" ولا يُعتمد حتى تصل رسالة الاكتمال لنفس الرقم (تُحدَّث نفس المعاملة) |
+| مبلغ محجوز (on hold) | "Your payment is on hold" | ملاحظة "محجوز" على المعاملة لنفس الرقم (لا معاملة جديدة) |
+| استرداد أرسلته | "You sent a refund", "Refund to …" | `refund` |
+| عكس/نزاع/استرجاع بنكي | "Payment reversed", "Dispute", "Chargeback", "Case …" | `reversal` |
+
+- **اللغات**: الإنجليزية، العبرية (PayPal إسرائيل)، العربية، التركية. لكل نوع × لغة: كلمات الموضوع والعناوين (Transaction ID / מספר עסקה / رقم المعاملة / İşlem numarası، Amount / סכום / المبلغ / Tutar، Fee / עמלה / رسوم / Ücret، Net / נטו / الصافي / Net …) في جداول بيانات منفصلة عن المنطق (`paypal/lang/{en,he,ar,tr}.rs`) لتسهل إضافة لغة. أرقام الاتجاهين وعلامات التحكم في الاتجاه (LRM/RLM/isolates) تُزال قبل التحليل.
+- **المحلّل العام (احتياطي)** `GenericParser`، آخر من يُجرَّب: إن لم يطابق محلّل متخصص لكن الرسالة من PayPal موثّقة وفيها **رقم معاملة PayPal** (17 حرفاً/رقماً كبيرة) **ومبلغ بعملة** ⇒ تُنشأ المعاملة مع `needs_review = 1` وسبب "صيغة غير معروفة — راجع البيانات". النوع يُستنتج إن أمكن وإلا `payment`.
+- **مراجعة**: معاملة `needs_review` تظهر بشارة "تحتاج مراجعة" ولا تُعتمد حتى يضغط المدير **"تأكيد البيانات"** (يمكنه تعديل المبلغ/العملة/المرسل قبلها عبر نافذة تعديل). يُسجَّل في `audit_log`.
+- رسائل PayPal غير المالية (تسجيل دخول، عروض، كشوف، "You sent a payment"، إيصالات مشترياتك) ⇒ `ignored: not_transactional`.
+- رسالة مالية بلا رقم معاملة أو بلا مبلغ يمكن استخراجه ⇒ `failed` مع اسم الحقل الناقص.
 
 الحقول: `paypal_txn_id` (إلزامي)، `gross` + `currency` (إلزامي)، `occurred_at` (من الرسالة، وإلا تاريخ الاستلام)، `payer_name`, `payer_email`, `payer_note`, `fee`, `related_txn_id` (اختيارية).
 تحليل المبالغ يدعم: `$1,234.56 USD`، `1.234,56 EUR`، `€50,00`، `100.00 USD`، `₪1,234.56 ILS`.
 
-**لغات الرسائل**: الإنجليزية أولاً. رسائل PayPal إسرائيل (`paypal.co.il`) قد تكون بالعبرية؛ يُضاف لها محلّل عند وصول عينات `.eml` حقيقية من صاحب المشروع. حتى ذلك الحين تظهر في "فاشلة" ويُنشئ منها المدير المعاملة يدوياً.
+تحليل المبالغ أيضاً: الرمز قبل الرقم أو بعده، المسافة الضيقة كفاصل آلاف، `ILS`/`₪`، `TRY`/`₺`، `USD`/`$`/`US$`، `EUR`/`€`، `GBP`/`£`، والرقم داخل نص RTL.
+
+**العينات الحقيقية لها الأولوية**: محلّلات العبرية/العربية/التركية مبنية على أفضل معرفة متاحة وقد تخطئ؛ المحلّل العام يلتقط ما تفوته (مع مراجعة). حين يرفق صاحب المشروع رسائل `.eml` حقيقية (خصوصاً من `paypal.co.il`) تُضاف للاختبارات وتُضبط المحلّلات عليها.
 
 > لا توجد رسائل حقيقية بعد. تُبنى المحلّلات على الشكل الإنجليزي المعروف بملفات `.eml` تجريبية، بحيث تُضاف صيغ جديدة (عربية/تركية) بإضافة محلّل وملف اختبار فقط. حين يرفق صاحب المشروع رسائله تُضاف إلى `tests/fixtures/emails/` بعد تنقيح الأسماء.
 
 ### 5.4 إعادة التحليل
-زر "إعادة تحليل" على الرسائل `failed` (مفرد/جماعي) يشغّل المحلّلات الحالية على `raw_emails` المحفوظة دون اتصال بالبريد — مفيد بعد تحديث البرنامج بمحلّل جديد.
+زر "إعادة تحليل" على الرسائل `failed` و`ignored` (مفرد/جماعي) يشغّل المحلّلات الحالية على `raw_emails` المحفوظة دون اتصال بالبريد — مفيد بعد تحديث البرنامج بمحلّل جديد.
 
 ---
 
@@ -526,6 +550,8 @@ PpFeez/
 - المصدر: قبول PayPal مع `dkim=pass`، رفض اسم ظاهر مزوّر، رفض `dkim=fail`، تجاهل ترويسة Authentication-Results مزروعة أسفل ترويسة Google.
 - المحلّلات: كل ملف `.eml` يعطي الحقول المتوقعة؛ رسالة غير مالية ⇒ `ignored`؛ ناقصة ⇒ `failed`.
 - السحب بجالب وهمي: دفعات، تحديث `last_uid`، سحب ثانٍ بلا تكرار، تغيّر `UIDVALIDITY`، خطأ في المنتصف ثم استكمال.
+- المحلّلات (5.3): لكل نوع في الجدول ولكل لغة (en/he/ar/tr) ملف `.eml` تجريبي واحد على الأقل يعطي الحقول الصحيحة؛ المحلّل العام يلتقط رسالة بصيغة غير معروفة ويضع `needs_review`؛ معاملة `needs_review` لا تُعتمد قبل التأكيد؛ eCheck معلّق ثم مكتمل يحدّث نفس المعاملة؛ رسالة on hold لا تنشئ معاملة جديدة.
+- نطاق غير معروف (5.6): `paypal.xx` مع DKIM صحيح ⇒ `ignored: unknown_paypal_domain`؛ "الوثوق بهذا النطاق" يضيفه ويعيد تحليل رسائله فتنشأ المعاملات.
 - نطاقات PayPal (5.6): رسالة من `service@paypal.co.il` بتوقيع `dkim=pass header.d=paypal.co.il` تُقبل؛ نطاق إضافي من الإعدادات يُقبل؛ `paypal.co.il.evil.com` و`paypal-co-il.com` و`From` بنطاق معتمد مع DKIM لنطاق آخر تُرفض؛ ترويسة `ARC-Authentication-Results` لا تُعامل كـ `Authentication-Results`؛ الاستعلام `{PAYPAL_FROM}` يُبنى صحيحاً لنطاق واحد ولعدة نطاقات.
 - الواجهة: فلتر العملة في المعاملات افتراضياً **كل العملات**؛ سطر "آخر سحب" يعرض: مقروءة/جديدة/مكررة/متجاهلة/فاشلة، ويعرض عند 0 نتائج: "لم تُوجد رسائل من PayPal في هذه الفترة" مع النطاقات التي بُحث عنها.
 - نطاق السحب: `last_days` و `between` يجلبان فقط الرسائل داخل الفترة (بما فيها رسالة في آخر دقيقة من يوم `to` ورسالة قبل منتصف ليل `from` بتوقيت مختلف)؛ سحب نفس الفترة مرتين بلا تكرار؛ `last_uid` لا ينقص بعد سحب فترة قديمة؛ `new` بعد سحب فترة يجلب ما بعدها؛ رفض `from > to` والتواريخ المستقبلية بـ `invalid_range`.

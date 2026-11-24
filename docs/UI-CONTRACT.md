@@ -101,7 +101,7 @@ export type CurrencySummary = {
   paidOutMinor: Minor;          // الدفعات في الفترة (موجب)
 };
 export type DashboardSummary = {
-  counts: { unassigned: number; needsFee: number; pendingApproval: number; refundAlerts: number };
+  counts: { unassigned: number; needsFee: number; pendingApproval: number; refundAlerts: number; needsReview: number; unknownPaypalDomains: number };
   byCurrency: CurrencySummary[];
   topCustomers: { customerId: number; name: string; balance: Money }[]; // أعلى 5 لكل عملة
   lastPull: PullRun | null;
@@ -161,10 +161,13 @@ export type Transaction = {
   rawEmailId: number | null;
   refundedBy: { id: number; type: TxnType; grossMinor: Minor }[]; // استردادات مرتبطة
   allowedActions: TxnAction[];   // ما يُعرض في قائمة ⋯ (القلب هو المرجع)
+  needsReview: boolean;          // SPEC §5.3: من المحلّل العام، لا يُعتمد قبل التأكيد
+  reviewReasonAr: string | null;
+  holdStatus: 'pending_echeck' | 'on_hold' | null;
 };
 export type TxnAction =
   | 'assign' | 'unassign' | 'set_fee' | 'set_commission' | 'approve'
-  | 'unapprove' | 'exclude' | 'include' | 'edit_note';
+  | 'unapprove' | 'exclude' | 'include' | 'edit_note' | 'confirm_review' | 'edit_details';
 export type TxnFilter = {
   status?: TxnStatus | 'all';
   search?: string;               // المرسل، الإيميل، رقم المعاملة، ملاحظة المرسل
@@ -173,6 +176,7 @@ export type TxnFilter = {
   customerId?: number;
   period?: Period;
   needsFeeOnly?: boolean;
+  needsReviewOnly?: boolean;
   type?: TxnType;
 };
 export type TxnSortKey = 'occurredAt' | 'payerName' | 'grossMinor' | 'feeMinor' | 'netMinor' | 'customerAmountMinor' | 'status';
@@ -180,7 +184,7 @@ export type TxnSort = { key: TxnSortKey; dir: 'asc' | 'desc' };
 export type TxnListResult = Page<Transaction> & {
   totals: { currency: Currency; grossMinor: Minor; feeMinor: Minor; netMinor: Minor; customerAmountMinor: Minor; count: number }[]; // للمعروض بالفلتر (كل الصفحات)
 };
-export type TxnCounts = Record<TxnStatus | 'all' | 'needsFee', number>;
+export type TxnCounts = Record<TxnStatus | 'all' | 'needsFee' | 'needsReview', number>;
 export type ManualTxnInput = {
   occurredAt: string;            // YYYY-MM-DD HH:mm بتوقيت الجهاز
   payerName?: string; payerEmail?: string; payerNote?: string;
@@ -221,6 +225,8 @@ export type HistoryItem = { id: number; action: string; labelAr: string; details
 // txn_unapprove({ id, reason: string }): Transaction
 // txn_set_excluded({ id, excluded: boolean }): Transaction
 // txn_set_note({ id, note: string | null }): Transaction
+// txn_edit_details({ id, input: { payerName?: string; payerEmail?: string; currency?: Currency; grossText?: string; occurredAt?: string } }): Transaction  // فقط needsReview أو غير مخصّصة
+// txn_confirm_review({ id }): Transaction                    // يزيل needsReview
 // txn_bulk({ action: 'assign'|'approve'|'unassign'|'exclude', ids: number[], customerId?: number, commission?: CommissionInput }): BulkResult
 
 // ===== الدفتر =====
@@ -310,6 +316,8 @@ export type RawEmail = RawEmailSummary & { bodyHtml: string | null; bodyText: st
 // email_get({ id }): RawEmail       // bodyHtml يُعرض في iframe sandbox بلا سكربتات ولا موارد خارجية
 // email_reparse({ ids }): BulkResult
 // email_set_ignored({ id }): void
+// paypal_domain_trust({ domain }): { domain: string; reparsed: BulkResult }   // SPEC §5.6: يضيفه لـ extraPaypalDomains ويعيد تحليل رسائله المتجاهلة بسبب unknown_paypal_domain
+// unknown_paypal_domains(): { domain: string; count: number }[]                // لتنبيه لوحة التحكم
 
 // ===== النسخ الاحتياطي =====
 export type BackupFile = { path: string; createdAt: IsoDate; sizeBytes: number };
