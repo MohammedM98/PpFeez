@@ -416,7 +416,8 @@ export type ExcelExportResult = { path: string; sheets: number; rows: number; ex
 // ===== ملف Excel للعميل (SPEC §6.8.2) =====
 export type ExcelStatus = 'exported' | 'pending' | 'not_exported';   // SPEC §6.8.3
 export type CustomerExcel = { path: string; updatedAt: IsoDate | null; exists: boolean; addToExcelByDefault: boolean;
-  autoSync: boolean; exportedCount: number; pendingCount: number; notExportedCount: number; lastError: AppError | null };
+  autoSync: boolean; exportedCount: number; pendingCount: number; notExportedCount: number; lastError: AppError | null;
+  currentFileId: number; filesCount: number };   // القيم كلها للملف الحالي (SPEC §6.8.4)
 export type CustomerExcelItemRef = { kind: 'txn' | 'ledger' | 'payout'; id: number };
 export type CustomerExcelPreview = {
   toAdd: { kind: 'txn' | 'ledger' | 'payout'; id: number; date: string; labelAr: string; currency: Currency; amountMinor: Minor }[];
@@ -434,6 +435,15 @@ export type CustomerExcelPreview = {
 // customer_excel_unexported_summary(): { customerId: number; customerName: string; pending: number; notExported: number; lastError: AppError | null }[]   // للوحة التحكم
 // event 'customer-excel://synced' payload: { customerId: number; added: number; pending: number; error: AppError | null }   // بعد كل كتابة تلقائية
 // customer_excel_preview({ customerId, items: CustomerExcelItemRef[] }): CustomerExcelPreview
+// ===== أكثر من ملف للعميل (SPEC §6.8.4) =====
+export type CustomerExcelFile = { id: number; path: string; label: string | null; isCurrent: boolean; exists: boolean;
+  startMode: 'carry_balance' | 'all' | 'from_date' | 'from_seq'; startValue: string | null; exportedCount: number; updatedAt: IsoDate | null; createdAt: IsoDate };
+export type ExcelStart = { kind: 'carry_balance' } | { kind: 'all' } | { kind: 'from_date'; date: string } | { kind: 'from_seq'; seq: number };
+// customer_excel_files({ customerId }): CustomerExcelFile[]
+// customer_excel_new_file({ customerId, path, start: ExcelStart, makeCurrent: boolean, label?: string }): { file: CustomerExcelFile; added: number; sheets: string[] }
+// customer_excel_set_current({ customerId, fileId }): CustomerExcel
+// customer_excel_remove_file({ customerId, fileId }): void          // من القائمة فقط؛ لا يحذف الملف؛ لا يُزال الحالي
+//   customer_excel_add / customer_excel_preview / customer_excel_send_unexported تقبل fileId?: number (الافتراضي: الملف الحالي)
 // customer_excel_add({ customerId, items: CustomerExcelItemRef[] }): { path: string; added: number; skippedDuplicates: number; sheets: string[] }
 //   throws no_export_path (لا ملف مرتبط) | file_locked | excel_layout | export_failed
 // open_path({ path }): void                             // فتح الملف في Excel
