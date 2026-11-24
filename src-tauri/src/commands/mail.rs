@@ -1,7 +1,7 @@
 use crate::error::AppResult;
 use crate::state::AppState;
 use ppfeez_core::mail::mailboxes::{Mailbox, MailboxInput, MailboxTestResult};
-use ppfeez_core::mail::pull::PullRun;
+use ppfeez_core::mail::pull::{PullRange, PullRun};
 use tauri::{AppHandle, Emitter, State};
 
 #[tauri::command]
@@ -53,12 +53,17 @@ pub async fn mailbox_delete(state: State<'_, AppState>, id: i64) -> AppResult<()
     state.core.mailbox_delete(id)
 }
 
-/// Start a pull and return immediately; progress arrives as `pull://progress` events and the
+/// Start a pull (`range` defaults to `{ kind: 'new' }`) and return immediately; progress arrives as `pull://progress` events and the
 /// end as `pull://finished`.
 #[tauri::command]
-pub async fn pull_start(app: AppHandle, state: State<'_, AppState>, mailbox_id: i64) -> AppResult<PullRun> {
+pub async fn pull_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mailbox_id: i64,
+    range: Option<PullRange>,
+) -> AppResult<PullRun> {
     state.core.guard()?;
-    let (run, cancel) = state.core.pull_start(mailbox_id)?;
+    let (run, cancel) = state.core.pull_start(mailbox_id, range)?;
     let core = state.core.clone();
     let run_id = run.id;
     std::thread::spawn(move || {

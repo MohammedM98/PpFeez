@@ -23,6 +23,9 @@ pub struct FakeState {
     pub fetch_calls: usize,
     pub fetched_batches: Vec<Vec<u32>>,
     pub searches: Vec<Option<u32>>,
+    pub date_searches: Vec<(chrono::NaiveDate, chrono::NaiveDate)>,
+    /// Time zone of the fake IMAP server for SINCE/BEFORE (hours from UTC).
+    pub server_offset_hours: i32,
     pub reject_login: bool,
 }
 
@@ -35,6 +38,8 @@ impl Default for FakeState {
             fetch_calls: 0,
             fetched_batches: vec![],
             searches: vec![],
+            date_searches: vec![],
+            server_offset_hours: -8,
             reject_login: false,
         }
     }
@@ -65,6 +70,22 @@ impl MailFetcher for FakeFetcher {
         let mut s = self.0.lock().unwrap();
         s.searches.push(after_uid);
         Ok(s.messages.keys().copied().filter(|u| after_uid.map(|a| *u > a).unwrap_or(true)).collect())
+    }
+    fn search_paypal_dates(&mut self, since: chrono::NaiveDate, before: chrono::NaiveDate) -> AppResult<Vec<u32>> {
+        let mut s = self.0.lock().unwrap();
+        s.date_searches.push((since, before));
+        let offset = chrono::FixedOffset::east_opt(s.server_offset_hours * 3600).unwrap();
+        Ok(s.messages
+            .iter()
+            .filter(|(_, raw)| {
+                // Like a real server: the message's internal date in the server's zone, whole days.
+                let msg = mail_parser::MessageParser::default().parse(raw.as_slice()).unwrap();
+                let ts = msg.date().map(|d| d.to_timestamp()).unwrap_or(0);
+                let day = chrono::DateTime::from_timestamp(ts, 0).unwrap().with_timezone(&offset).date_naive();
+                day >= since && day < before
+            })
+            .map(|(u, _)| *u)
+            .collect())
     }
     fn fetch(&mut self, uids: &[u32]) -> AppResult<Vec<FetchedMessage>> {
         let mut s = self.0.lock().unwrap();

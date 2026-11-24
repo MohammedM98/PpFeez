@@ -78,6 +78,7 @@ const LEDGER_ENTRY: &[&str] = &[
     "createdAt",
 ];
 const PULL_RUN: &[&str] = &[
+    "range",
     "id",
     "mailboxId",
     "mailboxLabel",
@@ -331,9 +332,10 @@ fn mail_and_emails_group() {
         s.messages.insert(11, fixture("refund_sent_partial.eml"));
         s.messages.insert(12, fixture("payment_missing_txn_id.eml"));
     }
-    let (run, cancel) = h.core.pull_start(mb.id).unwrap();
+    let (run, cancel) = h.core.pull_start(mb.id, None).unwrap();
     let rv = assert_keys(&run, PULL_RUN);
     assert_eq!(rv["status"], json!("running"));
+    assert_eq!(rv["range"], json!({ "kind": "new" }), "pull_start without range = new");
     let done = h.core.pull_execute(run.id, &cancel, &|_| {});
     assert_eq!(serde_json::to_value(&done).unwrap()["status"], json!("done"));
     assert_keys(&h.core.pull_runs_list(10).unwrap()[0], PULL_RUN);
@@ -430,4 +432,34 @@ fn excel_group() {
     )
     .unwrap();
     assert_eq!(locked["code"], json!("file_locked"));
+}
+
+#[test]
+fn pull_range_shapes() {
+    use ppfeez_core::mail::pull::PullRange;
+    for v in [
+        json!({ "kind": "new" }),
+        json!({ "kind": "last_days", "days": 30 }),
+        json!({ "kind": "between", "from": "2026-01-01", "to": "2026-03-31" }),
+        json!({ "kind": "all" }),
+    ] {
+        let r: PullRange = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&r).unwrap(), v);
+    }
+    let h = harness();
+    let mb = h
+        .core
+        .mailbox_create(
+            serde_json::from_value(json!({ "label": "x", "email": "x@example.com", "password": "p" })).unwrap(),
+        )
+        .unwrap();
+    let range: PullRange =
+        serde_json::from_value(json!({ "kind": "between", "from": "2026-12-01", "to": "2026-12-31" })).unwrap();
+    let e = serde_json::to_value(h.core.pull_start(mb.id, Some(range)).unwrap_err()).unwrap();
+    assert_eq!((e["code"].clone(), e["field"].clone()), (json!("invalid_range"), json!("range")));
+    let (run, _) = h
+        .core
+        .pull_start(mb.id, Some(serde_json::from_value(json!({ "kind": "last_days", "days": 30 })).unwrap()))
+        .unwrap();
+    assert_eq!(serde_json::to_value(&run).unwrap()["range"], json!({ "kind": "last_days", "days": 30 }));
 }

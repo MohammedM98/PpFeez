@@ -205,3 +205,11 @@ fn every_fixture_has_an_expected_outcome() {
     }
     assert!(n >= 12);
 }
+
+#[test]
+fn imap_dates_use_english_months() {
+    use ppfeez_core::mail::imap_fetcher::imap_date;
+    let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+    assert_eq!(imap_date(d("2026-11-01")), "1-Nov-2026");
+    assert_eq!(imap_date(d("2026-01-31")), "31-Jan-2026");
+}

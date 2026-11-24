@@ -49,6 +49,13 @@ pub fn classify_server_error(text: &str) -> AppError {
     }
 }
 
+/// IMAP date `d-Mon-yyyy` with English month names, independent of the system locale.
+pub fn imap_date(d: chrono::NaiveDate) -> String {
+    use chrono::Datelike;
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    format!("{}-{}-{}", d.day(), MONTHS[d.month0() as usize], d.year())
+}
+
 fn map_err(e: imap::error::Error) -> AppError {
     match e {
         imap::error::Error::No(t) | imap::error::Error::Bad(t) => classify_server_error(&t),
@@ -94,6 +101,13 @@ impl MailFetcher for ImapFetcher {
         };
         let set = self.session.uid_search(query).map_err(map_err)?;
         let mut uids: Vec<u32> = set.into_iter().filter(|u| after_uid.map(|a| *u > a).unwrap_or(true)).collect();
+        uids.sort_unstable();
+        Ok(uids)
+    }
+
+    fn search_paypal_dates(&mut self, since: chrono::NaiveDate, before: chrono::NaiveDate) -> AppResult<Vec<u32>> {
+        let query = format!("FROM \"paypal.com\" SINCE {} BEFORE {}", imap_date(since), imap_date(before));
+        let mut uids: Vec<u32> = self.session.uid_search(query).map_err(map_err)?.into_iter().collect();
         uids.sort_unstable();
         Ok(uids)
     }

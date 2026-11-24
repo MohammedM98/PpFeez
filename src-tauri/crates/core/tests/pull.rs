@@ -36,7 +36,7 @@ fn mailbox(h: &common::Harness) -> i64 {
 }
 
 fn run(h: &common::Harness, mb: i64) -> ppfeez_core::mail::pull::PullRun {
-    let (run, cancel) = h.core.pull_start(mb).unwrap();
+    let (run, cancel) = h.core.pull_start(mb, None).unwrap();
     h.core.pull_execute(run.id, &cancel, &|_| {})
 }
 
@@ -55,7 +55,7 @@ fn batches_progress_and_last_uid() {
         }
     }
     let progress = Mutex::new(vec![]);
-    let (r, cancel) = h.core.pull_start(mb).unwrap();
+    let (r, cancel) = h.core.pull_start(mb, None).unwrap();
     let done = h.core.pull_execute(r.id, &cancel, &|p| progress.lock().unwrap().push(p.fetched_count));
     assert_eq!(done.status, PullStatus::Done);
     assert_eq!((done.total_count, done.fetched_count, done.new_transactions_count), (120, 120, 120));
@@ -178,7 +178,7 @@ fn cancel_between_batches() {
             s.messages.insert(uid, payment_eml(uid));
         }
     }
-    let (r, cancel) = h.core.pull_start(mb).unwrap();
+    let (r, cancel) = h.core.pull_start(mb, None).unwrap();
     let flag: &AtomicBool = &cancel;
     let done = h.core.pull_execute(r.id, flag, &|p| {
         if p.fetched_count >= 50 {
@@ -194,8 +194,8 @@ fn cancel_between_batches() {
 fn one_running_pull_per_mailbox_and_stale_runs_fail_on_startup() {
     let h = harness();
     let mb = mailbox(&h);
-    let (r, cancel) = h.core.pull_start(mb).unwrap();
-    assert_eq!(code(h.core.pull_start(mb)), ErrorCode::PullRunning);
+    let (r, cancel) = h.core.pull_start(mb, None).unwrap();
+    assert_eq!(code(h.core.pull_start(mb, None)), ErrorCode::PullRunning);
     assert!(h.core.mailbox_get(mb).unwrap().running);
     h.core.pull_cancel(r.id).unwrap();
     assert!(cancel.load(Ordering::SeqCst));
@@ -207,7 +207,7 @@ fn one_running_pull_per_mailbox_and_stale_runs_fail_on_startup() {
     assert_eq!(runs[0].status, PullStatus::Failed);
     assert_eq!(runs[0].error.as_deref(), Some("انقطع"));
     h2.secrets.set_for_test(mb);
-    h2.core.pull_start(mb).unwrap();
+    h2.core.pull_start(mb, None).unwrap();
 }
 
 trait SetPw {
@@ -277,7 +277,7 @@ fn mailbox_management() {
 
     let m = h.core.mailbox_set_active(mb, false).unwrap();
     assert!(!m.is_active);
-    assert_eq!(code(h.core.pull_start(mb)), ErrorCode::Validation);
+    assert_eq!(code(h.core.pull_start(mb, None)), ErrorCode::Validation);
     h.core.mailbox_set_active(mb, true).unwrap();
 
     h.mail.0.lock().unwrap().messages.insert(1, fixture("payment_received_basic.eml"));
@@ -378,4 +378,139 @@ fn reparse_succeeds_once_the_email_becomes_parsable() {
     assert_eq!(r.ok, vec![id]);
     assert_eq!(txn_count(&h), 1);
     assert_eq!(h.core.email_get(id).unwrap().summary.parse_status, ParseStatus::Parsed);
+}
+
+// ===== Pull range (SPEC §5.5). Local time is UTC+3; the fake server works in UTC−8. =====
+
+use ppfeez_core::mail::pull::PullRange;
+
+/// A verified PayPal payment with a given RFC 2822 Date header.
+fn payment_at(n: u32, date: &str) -> Vec<u8> {
+    String::from_utf8(payment_eml(n)).unwrap().replace("Fri, 20 Nov 2026 10:00:00 +0000", date).into_bytes()
+}
+
+fn between(from: &str, to: &str) -> Option<PullRange> {
+    Some(PullRange::Between { from: from.into(), to: to.into() })
+}
+
+fn run_range(h: &common::Harness, mb: i64, range: Option<PullRange>) -> ppfeez_core::mail::pull::PullRun {
+    let (run, cancel) = h.core.pull_start(mb, range).unwrap();
+    h.core.pull_execute(run.id, &cancel, &|_| {})
+}
+
+/// UIDs in date order: C(1) B(2) E(3) A(4) D(5) F(6).
+fn dated_mailbox(h: &common::Harness) {
+    let mut s = h.mail.0.lock().unwrap();
+    // C: 31 Oct 23:30 local — just outside `from`.
+    s.messages.insert(1, payment_at(1, "Sat, 31 Oct 2026 20:30:00 +0000"));
+    // B: 1 Nov 00:30 local but 31 Oct in UTC and on the server — inside.
+    s.messages.insert(2, payment_at(2, "Sat, 31 Oct 2026 21:30:00 +0000"));
+    // E: middle of the range.
+    s.messages.insert(3, payment_at(3, "Thu, 05 Nov 2026 12:00:00 +0000"));
+    // A: last minute of `to` in local time.
+    s.messages.insert(4, payment_at(4, "Mon, 09 Nov 2026 23:59:00 +0300"));
+    // D: 10 Nov 00:30 local (still 9 Nov in UTC) — just outside `to`.
+    s.messages.insert(5, payment_at(5, "Mon, 09 Nov 2026 21:30:00 +0000"));
+    // F: well after the range.
+    s.messages.insert(6, payment_at(6, "Fri, 20 Nov 2026 10:00:00 +0000"));
+}
+
+#[test]
+fn between_pulls_only_messages_inside_the_local_dates() {
+    let h = harness();
+    let mb = mailbox(&h);
+    dated_mailbox(&h);
+    let r = run_range(&h, mb, between("2026-11-01", "2026-11-09"));
+    assert_eq!(r.status, PullStatus::Done);
+    assert_eq!(r.range, PullRange::Between { from: "2026-11-01".into(), to: "2026-11-09".into() });
+    let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+    assert_eq!(h.mail.0.lock().unwrap().date_searches, vec![(d("2026-10-31"), d("2026-11-11"))], "widened by a day");
+    assert_eq!((r.new_transactions_count, r.fetched_count, r.total_count), (3, 3, 3), "out-of-range not counted");
+    let ids: Vec<String> = h
+        .core
+        .txn_list_all(&TxnFilter::default(), Default::default())
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|t| t.payer_name.unwrap())
+        .collect();
+    let mut ids = ids;
+    ids.sort();
+    assert_eq!(ids, vec!["Customer 2", "Customer 3", "Customer 4"]);
+    // Out-of-range messages are not stored at all.
+    let stored = h.core.emails_list(ppfeez_core::emails::ParseStatus::Parsed, None, 1, 50).unwrap().total;
+    assert_eq!(stored, 3);
+    assert_eq!(h.core.pull_runs_list(1).unwrap()[0].range, r.range, "range saved on the run");
+}
+
+#[test]
+fn same_range_twice_adds_nothing() {
+    let h = harness();
+    let mb = mailbox(&h);
+    dated_mailbox(&h);
+    run_range(&h, mb, between("2026-11-01", "2026-11-09"));
+    let again = run_range(&h, mb, between("2026-11-01", "2026-11-09"));
+    assert_eq!((again.new_transactions_count, again.duplicate_count), (0, 3));
+    assert_eq!(txn_count(&h), 3);
+}
+
+#[test]
+fn old_range_never_moves_last_uid_back_and_new_continues_after() {
+    let h = harness();
+    let mb = mailbox(&h);
+    dated_mailbox(&h);
+    // Never pulled before: an old range sets last_uid to the highest UID it fetched.
+    run_range(&h, mb, between("2026-11-01", "2026-11-09"));
+    assert_eq!(h.core.mailbox_get(mb).unwrap().last_uid, 5);
+    // "new" then continues after it: F(6) and a fresh message (7).
+    h.mail.0.lock().unwrap().messages.insert(7, payment_at(7, "Sun, 22 Nov 2026 10:00:00 +0000"));
+    let r = run_range(&h, mb, None);
+    assert_eq!(r.range, PullRange::New);
+    assert_eq!(h.mail.0.lock().unwrap().searches.last(), Some(&Some(5)));
+    assert_eq!(r.new_transactions_count, 2);
+    assert_eq!(h.core.mailbox_get(mb).unwrap().last_uid, 7);
+    // Pulling the old range again does not lower last_uid.
+    run_range(&h, mb, between("2026-10-01", "2026-11-03"));
+    assert_eq!(h.core.mailbox_get(mb).unwrap().last_uid, 7);
+    // That wider range also picked up C (31 Oct local), which the first range excluded.
+    assert_eq!(txn_count(&h), 6);
+}
+
+#[test]
+fn last_days_window_is_today_minus_n_plus_one() {
+    let h = harness(); // today = 2026-11-23 local
+    let mb = mailbox(&h);
+    {
+        let mut s = h.mail.0.lock().unwrap();
+        s.messages.insert(1, payment_at(1, "Mon, 16 Nov 2026 20:50:00 +0000")); // 16 Nov 23:50 local: out
+        s.messages.insert(2, payment_at(2, "Mon, 16 Nov 2026 21:10:00 +0000")); // 17 Nov 00:10 local: in
+        s.messages.insert(3, payment_at(3, "Mon, 23 Nov 2026 08:00:00 +0000")); // today: in
+    }
+    let r = run_range(&h, mb, Some(PullRange::LastDays { days: 7 }));
+    assert_eq!(r.range, PullRange::LastDays { days: 7 });
+    assert_eq!(r.new_transactions_count, 2);
+    let a = run_range(&h, mb, Some(PullRange::All));
+    assert_eq!(a.range, PullRange::All);
+    assert_eq!(h.mail.0.lock().unwrap().searches.last(), Some(&None), "all = full search");
+    assert_eq!((a.new_transactions_count, a.duplicate_count), (1, 2));
+}
+
+#[test]
+fn invalid_ranges_are_rejected_before_starting() {
+    let h = harness();
+    let mb = mailbox(&h);
+    for bad in [
+        between("2026-11-10", "2026-11-01"),
+        between("2026-11-01", "2026-11-24"), // tomorrow
+        between("2026-13-01", "2026-11-01"),
+        between("", "2026-11-01"),
+        Some(PullRange::LastDays { days: 0 }),
+        Some(PullRange::LastDays { days: 3651 }),
+    ] {
+        let e = h.core.pull_start(mb, bad.clone()).unwrap_err();
+        assert_eq!((e.code, e.field.as_deref()), (ErrorCode::InvalidRange, Some("range")), "{bad:?}");
+    }
+    assert!(h.core.pull_runs_list(10).unwrap().is_empty(), "no run created");
+    // Today is allowed as the end date.
+    h.core.pull_start(mb, between("2026-11-23", "2026-11-23")).unwrap();
 }

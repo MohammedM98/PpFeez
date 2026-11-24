@@ -25,7 +25,7 @@ fn pull(h: &common::Harness, files: &[&str]) -> i64 {
             s.messages.insert(100 + i as u32, fixture(f));
         }
     }
-    let (run, cancel) = h.core.pull_start(mb.id).unwrap();
+    let (run, cancel) = h.core.pull_start(mb.id, None).unwrap();
     h.core.pull_execute(run.id, &cancel, &|_| {});
     mb.id
 }
