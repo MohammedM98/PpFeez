@@ -243,3 +243,6 @@
   @page { size: A4; margin: 16mm; }
   html, body { background: #fff !important; min-width: 0; }
 }
+
+/* table full screen (SPEC 6.10): the header steps aside; a thin strip on top holds "خروج من ملء الشاشة" */
+:root[data-table-fullscreen] .table-page { padding-top: 3rem; max-width: none; }

@@ -89,7 +89,7 @@ export function TableFrame({ children, footer, className, fill }: { children: Re
 }
 
 /** A screen whose table is the page (SPEC 6.5): the page itself does not scroll; the table fills the rest. */
-export const tablePage = 'mx-auto flex h-full w-full flex-col overflow-hidden px-6 pb-4 pt-4';
+export const tablePage = 'table-page mx-auto flex h-full w-full flex-col overflow-hidden px-6 pb-4 pt-4';
 
 export function TableHeader<T extends object>({ columns, children, className }: TableHeaderProps<T>) {
   const { selectionBehavior, selectionMode, allowsDragging } = useTableOptions();

@@ -16,6 +16,7 @@ import { DashboardPage } from '@/pages/Dashboard';
 import { EmailsPage } from '@/pages/Emails';
 import { SettingsPage } from '@/pages/Settings';
 import { PullProvider } from '@/lib/pull';
+import { FullscreenProvider } from '@/lib/fullscreen';
 import { Toasts } from '@/components/ui/Toast';
 import { TxnActionsHost } from '@/components/transactions/TxnActions';
 import { UpdatesProvider } from '@/components/update/Updates';
@@ -80,7 +81,7 @@ function Gate() {
     <PullProvider>
       <UpdatesProvider>
       <TxnActionsHost>
-        <RouterProvider router={router} />
+        <FullscreenProvider><RouterProvider router={router} /></FullscreenProvider>
       </TxnActionsHost>
       </UpdatesProvider>
     </PullProvider>
