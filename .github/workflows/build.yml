@@ -99,6 +99,23 @@ jobs:
           $body >> $env:GITHUB_OUTPUT
           $delim >> $env:GITHUB_OUTPUT
 
+      # The key is base64 and never contains whitespace, but a copied secret often ends with a
+      # newline ("failed to decode base64 secret key: Invalid symbol 10"). Strip it here, mask
+      # the cleaned value and hand both values to the build through the job environment.
+      - name: Prepare signing key
+        if: steps.fe.outputs.present == 'true' && env.HAS_SIGNING_KEY == 'true'
+        shell: pwsh
+        env:
+          RAW_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          RAW_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $key = $env:RAW_KEY -replace '\s', ''
+          $password = "$env:RAW_PASSWORD".TrimEnd("`r", "`n")
+          Write-Output "::add-mask::$key"
+          if ($password) { Write-Output "::add-mask::$password" }
+          "TAURI_SIGNING_PRIVATE_KEY=$key" >> $env:GITHUB_ENV
+          "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$password" >> $env:GITHUB_ENV
+
       - uses: actions/setup-node@v5
         if: steps.fe.outputs.present == 'true'
         with:
@@ -123,8 +140,6 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: --bundles nsis
           tagName: v__VERSION__
@@ -141,9 +156,6 @@ jobs:
       - name: Build installer (signed, no release)
         if: steps.fe.outputs.present == 'true' && steps.rel.outputs.publish != 'true' && env.HAS_SIGNING_KEY == 'true'
         uses: tauri-apps/tauri-action@v1
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: --bundles nsis
           uploadWorkflowArtifacts: true
