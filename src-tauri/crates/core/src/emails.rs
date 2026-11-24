@@ -289,7 +289,7 @@ const K_PARSER_VERSION: &str = "parser_version";
 impl Core {
     /// Re-parse every stored email once after a parser update (called at startup). Parsed emails
     /// fill empty fields of their transaction; failed/ignored ones may now create transactions.
-    /// Emails the owner ignored by hand stay ignored.
+    /// Emails the owner ignored by hand, and those of deleted transactions, stay as they are.
     pub fn reparse_after_update(&self) -> AppResult<Option<BulkResult>> {
         let ids: Vec<i64> = {
             let conn = self.conn();
@@ -299,8 +299,8 @@ impl Core {
                 return Ok(None);
             }
             let mut stmt = conn.prepare(
-                "SELECT id FROM raw_emails WHERE NOT (parse_status = 'ignored' AND parse_reason = 'manual')
-                 AND COALESCE(parse_reason, '') <> 'manual' ORDER BY id",
+                "SELECT id FROM raw_emails
+                 WHERE COALESCE(parse_reason, '') NOT IN ('manual', 'deleted_by_user') ORDER BY id",
             )?;
             let ids = stmt.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
             ids

@@ -10,6 +10,7 @@ pub mod commission;
 pub mod customers;
 pub mod dashboard;
 pub mod db;
+pub mod deletion;
 pub mod emails;
 pub mod error;
 pub mod excel;

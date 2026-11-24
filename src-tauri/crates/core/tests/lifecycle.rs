@@ -23,7 +23,14 @@ fn manual_entry_defaults() {
     assert_eq!(t.occurred_at, "2026-11-20T07:30:00Z");
     assert_eq!(
         t.allowed_actions,
-        vec![TxnAction::Assign, TxnAction::SetFee, TxnAction::Exclude, TxnAction::EditDetails, TxnAction::EditNote]
+        vec![
+            TxnAction::Assign,
+            TxnAction::SetFee,
+            TxnAction::Exclude,
+            TxnAction::EditDetails,
+            TxnAction::EditNote,
+            TxnAction::Delete
+        ]
     );
 
     let dup = h.core.txn_create_manual(ManualTxnInput {
@@ -91,7 +98,7 @@ fn full_happy_path_assign_fee_approve() {
 
     let t = h.core.txn_approve(t.id).unwrap();
     assert_eq!(t.status, TxnStatus::Approved);
-    assert_eq!(t.allowed_actions, vec![TxnAction::Unapprove, TxnAction::EditNote]);
+    assert_eq!(t.allowed_actions, vec![TxnAction::Unapprove, TxnAction::EditNote, TxnAction::Delete]);
     assert_eq!(h.balance(ahmed.id, "USD"), 7125);
 
     let view = h.core.ledger_entries(ahmed.id, "USD", None).unwrap();
@@ -263,7 +270,7 @@ fn unassign_exclude_include() {
     assert_eq!((t.status, t.customer.is_none(), t.commission_bps), (TxnStatus::Unassigned, true, None));
     let t = h.core.txn_set_excluded(t.id, true).unwrap();
     assert_eq!(t.status, TxnStatus::Excluded);
-    assert_eq!(t.allowed_actions, vec![TxnAction::Include, TxnAction::EditNote]);
+    assert_eq!(t.allowed_actions, vec![TxnAction::Include, TxnAction::EditNote, TxnAction::Delete]);
     let t = h.core.txn_set_excluded(t.id, false).unwrap();
     assert_eq!(t.status, TxnStatus::Unassigned);
     let t = h.core.txn_set_note(t.id, Some("  لي شخصياً ".into())).unwrap();

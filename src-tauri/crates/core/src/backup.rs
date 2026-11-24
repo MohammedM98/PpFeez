@@ -34,12 +34,12 @@ fn stamp_of(name: &str) -> Option<NaiveDateTime> {
 }
 
 impl Core {
-    fn backup_dir(&self) -> AppResult<Option<PathBuf>> {
+    pub(crate) fn backup_dir(&self) -> AppResult<Option<PathBuf>> {
         Ok(settings::load(&self.conn())?.backup_dir.map(PathBuf::from))
     }
 
     /// Write a consistent copy of the live database into `dir`.
-    fn backup_into(&self, dir: &Path) -> AppResult<BackupFile> {
+    pub(crate) fn backup_into(&self, dir: &Path) -> AppResult<BackupFile> {
         std::fs::create_dir_all(dir).map_err(|e| failed(format!("تعذّر إنشاء مجلد النسخ: {e}")))?;
         let local = self.clock.utc_to_local(self.clock.now());
         let base = format!("{PREFIX}{}", local.format("%Y%m%d-%H%M%S"));

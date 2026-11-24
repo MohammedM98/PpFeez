@@ -6,6 +6,7 @@ pub mod app;
 pub mod backup;
 pub mod customers;
 pub mod dashboard;
+pub mod deletion;
 pub mod emails;
 pub mod excel;
 pub mod ledger;

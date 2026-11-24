@@ -94,6 +94,15 @@ pub fn run() {
             commands::backup::backup_now,
             commands::backup::backup_list,
             commands::backup::backup_restore,
+            // delete (SPEC 4.7)
+            commands::deletion::txn_delete_preview,
+            commands::deletion::txn_delete,
+            commands::deletion::customer_delete_preview,
+            commands::deletion::customer_delete,
+            commands::deletion::ledger_delete_preview,
+            commands::deletion::ledger_delete_entry,
+            commands::deletion::data_reset_preview,
+            commands::deletion::data_reset,
             // excel
             commands::excel::excel_set_path,
             commands::excel::excel_update,

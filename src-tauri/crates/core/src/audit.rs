@@ -38,6 +38,8 @@ pub fn label_ar(action: &str) -> &'static str {
         "txn.on_hold" => "حجز المبلغ لدى PayPal",
         "txn.edit_details" => "تعديل بيانات المعاملة",
         "txn.confirm_review" => "تأكيد بيانات المعاملة",
+        "txn.delete" => "حذف المعاملة",
+        "txn.backfill" => "إكمال البيانات بعد تحديث المحلّلات",
         "refund.confirm" => "تأكيد قيد الاسترداد",
         "refund.dismiss" => "تجاهل تنبيه الاسترداد",
         "ledger.payout" => "تسجيل دفعة",

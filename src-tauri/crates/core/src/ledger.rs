@@ -104,6 +104,9 @@ pub struct LedgerEntry {
     pub description: String,
     pub entry_date: String,
     pub created_at: String,
+    /// SPEC §4.7: whether `ledger_delete_entry` accepts this entry.
+    pub deletable: bool,
+    pub not_deletable_reason_ar: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -163,15 +166,31 @@ pub struct AdjustmentInput {
     pub description: String,
 }
 
-const SELECT: &str = "SELECT e.*, (SELECT r.id FROM ledger_entries r WHERE r.reverses_entry_id = e.id) AS reversed_by
+const SELECT: &str = "SELECT e.*, (SELECT r.id FROM ledger_entries r WHERE r.reverses_entry_id = e.id) AS reversed_by,
+       (SELECT t.type FROM paypal_transactions t WHERE t.id = e.paypal_transaction_id) AS txn_type
      FROM ledger_entries e";
 
+/// Credits and unapprove reversals of a payment are managed from the transaction (SPEC §4.7).
+pub fn not_deletable_reason(kind: LedgerType, txn_type: Option<&str>) -> Option<&'static str> {
+    match (kind, txn_type) {
+        (LedgerType::Credit, _) => Some("قيد اعتماد معاملة: يُدار من المعاملة (إلغاء الاعتماد أو حذف المعاملة)"),
+        (LedgerType::Reversal, Some("payment")) => {
+            Some("قيد إلغاء اعتماد معاملة: يُدار من المعاملة (إعادة الاعتماد أو حذف المعاملة)")
+        }
+        _ => None,
+    }
+}
+
 fn entry_from_row(r: &Row<'_>) -> rusqlite::Result<LedgerEntry> {
+    let kind = LedgerType::parse(&r.get::<_, String>("type")?);
+    let reason = not_deletable_reason(kind, r.get::<_, Option<String>>("txn_type")?.as_deref());
     Ok(LedgerEntry {
+        deletable: reason.is_none(),
+        not_deletable_reason_ar: reason.map(str::to_string),
         id: r.get("id")?,
         customer_id: r.get("customer_id")?,
         currency: r.get("currency")?,
-        kind: LedgerType::parse(&r.get::<_, String>("type")?),
+        kind,
         amount_minor: r.get("amount_minor")?,
         running_balance_minor: 0,
         transaction_id: r.get("paypal_transaction_id")?,

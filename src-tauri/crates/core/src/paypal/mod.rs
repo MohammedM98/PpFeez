@@ -208,6 +208,7 @@ pub fn reason_ar(reason: &str) -> String {
         "unknown_paypal_domain" => "نطاق PayPal غير معروف — يمكنك الوثوق به من هنا".into(),
         "hold_notice" => "إشعار حجز مبلغ لمعاملة غير موجودة بعد".into(),
         "echeck_cleared" => "اكتمال شيك إلكتروني (حُدّثت المعاملة)".into(),
+        "deleted_by_user" => "حذفتَ معاملتها؛ «إعادة تحليل» تعيدها".into(),
         "hold_applied" => "إشعار حجز (عُلّمت المعاملة «محجوزة»)".into(),
         other => other.to_string(),
     }

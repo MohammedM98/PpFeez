@@ -30,6 +30,8 @@ pub enum ErrorCode {
     FileLocked,
     NoExportPath,
     ExportFailed,
+    NotDeletable,
+    ConfirmMismatch,
     Internal,
 }
 
@@ -59,6 +61,8 @@ impl ErrorCode {
             ErrorCode::FileLocked => "file_locked",
             ErrorCode::NoExportPath => "no_export_path",
             ErrorCode::ExportFailed => "export_failed",
+            ErrorCode::NotDeletable => "not_deletable",
+            ErrorCode::ConfirmMismatch => "confirm_mismatch",
             ErrorCode::Internal => "internal",
         }
     }

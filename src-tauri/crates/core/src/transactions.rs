@@ -84,6 +84,7 @@ pub enum TxnAction {
     EditNote,
     ConfirmReview,
     EditDetails,
+    Delete,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -496,6 +497,7 @@ pub fn allowed_actions(row: &TxnRow) -> Vec<TxnAction> {
         a.push(EditDetails);
     }
     a.push(EditNote);
+    a.push(Delete);
     a
 }
 

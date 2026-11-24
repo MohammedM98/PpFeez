@@ -79,6 +79,8 @@ const LEDGER_ENTRY: &[&str] = &[
     "description",
     "entryDate",
     "createdAt",
+    "deletable",
+    "notDeletableReasonAr",
 ];
 const PULL_RUN: &[&str] = &[
     "range",
@@ -208,7 +210,7 @@ fn transactions_group() {
     assert_eq!(v["type"], json!("payment"));
     assert_eq!(v["status"], json!("unassigned"));
     assert_eq!(v["feeMinor"], Value::Null);
-    assert_eq!(v["allowedActions"], json!(["assign", "set_fee", "exclude", "edit_details", "edit_note"]));
+    assert_eq!(v["allowedActions"], json!(["assign", "set_fee", "exclude", "edit_details", "edit_note", "delete"]));
 
     // FeeInput / CommissionInput tagged unions.
     for fee in
@@ -472,4 +474,44 @@ fn pull_range_shapes() {
         .pull_start(mb.id, Some(serde_json::from_value(json!({ "kind": "last_days", "days": 30 })).unwrap()))
         .unwrap();
     assert_eq!(serde_json::to_value(&run).unwrap()["range"], json!({ "kind": "last_days", "days": 30 }));
+}
+
+#[test]
+fn deletion_group() {
+    use ppfeez_core::deletion::ResetScope;
+    let h = harness();
+    let c = h.customer("Ali", 2500);
+    let t = h.manual("USD", "10", Some("0"));
+    h.core.txn_assign(t.id, c.id, None, true).unwrap();
+    let p = h.core.txn_delete_preview(&[t.id]).unwrap();
+    let pv = assert_keys(&p, &["count", "approvedCount", "ledgerEntryCount", "effects"]);
+    assert_eq!(keys(&pv["effects"][0]), set(&["customerId", "customerName", "currency", "balanceDeltaMinor"]));
+    assert_keys(
+        &h.core.customer_delete_preview(c.id).unwrap(),
+        &["assignedCount", "approvedCount", "ledgerEntryCount", "balances"],
+    );
+    let scope: ResetScope = serde_json::from_value(
+        json!({ "transactions": true, "customers": false, "mailboxes": false, "settings": false }),
+    )
+    .unwrap();
+    assert_keys(
+        &h.core.data_reset_preview(scope).unwrap(),
+        &["transactions", "rawEmails", "pullRuns", "customers", "ledgerEntries", "mailboxes", "notes"],
+    );
+    let e = serde_json::to_value(h.core.customer_delete(c.id, "x").unwrap_err()).unwrap();
+    assert_eq!(e["code"], json!("confirm_mismatch"));
+    let r = h.core.txn_delete(&[t.id], None).unwrap();
+    assert_keys(&r, &["ok", "failed", "backup"]);
+    let payout: ppfeez_core::ledger::PayoutInput = serde_json::from_value(
+        json!({ "currency": "USD", "amountText": "1", "entryDate": "2026-11-23", "method": "cash", "confirmOverdraw": true }),
+    )
+    .unwrap();
+    let entry = h.core.ledger_add_payout(c.id, payout).unwrap();
+    let lv = assert_keys(
+        &h.core.ledger_delete_preview(entry.id).unwrap(),
+        &["entries", "balanceBeforeMinor", "balanceAfterMinor"],
+    );
+    assert_eq!(keys(&lv["entries"][0]), set(LEDGER_ENTRY));
+    assert_keys(&h.core.ledger_delete_entry(entry.id, None).unwrap(), &["backup"]);
+    assert_keys(&h.core.data_reset(scope, "حذف").unwrap(), &["backup"]);
 }

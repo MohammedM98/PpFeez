@@ -33,7 +33,7 @@ fn ledger_rows_are_immutable() {
     let upd = conn.execute("UPDATE ledger_entries SET amount_minor = 1", []);
     assert!(upd.unwrap_err().to_string().contains("immutable"));
     let del = conn.execute("DELETE FROM ledger_entries", []);
-    assert!(del.unwrap_err().to_string().contains("immutable"));
+    assert!(del.unwrap_err().to_string().contains("only through the delete flow"));
 }
 
 #[test]
