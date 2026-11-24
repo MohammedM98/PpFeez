@@ -94,10 +94,10 @@ impl MailFetcher for ImapFetcher {
         Ok(mb.uid_validity.unwrap_or(0))
     }
 
-    fn search_paypal(&mut self, after_uid: Option<u32>) -> AppResult<Vec<u32>> {
+    fn search_paypal(&mut self, from_query: &str, after_uid: Option<u32>) -> AppResult<Vec<u32>> {
         let query = match after_uid {
-            Some(u) => format!("UID {}:* FROM \"paypal.com\"", u.saturating_add(1)),
-            None => "FROM \"paypal.com\"".to_string(),
+            Some(u) => format!("UID {}:* {from_query}", u.saturating_add(1)),
+            None => from_query.to_string(),
         };
         let set = self.session.uid_search(query).map_err(map_err)?;
         let mut uids: Vec<u32> = set.into_iter().filter(|u| after_uid.map(|a| *u > a).unwrap_or(true)).collect();
@@ -105,8 +105,13 @@ impl MailFetcher for ImapFetcher {
         Ok(uids)
     }
 
-    fn search_paypal_dates(&mut self, since: chrono::NaiveDate, before: chrono::NaiveDate) -> AppResult<Vec<u32>> {
-        let query = format!("FROM \"paypal.com\" SINCE {} BEFORE {}", imap_date(since), imap_date(before));
+    fn search_paypal_dates(
+        &mut self,
+        from_query: &str,
+        since: chrono::NaiveDate,
+        before: chrono::NaiveDate,
+    ) -> AppResult<Vec<u32>> {
+        let query = format!("{from_query} SINCE {} BEFORE {}", imap_date(since), imap_date(before));
         let mut uids: Vec<u32> = self.session.uid_search(query).map_err(map_err)?.into_iter().collect();
         uids.sort_unstable();
         Ok(uids)

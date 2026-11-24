@@ -31,6 +31,7 @@ fn symbol_currency(sym: char) -> Option<&'static str> {
         '£' => Some("GBP"),
         '¥' => Some("JPY"),
         '₺' => Some("TRY"),
+        '₪' => Some("ILS"),
         _ => None,
     }
 }

@@ -59,6 +59,8 @@ pub fn run() {
             commands::transactions::txn_set_excluded,
             commands::transactions::txn_set_note,
             commands::transactions::txn_bulk,
+            commands::transactions::txn_edit_details,
+            commands::transactions::txn_confirm_review,
             // ledger & refunds
             commands::ledger::ledger_balances,
             commands::ledger::ledger_entries,
@@ -86,6 +88,8 @@ pub fn run() {
             commands::emails::email_get,
             commands::emails::email_reparse,
             commands::emails::email_set_ignored,
+            commands::emails::paypal_domain_trust,
+            commands::emails::unknown_paypal_domains,
             // backup
             commands::backup::backup_now,
             commands::backup::backup_list,

@@ -3,7 +3,8 @@ mod common;
 use chrono::{TimeZone, Utc};
 use common::fixture;
 use ppfeez_core::mail::ingest::{evaluate, extract};
-use ppfeez_core::mail::verify::{check_auth_results, is_paypal_address, verify, Verdict};
+use ppfeez_core::mail::verify::{is_paypal_address, verify, Verdict};
+use ppfeez_core::paypal::domains::DomainSet;
 use ppfeez_core::paypal::{html_to_text, parse_email, Outcome, ParsedEmail};
 use ppfeez_core::transactions::TxnType;
 
@@ -20,28 +21,28 @@ fn accepts_paypal_with_dkim_pass() {
     let e = load("payment_received_basic.eml");
     assert_eq!(e.from_addr, "service@paypal.com");
     assert!(e.auth_results.as_deref().unwrap().starts_with("mx.google.com;"));
-    assert_eq!(verify(&e.from_addr, e.auth_results.as_deref()), Verdict::Ok);
-    assert!(is_paypal_address("service@intl.paypal.com"));
-    assert!(is_paypal_address("<member@mail.paypal.com>"));
-    assert!(!is_paypal_address("service@paypal.com.evil.example"));
-    assert!(!is_paypal_address("service@notpaypal.com"));
-    assert!(!is_paypal_address("service@x.paypal.com"), "only approved subdomains");
+    assert_eq!(verify(&e.from_addr, e.auth_results.as_deref(), &DomainSet::builtin()), Verdict::Ok);
+    let d = DomainSet::builtin();
+    assert!(is_paypal_address("service@intl.paypal.com", &d), "subdomains of an approved domain");
+    assert!(is_paypal_address("<member@mail.paypal.co.il>", &d));
+    assert!(!is_paypal_address("service@paypal.com.evil.example", &d));
+    assert!(!is_paypal_address("service@notpaypal.com", &d));
 }
 
 #[test]
 fn rejects_spoofed_display_name() {
     let e = load("spoofed_display_name.eml");
     assert_eq!(e.from_addr, "attacker@evil.example");
-    assert_eq!(verify(&e.from_addr, e.auth_results.as_deref()), Verdict::NotPaypalSender);
-    let (status, reason, _, txn) = evaluate(&e);
+    assert_eq!(verify(&e.from_addr, e.auth_results.as_deref(), &DomainSet::builtin()), Verdict::NotPaypalSender);
+    let (status, reason, _, txn) = evaluate(&e, &DomainSet::builtin());
     assert_eq!((status, reason.as_deref(), txn.is_none()), ("ignored", Some("not_paypal_sender"), true));
 }
 
 #[test]
 fn rejects_dkim_fail() {
     let e = load("dkim_fail.eml");
-    assert_eq!(verify(&e.from_addr, e.auth_results.as_deref()), Verdict::DkimFail);
-    assert_eq!(evaluate(&e).1.as_deref(), Some("dkim_fail"));
+    assert_eq!(verify(&e.from_addr, e.auth_results.as_deref(), &DomainSet::builtin()), Verdict::DkimFail);
+    assert_eq!(evaluate(&e, &DomainSet::builtin()).1.as_deref(), Some("dkim_fail"));
 }
 
 #[test]
@@ -49,35 +50,34 @@ fn ignores_planted_lower_authentication_results() {
     let e = load("planted_auth_header.eml");
     // Only the top-most (Gmail's) header is considered; it has no PayPal DKIM pass.
     assert!(e.auth_results.as_deref().unwrap().contains("evil.example"));
-    assert_eq!(verify(&e.from_addr, e.auth_results.as_deref()), Verdict::DkimFail);
+    assert_eq!(verify(&e.from_addr, e.auth_results.as_deref(), &DomainSet::builtin()), Verdict::DkimFail);
 }
 
 #[test]
 fn auth_results_edge_cases() {
-    assert_eq!(check_auth_results(None), Verdict::NoAuthResults);
-    assert_eq!(check_auth_results(Some("evil.example; dkim=pass header.i=@paypal.com")), Verdict::NoAuthResults);
-    assert_eq!(check_auth_results(Some("mx.google.com; dkim=pass header.d=paypal.com")), Verdict::Ok);
+    let d = DomainSet::builtin();
+    let v = |ar: Option<&str>| verify("service@paypal.com", ar, &d);
+    assert_eq!(v(None), Verdict::NoAuthResults);
+    assert_eq!(v(Some("evil.example; dkim=pass header.i=@paypal.com")), Verdict::NoAuthResults);
+    assert_eq!(v(Some("mx.google.com; dkim=pass header.d=paypal.com")), Verdict::Ok);
     assert_eq!(
-        check_auth_results(Some("mx.google.com;\r\n dkim=pass (2048-bit key) header.i=@e.paypal.com")),
+        verify("service@e.paypal.com", Some("mx.google.com;\r\n dkim=pass (2048-bit key) header.i=@e.paypal.com"), &d),
         Verdict::Ok
     );
+    assert_eq!(v(Some("mx.google.com; dkim=pass header.i=@paypal.com.evil.example")), Verdict::DkimFail);
     assert_eq!(
-        check_auth_results(Some("mx.google.com; dkim=pass header.i=@paypal.com.evil.example")),
+        v(Some("mx.google.com; dkim=neutral (body hash did not verify) header.i=@paypal.com")),
         Verdict::DkimFail
     );
     assert_eq!(
-        check_auth_results(Some("mx.google.com; dkim=neutral (body hash did not verify) header.i=@paypal.com")),
-        Verdict::DkimFail
-    );
-    assert_eq!(
-        check_auth_results(Some("mx.google.com; spf=pass (comment dkim=pass header.i=@paypal.com) smtp.mailfrom=x")),
+        v(Some("mx.google.com; spf=pass (comment dkim=pass header.i=@paypal.com) smtp.mailfrom=x")),
         Verdict::DkimFail,
         "text inside comments does not count"
     );
 }
 
 fn parsed(name: &str) -> ppfeez_core::paypal::ParsedTransaction {
-    match evaluate(&load(name)) {
+    match evaluate(&load(name), &DomainSet::builtin()) {
         ("parsed", _, Some(_), Some(t)) => t,
         other => panic!("{name}: {other:?}"),
     }
@@ -147,17 +147,17 @@ fn reversal_chargeback() {
 #[test]
 fn non_financial_and_own_payments_are_ignored() {
     for f in ["non_financial_login.eml", "payment_sent_ignored.eml"] {
-        let (status, reason, _, _) = evaluate(&load(f));
+        let (status, reason, _, _) = evaluate(&load(f), &DomainSet::builtin());
         assert_eq!((status, reason.as_deref()), ("ignored", Some("not_transactional")), "{f}");
     }
 }
 
 #[test]
 fn missing_required_field_fails_with_field_name() {
-    let (status, reason, parser, _) = evaluate(&load("payment_missing_txn_id.eml"));
+    let (status, reason, parser, _) = evaluate(&load("payment_missing_txn_id.eml"), &DomainSet::builtin());
     assert_eq!(status, "failed");
     assert_eq!(reason.as_deref(), Some("missing_field:paypal_txn_id"));
-    assert_eq!(parser, Some("paypal_payment_received_en"));
+    assert_eq!(parser.as_deref(), Some("paypal_payment_en"));
 }
 
 #[test]
@@ -188,11 +188,13 @@ fn every_fixture_has_an_expected_outcome() {
     let mut n = 0;
     for entry in std::fs::read_dir(dir).unwrap() {
         let name = entry.unwrap().file_name().to_string_lossy().to_string();
-        if !name.ends_with(".eml") {
+        // Type x language, generic and domain fixtures are covered by tests/paypal_types.rs.
+        let newer = ["en_", "he_", "ar_", "tr_", "generic_", "spoof_", "unknown_"];
+        if !name.ends_with(".eml") || newer.iter().any(|p| name.starts_with(p)) {
             continue;
         }
         n += 1;
-        let (status, ..) = evaluate(&load(&name));
+        let (status, ..) = evaluate(&load(&name), &DomainSet::builtin());
         let expected =
             if name.starts_with("payment_received") || name.starts_with("refund") || name.starts_with("reversal") {
                 "parsed"

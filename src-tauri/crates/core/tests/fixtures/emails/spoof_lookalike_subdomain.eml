@@ -1,0 +1,16 @@
+Delivered-To: owner@example.com
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.co.il.evil.com header.s=pp-dkim1 header.b=Fixture1;
+       spf=pass (google.com: domain of service@paypal.co.il.evil.com designates 173.0.84.4 as permitted sender) smtp.mailfrom=service@paypal.co.il.evil.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paypal.co.il.evil.com
+From: PayPal <service@paypal.co.il.evil.com>
+To: Owner Example <owner@example.com>
+Subject: You've got money
+Date: Wed, 18 Nov 2026 10:00:00 +0000
+Message-ID: <spoof_lookalike_subdomain@fixture.paypal.co.il.evil.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 8bit
+
+Mallory sent you $999.00 USD
+Transaction ID: 9SPF00000000000001

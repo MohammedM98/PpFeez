@@ -356,7 +356,7 @@ fn emails_screen_reparse_and_ignore() {
     assert_eq!(code(h.core.email_set_ignored(parsed.items[0].id)), ErrorCode::InvalidTransition);
     let body = h.core.email_get(parsed.items[0].id).unwrap();
     assert!(body.body_html.unwrap().contains("Taro Yamada"));
-    assert_eq!(body.parser_name.as_deref(), Some("paypal_payment_received_en"));
+    assert_eq!(body.parser_name.as_deref(), Some("paypal_payment_en"));
 }
 
 #[test]

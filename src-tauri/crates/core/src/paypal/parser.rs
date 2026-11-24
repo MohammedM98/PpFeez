@@ -2,7 +2,7 @@
 //! layout) means adding a parser with its own label table and a fixture `.eml` file.
 
 use super::amount::{find_first, FoundMoney};
-use super::{ParsedEmail, ParsedTransaction};
+use super::ParsedEmail;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use regex::Regex;
 use std::sync::OnceLock;
@@ -11,12 +11,6 @@ use std::sync::OnceLock;
 pub struct ParseError {
     /// Name of the required field that could not be extracted.
     pub field: &'static str,
-}
-
-pub trait PaypalParser: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn matches(&self, email: &ParsedEmail) -> bool;
-    fn parse(&self, email: &ParsedEmail) -> Result<ParsedTransaction, ParseError>;
 }
 
 pub fn lower(s: &str) -> String {
@@ -82,13 +76,18 @@ pub fn email_in(value: &str) -> Option<String> {
     email_re()
         .find_iter(value)
         .map(|m| m.as_str().to_string())
-        .find(|e| !e.to_ascii_lowercase().ends_with("paypal.com"))
+        .find(|e| !e.to_ascii_lowercase().rsplit_once('@').map(|(_, d)| d.contains("paypal")).unwrap_or(false))
 }
 
 /// Parse dates as PayPal writes them: `Nov 20, 2026`, `November 20, 2026 10:15:30 PST`,
 /// `20 Nov 2026`, `2026-11-20`. Time zones other than UTC offsets are approximated by the
 /// usual US PayPal zones.
 pub fn parse_paypal_date(value: &str, received_at: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    parse_paypal_date_with(value, received_at, false)
+}
+
+/// `day_first`: numeric dates are `dd/mm/yyyy` (Israel, Turkey, Arab countries).
+pub fn parse_paypal_date_with(value: &str, received_at: DateTime<Utc>, day_first: bool) -> Option<DateTime<Utc>> {
     let v = value.trim().replace(',', "").replace("  ", " ");
     let mut parts: Vec<&str> = v.split_whitespace().collect();
     // Trailing zone abbreviation.
@@ -121,8 +120,10 @@ pub fn parse_paypal_date(value: &str, received_at: DateTime<Utc>) -> Option<Date
         parts.pop();
     }
     let date_s = parts.join(" ");
-    let date = ["%b %d %Y", "%B %d %Y", "%d %b %Y", "%d %B %Y", "%Y-%m-%d", "%m/%d/%Y"]
+    let numeric: &[&str] = if day_first { &["%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y"] } else { &["%m/%d/%Y", "%d.%m.%Y"] };
+    let date = ["%b %d %Y", "%B %d %Y", "%d %b %Y", "%d %B %Y", "%Y-%m-%d"]
         .iter()
+        .chain(numeric.iter())
         .find_map(|f| NaiveDate::parse_from_str(&date_s, f).ok())?;
     match time {
         Some(t) => {

@@ -3,7 +3,7 @@
 
 use crate::clock::parse_iso;
 use crate::error::{AppError, AppResult};
-use crate::mail::ingest::{evaluate, insert_transaction, StoredEmail};
+use crate::mail::ingest::{apply_transaction, evaluate, record_applied, Ingested, StoredEmail};
 use crate::paypal::reason_ar;
 use crate::transactions::{escape_like, BulkResult};
 use crate::Core;
@@ -58,6 +58,20 @@ pub struct RawEmail {
     pub body_html: Option<String>,
     pub body_text: Option<String>,
     pub parser_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnknownDomain {
+    pub domain: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainTrustResult {
+    pub domain: String,
+    pub reparsed: BulkResult,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -148,8 +162,10 @@ impl Core {
         Ok(load(&self.conn(), id)?.0)
     }
 
-    /// Run the current parsers again on stored emails that are not parsed yet.
+    /// Run the current parsers (and the current PayPal domain list) again on stored emails that
+    /// are not parsed yet (`failed` and `ignored`), without contacting the mailbox.
     pub fn email_reparse(&self, ids: &[i64]) -> AppResult<BulkResult> {
+        let domains = crate::settings::domain_set(&self.conn())?;
         let mut result = BulkResult::default();
         for &id in ids {
             let r = (|| -> AppResult<()> {
@@ -159,29 +175,77 @@ impl Core {
                 if email.summary.parse_status == ParseStatus::Parsed {
                     return Err(AppError::invalid_transition("الرسالة محلَّلة مسبقاً"));
                 }
-                let (status, reason, parser, txn) = evaluate(&stored);
+                let (status, reason, parser, txn) = evaluate(&stored, &domains);
                 let tx = conn.unchecked_transaction()?;
-                let mut reason = reason;
-                if let Some(t) = &txn {
-                    if !insert_transaction(&tx, &now, mailbox_id, id, t)? {
-                        reason = Some("duplicate_txn".into());
-                    }
-                }
                 tx.execute(
                     "UPDATE raw_emails SET parse_status = ?1, parse_reason = ?2, parser_name = ?3 WHERE id = ?4",
                     params![status, reason, parser, id],
                 )?;
+                let outcome = match &txn {
+                    Some(t) => {
+                        let applied = apply_transaction(&tx, &now, mailbox_id, id, t)?;
+                        Some(record_applied(&tx, id, applied)?)
+                    }
+                    None => None,
+                };
                 tx.commit()?;
-                if status == "parsed" {
-                    Ok(())
-                } else {
-                    let why = reason.as_deref().map(reason_ar).unwrap_or_default();
-                    Err(AppError::validation("parse", format!("لم تُحلَّل الرسالة: {why}")))
+                match (status, outcome) {
+                    ("parsed", Some(Ingested::New | Ingested::Duplicate)) => Ok(()),
+                    _ => {
+                        let reason: Option<String> =
+                            conn.query_row("SELECT parse_reason FROM raw_emails WHERE id = ?1", params![id], |r| {
+                                r.get(0)
+                            })?;
+                        let why = reason.as_deref().map(reason_ar).unwrap_or_default();
+                        Err(AppError::validation("parse", format!("لم تُحلَّل الرسالة: {why}")))
+                    }
                 }
             })();
             result.push(id, r);
         }
         Ok(result)
+    }
+
+    /// Unknown `paypal.<suffix>` sender domains with their number of stored emails (SPEC §5.6).
+    pub fn unknown_paypal_domains(&self) -> AppResult<Vec<UnknownDomain>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT from_addr FROM raw_emails WHERE parse_reason = 'unknown_paypal_domain'")?;
+        let addrs: Vec<String> = stmt.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        let mut map: std::collections::BTreeMap<String, i64> = Default::default();
+        for a in addrs {
+            if let Some(d) = crate::mail::verify::address_domain(&a) {
+                *map.entry(d).or_default() += 1;
+            }
+        }
+        Ok(map.into_iter().map(|(domain, count)| UnknownDomain { domain, count }).collect())
+    }
+
+    /// Trust a PayPal domain: add it to the owner's domains and re-parse its ignored emails.
+    pub fn paypal_domain_trust(&self, domain: &str) -> AppResult<DomainTrustResult> {
+        let domain = crate::paypal::domains::validate_domain(domain)?;
+        let ids: Vec<i64> = {
+            let conn = self.conn();
+            let mut extra = crate::settings::extra_domains(&conn)?;
+            if !extra.contains(&domain) {
+                extra.push(domain.clone());
+            }
+            crate::settings::set_extra_domains(&conn, &extra)?;
+            let mut stmt = conn.prepare(
+                "SELECT id, from_addr FROM raw_emails WHERE parse_reason = 'unknown_paypal_domain' ORDER BY id",
+            )?;
+            let rows: Vec<(i64, String)> =
+                stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+            rows.into_iter()
+                .filter(|(_, a)| {
+                    crate::mail::verify::address_domain(a)
+                        .map(|d| crate::paypal::domains::is_same_or_sub(&d, &domain))
+                        .unwrap_or(false)
+                })
+                .map(|(id, _)| id)
+                .collect()
+        };
+        let reparsed = self.email_reparse(&ids)?;
+        Ok(DomainTrustResult { domain, reparsed })
     }
 
     pub fn email_set_ignored(&self, id: i64) -> AppResult<()> {

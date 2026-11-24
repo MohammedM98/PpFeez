@@ -1,0 +1,17 @@
+Delivered-To: owner@example.com
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.com.tr header.s=pp-dkim1 header.b=Fixture1;
+       spf=pass (google.com: domain of service@paypal.com.tr designates 173.0.84.4 as permitted sender) smtp.mailfrom=service@paypal.com.tr;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paypal.com.tr
+From: PayPal <service@paypal.com.tr>
+To: Owner Example <owner@example.com>
+Subject: Ödeme geri alındı
+Date: Wed, 18 Nov 2026 10:00:00 +0000
+Message-ID: <tr_reversal@fixture.paypal.com.tr>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 8bit
+
+Geri alınan tutar: 300,00 TL
+İşlem numarası: 1TR00000000000003
+Vaka numarası: PP-D-999001

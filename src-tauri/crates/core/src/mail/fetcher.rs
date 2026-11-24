@@ -30,12 +30,17 @@ pub trait MailFetcher: Send {
     fn folder_count(&mut self) -> AppResult<usize>;
     /// Open `folder` read-only and return its UIDVALIDITY.
     fn select(&mut self, folder: &str) -> AppResult<u32>;
-    /// `UID SEARCH FROM "paypal.com"`, limited to UIDs greater than `after_uid` when given.
-    /// Returns UIDs in ascending order.
-    fn search_paypal(&mut self, after_uid: Option<u32>) -> AppResult<Vec<u32>>;
-    /// `UID SEARCH FROM "paypal.com" SINCE since BEFORE before` (IMAP dates: whole days in the
-    /// server's time zone, `before` exclusive). Returns UIDs in ascending order.
-    fn search_paypal_dates(&mut self, since: chrono::NaiveDate, before: chrono::NaiveDate) -> AppResult<Vec<u32>>;
+    /// `UID SEARCH {query}` (the PayPal candidates key, see `paypal::domains::paypal_from_query`),
+    /// limited to UIDs greater than `after_uid` when given. Returns UIDs in ascending order.
+    fn search_paypal(&mut self, query: &str, after_uid: Option<u32>) -> AppResult<Vec<u32>>;
+    /// `UID SEARCH {query} SINCE since BEFORE before` (IMAP dates: whole days in the server's
+    /// time zone, `before` exclusive). Returns UIDs in ascending order.
+    fn search_paypal_dates(
+        &mut self,
+        query: &str,
+        since: chrono::NaiveDate,
+        before: chrono::NaiveDate,
+    ) -> AppResult<Vec<u32>>;
     /// Fetch full messages with `BODY.PEEK[]` (does not mark them as read).
     fn fetch(&mut self, uids: &[u32]) -> AppResult<Vec<FetchedMessage>>;
     fn logout(&mut self);

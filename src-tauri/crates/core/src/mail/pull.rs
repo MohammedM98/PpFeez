@@ -296,6 +296,12 @@ impl Core {
             )?;
             from.as_deref().and_then(parse_date).zip(to.as_deref().and_then(parse_date))
         };
+        // Approved PayPal domains and the IMAP search key (SPEC §5.6).
+        let (domains, query) = {
+            let conn = self.conn();
+            let extra = crate::settings::extra_domains(&conn)?;
+            (crate::paypal::domains::DomainSet::new(&extra), crate::paypal::domains::paypal_from_query(&extra))
+        };
         let validity = f.select(&mb.folder)? as i64;
         let changed = mb.uid_validity != Some(validity);
         if changed {
@@ -307,11 +313,11 @@ impl Core {
             )?;
         }
         let uids = match (&range, window) {
-            (PullRange::New, _) => f.search_paypal(if changed { None } else { Some(mb.last_uid as u32) })?,
+            (PullRange::New, _) => f.search_paypal(&query, if changed { None } else { Some(mb.last_uid as u32) })?,
             // IMAP dates are whole days in the server's zone: widen by a day on each side, then
             // filter each message by its Date header in local time.
-            (_, Some((from, to))) => f.search_paypal_dates(from - Duration::days(1), to + Duration::days(2))?,
-            _ => f.search_paypal(None)?,
+            (_, Some((from, to))) => f.search_paypal_dates(&query, from - Duration::days(1), to + Duration::days(2))?,
+            _ => f.search_paypal(&query, None)?,
         };
         let mut total = uids.len() as i64;
         self.conn().execute("UPDATE pull_runs SET total_count = ?1 WHERE id = ?2", params![total, run_id])?;
@@ -339,7 +345,7 @@ impl Core {
                     let outcome = match stored {
                         Some(stored) => {
                             let tx = conn.unchecked_transaction()?;
-                            let o = ingest(&tx, &now, mb.id, m.uid, &stored)?;
+                            let o = ingest(&tx, &now, mb.id, m.uid, &stored, &domains)?;
                             tx.commit()?;
                             o
                         }

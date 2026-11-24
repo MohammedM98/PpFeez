@@ -5,7 +5,11 @@ use rusqlite::Connection;
 use std::path::Path;
 
 /// Migrations in order; index + 1 is the schema version.
-const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_init.sql"), include_str!("migrations/0002_pull_range.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("migrations/0001_init.sql"),
+    include_str!("migrations/0002_pull_range.sql"),
+    include_str!("migrations/0003_review_hold.sql"),
+];
 
 pub fn schema_version() -> i64 {
     MIGRATIONS.len() as i64

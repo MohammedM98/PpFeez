@@ -1,0 +1,15 @@
+Delivered-To: owner@example.com
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.com.tr header.s=pp-dkim1 header.b=Fixture1;
+       spf=pass (google.com: domain of service@paypal.com.tr designates 173.0.84.4 as permitted sender) smtp.mailfrom=service@paypal.com.tr;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paypal.com.tr
+From: PayPal <service@paypal.com.tr>
+To: Owner Example <owner@example.com>
+Subject: Para aldınız
+Date: Wed, 18 Nov 2026 10:00:00 +0000
+Message-ID: <tr_friends@fixture.paypal.com.tr>
+MIME-Version: 1.0
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: 8bit
+
+<html><body><table><tr><td>Merhaba Owner Example</td></tr><tr><td>Ayşe Yılmaz size 1.250,00 TL gönderdi</td></tr><tr><td>Not: Kira</td></tr><tr><td>İşlem numarası: 1TR00000000000001</td></tr><tr><td>İşlem tarihi: 18.11.2026</td></tr></table></body></html>

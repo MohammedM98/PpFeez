@@ -17,6 +17,8 @@ pub struct DashboardCounts {
     pub needs_fee: i64,
     pub pending_approval: i64,
     pub refund_alerts: i64,
+    pub needs_review: i64,
+    pub unknown_paypal_domains: i64,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -62,7 +64,8 @@ impl Core {
             "SELECT
                COALESCE(SUM(status = 'unassigned'), 0),
                COALESCE(SUM(fee_minor IS NULL AND type = 'payment' AND status <> 'excluded'), 0),
-               COALESCE(SUM(status = 'pending_approval'), 0)
+               COALESCE(SUM(status = 'pending_approval'), 0),
+               COALESCE(SUM(needs_review = 1 AND status <> 'excluded'), 0)
              FROM paypal_transactions",
             [],
             |r| {
@@ -71,10 +74,22 @@ impl Core {
                     needs_fee: r.get(1)?,
                     pending_approval: r.get(2)?,
                     refund_alerts: 0,
+                    needs_review: r.get(3)?,
+                    unknown_paypal_domains: 0,
                 })
             },
         )?;
-        let counts = DashboardCounts { refund_alerts: alert_count(&conn)?, ..counts };
+        let unknown_domains: std::collections::BTreeSet<String> = {
+            let mut stmt =
+                conn.prepare("SELECT from_addr FROM raw_emails WHERE parse_reason = 'unknown_paypal_domain'")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|a| a.ok().and_then(|a| crate::mail::verify::address_domain(&a))).collect()
+        };
+        let counts = DashboardCounts {
+            refund_alerts: alert_count(&conn)?,
+            unknown_paypal_domains: unknown_domains.len() as i64,
+            ..counts
+        };
 
         let mut by: BTreeMap<String, CurrencySummary> = BTreeMap::new();
         // Incoming payments in the period (not excluded).

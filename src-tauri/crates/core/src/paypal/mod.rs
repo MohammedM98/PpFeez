@@ -2,24 +2,34 @@
 //!
 //! Emails are reduced to a [`ParsedEmail`] (subject + text lines). HTML bodies are turned into
 //! text with `scraper`; block elements (paragraphs, table cells, line breaks) start new lines.
-//! A registry of [`parser::PaypalParser`]s then extracts the transaction.
+//! [`parsers::parse_email`] classifies the email (type × language, `lang/*.rs`) and extracts the
+//! transaction; a generic fallback catches unknown layouts for review.
 
 pub mod amount;
+pub mod domains;
+pub mod lang;
 pub mod parser;
 pub mod parsers;
 
 use crate::transactions::TxnType;
 use chrono::{DateTime, Utc};
 use ego_tree::NodeRef;
-use parser::{lower, PaypalParser};
 use scraper::{Html, Node};
+
+/// Bidi control characters PayPal puts around numbers in RTL emails (LRM, RLM, ALM, embeddings,
+/// overrides and isolates). They are removed before any parsing.
+pub fn strip_bidi(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(c, '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}'))
+        .collect()
+}
 
 #[derive(Debug, Clone)]
 pub struct ParsedEmail {
     pub subject: String,
     pub from_addr: String,
     pub received_at: DateTime<Utc>,
-    /// Non-empty, trimmed text lines of the body.
+    /// Non-empty, trimmed text lines of the body (bidi marks removed, spaces collapsed).
     pub lines: Vec<String>,
 }
 
@@ -36,22 +46,38 @@ impl ParsedEmail {
             Some(h) => html_to_text(h),
             None => body_text.unwrap_or_default().to_string(),
         };
-        let mut lines: Vec<String> = text
-            .lines()
-            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
-            .filter(|l| !l.is_empty())
-            .collect();
+        let clean = |t: &str| -> Vec<String> {
+            strip_bidi(t)
+                .lines()
+                .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
+        let mut lines = clean(&text);
         if lines.is_empty() {
             if let Some(t) = body_text {
-                lines = t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+                lines = clean(t);
             }
         }
-        ParsedEmail { subject: subject.trim().to_string(), from_addr: from_addr.to_string(), received_at, lines }
+        let subject = strip_bidi(subject).split_whitespace().collect::<Vec<_>>().join(" ");
+        ParsedEmail { subject, from_addr: from_addr.to_string(), received_at, lines }
     }
 
     pub fn text(&self) -> String {
         self.lines.join("\n")
     }
+}
+
+/// What a PayPal email says happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Event {
+    Normal,
+    /// eCheck payment not cleared yet: the transaction cannot be approved until it clears.
+    EcheckPending,
+    /// eCheck cleared: updates the transaction with the same id.
+    EcheckCleared,
+    /// Funds on hold: a note on the existing transaction, never a new one.
+    OnHold,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,13 +92,16 @@ pub struct ParsedTransaction {
     pub payer_name: Option<String>,
     pub payer_email: Option<String>,
     pub payer_note: Option<String>,
+    pub event: Event,
+    /// Set by the generic fallback parser: the owner confirms the data before approval.
+    pub needs_review: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    Parsed { parser: &'static str, txn: ParsedTransaction },
+    Parsed { parser: String, txn: ParsedTransaction },
     Ignored { reason: String },
-    Failed { reason: String, parser: Option<&'static str> },
+    Failed { reason: String, parser: Option<String> },
 }
 
 const BLOCK: [&str; 22] = [
@@ -145,64 +174,7 @@ pub fn html_to_text(html: &str) -> String {
     out
 }
 
-pub fn registry() -> Vec<Box<dyn PaypalParser>> {
-    vec![
-        Box::new(parsers::refund::RefundParser),
-        Box::new(parsers::reversal::ReversalParser),
-        Box::new(parsers::payment::PaymentReceivedParser),
-    ]
-}
-
-/// PayPal emails that never carry a customer payment.
-const NON_TRANSACTIONAL: [&str; 25] = [
-    "you received a refund",
-    "you've received a refund",
-    "refund from",
-    "you sent a payment",
-    "you've sent a payment",
-    "you sent money",
-    "you paid",
-    "your payment to",
-    "receipt for your payment",
-    "you authorized a payment",
-    "log in",
-    "login",
-    "logged in",
-    "new device",
-    "password",
-    "security",
-    "verify",
-    "confirm your",
-    "statement",
-    "offer",
-    "update to our",
-    "policy",
-    "agreement",
-    "your account",
-    "welcome",
-];
-
-/// Words that suggest money moved; such an email that no parser understood is a failure,
-/// not something to silently ignore.
-const MONEY_CUES: [&str; 8] =
-    ["received", "money", "payment", "refund", "reversed", "reversal", "chargeback", "sent you"];
-
-pub fn parse_email(email: &ParsedEmail) -> Outcome {
-    for p in registry() {
-        if p.matches(email) {
-            return match p.parse(email) {
-                Ok(txn) => Outcome::Parsed { parser: p.name(), txn },
-                Err(e) => Outcome::Failed { reason: format!("missing_field:{}", e.field), parser: Some(p.name()) },
-            };
-        }
-    }
-    let subject = lower(&email.subject);
-    if NON_TRANSACTIONAL.iter().any(|n| subject.contains(n)) || !MONEY_CUES.iter().any(|c| subject.contains(c)) {
-        Outcome::Ignored { reason: "not_transactional".into() }
-    } else {
-        Outcome::Failed { reason: "no_parser_matched".into(), parser: None }
-    }
-}
+pub use parsers::parse_email;
 
 /// Arabic text for a stored `parse_reason`.
 pub fn reason_ar(reason: &str) -> String {
@@ -224,6 +196,10 @@ pub fn reason_ar(reason: &str) -> String {
         "duplicate_txn" => "المعاملة موجودة مسبقاً".into(),
         "manual" => "عولجت يدوياً".into(),
         "invalid_message" => "رسالة غير صالحة".into(),
+        "unknown_paypal_domain" => "نطاق PayPal غير معروف — يمكنك الوثوق به من هنا".into(),
+        "hold_notice" => "إشعار حجز مبلغ لمعاملة غير موجودة بعد".into(),
+        "echeck_cleared" => "اكتمال شيك إلكتروني (حُدّثت المعاملة)".into(),
+        "hold_applied" => "إشعار حجز (عُلّمت المعاملة «محجوزة»)".into(),
         other => other.to_string(),
     }
 }

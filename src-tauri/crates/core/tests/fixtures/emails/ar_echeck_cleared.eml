@@ -1,0 +1,16 @@
+Delivered-To: owner@example.com
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.com header.s=pp-dkim1 header.b=Fixture1;
+       spf=pass (google.com: domain of service@paypal.com designates 173.0.84.4 as permitted sender) smtp.mailfrom=service@paypal.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paypal.com
+From: PayPal <service@paypal.com>
+To: Owner Example <owner@example.com>
+Subject: اكتملت دفعة الشيك الإلكتروني
+Date: Wed, 18 Nov 2026 10:00:00 +0000
+Message-ID: <ar_echeck_cleared@fixture.paypal.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 8bit
+
+المبلغ: $200.00 USD
+رقم المعاملة: 1AR00000000000006

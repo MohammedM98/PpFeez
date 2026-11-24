@@ -1,0 +1,15 @@
+Delivered-To: owner@example.com
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.co.il header.s=pp-dkim1 header.b=Fixture1;
+       spf=pass (google.com: domain of service@paypal.co.il designates 173.0.84.4 as permitted sender) smtp.mailfrom=service@paypal.co.il;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paypal.co.il
+From: PayPal <service@paypal.co.il>
+To: Owner Example <owner@example.com>
+Subject: קיבלת כסף
+Date: Wed, 18 Nov 2026 10:00:00 +0000
+Message-ID: <he_friends@fixture.paypal.co.il>
+MIME-Version: 1.0
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: 8bit
+
+<html><body><table><tr><td>שלום, Owner Example</td></tr><tr><td>נועה לוי שלח/ה לך ‎₪250.00 ILS‎</td></tr><tr><td>הודעה מנועה לוי: שכירות</td></tr><tr><td>מספר עסקה: 1HE00000000000001</td></tr><tr><td>תאריך העסקה: 18/11/2026</td></tr></table></body></html>

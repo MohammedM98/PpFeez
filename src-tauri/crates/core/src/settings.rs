@@ -22,6 +22,7 @@ pub const K_EXCEL_EXPORT_PATH: &str = "excel_export_path";
 pub const K_EXCEL_LAST_EXPORTED_AT: &str = "excel_last_exported_at";
 pub const K_EXCEL_UPDATE_ON_CLOSE: &str = "excel_update_on_close";
 pub const K_AUTO_CHECK_UPDATES: &str = "auto_check_updates";
+pub const K_EXTRA_PAYPAL_DOMAINS: &str = "extra_paypal_domains";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -58,6 +59,10 @@ pub struct Settings {
     pub excel_last_exported_at: Option<String>,
     pub excel_update_on_close: bool,
     pub auto_check_updates: bool,
+    /// SPEC §5.6: domains the owner added (layer 2).
+    pub extra_paypal_domains: Vec<String>,
+    /// Read only: the built-in PayPal domains (layer 1).
+    pub builtin_paypal_domains: Vec<String>,
 }
 
 /// Distinguish an absent field from an explicit `null` in a patch.
@@ -89,6 +94,7 @@ pub struct SettingsPatch {
     pub excel_export_path: Option<Option<String>>,
     pub excel_update_on_close: Option<bool>,
     pub auto_check_updates: Option<bool>,
+    pub extra_paypal_domains: Option<Vec<String>>,
 }
 
 pub fn get_raw(conn: &Connection, key: &str) -> AppResult<Option<String>> {
@@ -124,6 +130,28 @@ fn bool_str(b: bool) -> &'static str {
     }
 }
 
+pub fn extra_domains(conn: &Connection) -> AppResult<Vec<String>> {
+    Ok(get_raw(conn, K_EXTRA_PAYPAL_DOMAINS)?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default())
+}
+
+/// Validate, normalize and de-duplicate owner-entered domains (built-in ones are dropped).
+pub fn set_extra_domains(conn: &Connection, list: &[String]) -> AppResult<Vec<String>> {
+    let mut out: Vec<String> = vec![];
+    for d in list.iter().filter(|d| !d.trim().is_empty()) {
+        let d = crate::paypal::domains::validate_domain(d)?;
+        if !out.contains(&d) && !crate::paypal::domains::BUILTIN.contains(&d.as_str()) {
+            out.push(d);
+        }
+    }
+    set_raw(conn, K_EXTRA_PAYPAL_DOMAINS, &serde_json::to_string(&out)?)?;
+    Ok(out)
+}
+
+/// The approved PayPal domains (built-in + owner's).
+pub fn domain_set(conn: &Connection) -> AppResult<crate::paypal::domains::DomainSet> {
+    Ok(crate::paypal::domains::DomainSet::new(&extra_domains(conn)?))
+}
+
 pub fn load(conn: &Connection) -> AppResult<Settings> {
     let theme = match get_raw(conn, K_THEME)?.as_deref() {
         Some("dark") => Theme::Dark,
@@ -145,6 +173,8 @@ pub fn load(conn: &Connection) -> AppResult<Settings> {
         excel_last_exported_at: get_raw(conn, K_EXCEL_LAST_EXPORTED_AT)?.filter(|s| !s.is_empty()),
         excel_update_on_close: get_bool(conn, K_EXCEL_UPDATE_ON_CLOSE, true)?,
         auto_check_updates: get_bool(conn, K_AUTO_CHECK_UPDATES, true)?,
+        extra_paypal_domains: extra_domains(conn)?,
+        builtin_paypal_domains: crate::paypal::domains::BUILTIN.iter().map(|d| d.to_string()).collect(),
     })
 }
 
@@ -217,6 +247,9 @@ impl Core {
         }
         if let Some(b) = patch.auto_check_updates {
             set_raw(&tx, K_AUTO_CHECK_UPDATES, bool_str(b))?;
+        }
+        if let Some(list) = patch.extra_paypal_domains {
+            set_extra_domains(&tx, &list)?;
         }
         let s = load(&tx)?;
         tx.commit()?;

@@ -82,6 +82,32 @@ pub enum TxnAction {
     Exclude,
     Include,
     EditNote,
+    ConfirmReview,
+    EditDetails,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HoldStatus {
+    PendingEcheck,
+    OnHold,
+}
+
+impl HoldStatus {
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "pending_echeck" => Some(HoldStatus::PendingEcheck),
+            "on_hold" => Some(HoldStatus::OnHold),
+            _ => None,
+        }
+    }
+}
+
+pub fn review_reason_ar(reason: &str) -> String {
+    match reason {
+        "generic_parser" => "صيغة غير معروفة — راجع البيانات".into(),
+        other => other.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -131,6 +157,9 @@ pub struct Transaction {
     pub raw_email_id: Option<i64>,
     pub refunded_by: Vec<RefundRef>,
     pub allowed_actions: Vec<TxnAction>,
+    pub needs_review: bool,
+    pub review_reason_ar: Option<String>,
+    pub hold_status: Option<HoldStatus>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -163,6 +192,7 @@ pub struct TxnFilter {
     pub customer_id: Option<i64>,
     pub period: Option<Period>,
     pub needs_fee_only: Option<bool>,
+    pub needs_review_only: Option<bool>,
     #[serde(rename = "type")]
     pub kind: Option<TxnType>,
 }
@@ -231,6 +261,7 @@ pub struct TxnCounts {
     pub approved: i64,
     pub excluded: i64,
     pub needs_fee: i64,
+    pub needs_review: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -253,6 +284,17 @@ pub struct ManualTxnInput {
     pub note: Option<String>,
     #[serde(default)]
     pub raw_email_id: Option<i64>,
+}
+
+/// `txn_edit_details` input: absent fields stay unchanged; an empty name/email clears it.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TxnDetailsInput {
+    pub payer_name: Option<String>,
+    pub payer_email: Option<String>,
+    pub currency: Option<String>,
+    pub gross_text: Option<String>,
+    pub occurred_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -358,6 +400,9 @@ pub struct TxnRow {
     pub assigned_at: Option<String>,
     pub approved_at: Option<String>,
     pub note: Option<String>,
+    pub needs_review: bool,
+    pub review_reason: Option<String>,
+    pub hold_status: Option<HoldStatus>,
 }
 
 impl TxnRow {
@@ -388,6 +433,9 @@ impl TxnRow {
             assigned_at: r.get("assigned_at")?,
             approved_at: r.get("approved_at")?,
             note: r.get("note")?,
+            needs_review: r.get::<_, i64>("needs_review")? != 0,
+            review_reason: r.get("review_reason")?,
+            hold_status: r.get::<_, Option<String>>("hold_status")?.and_then(|h| HoldStatus::parse(&h)),
         })
     }
 
@@ -429,13 +477,23 @@ pub fn allowed_actions(row: &TxnRow) -> Vec<TxnAction> {
         }
         TxnStatus::PendingApproval => {
             a.extend([SetFee, SetCommission]);
-            if row.fee_minor.is_some() && row.customer_amount_minor.unwrap_or(0) > 0 {
+            if row.fee_minor.is_some()
+                && row.customer_amount_minor.unwrap_or(0) > 0
+                && !row.needs_review
+                && row.hold_status != Some(HoldStatus::PendingEcheck)
+            {
                 a.push(Approve);
             }
             a.push(Unassign);
         }
         TxnStatus::Approved => a.push(Unapprove),
         TxnStatus::Excluded => a.push(Include),
+    }
+    if row.needs_review {
+        a.push(ConfirmReview);
+    }
+    if row.needs_review || row.status == TxnStatus::Unassigned {
+        a.push(EditDetails);
     }
     a.push(EditNote);
     a
@@ -467,6 +525,7 @@ fn to_dto(conn: &Connection, row: TxnRow) -> AppResult<Transaction> {
         vec![]
     };
     let allowed = allowed_actions(&row);
+    let review_reason_ar = if row.needs_review { row.review_reason.as_deref().map(review_reason_ar) } else { None };
     Ok(Transaction {
         id: row.id,
         source: row.source,
@@ -495,6 +554,9 @@ fn to_dto(conn: &Connection, row: TxnRow) -> AppResult<Transaction> {
         raw_email_id: row.raw_email_id,
         refunded_by,
         allowed_actions: allowed,
+        needs_review: row.needs_review,
+        review_reason_ar,
+        hold_status: row.hold_status,
     })
 }
 
@@ -706,6 +768,12 @@ pub(crate) fn approve_in(conn: &Connection, now: &str, today: &str, id: i64) -> 
     let row = load_row(conn, id)?;
     if row.status != TxnStatus::PendingApproval {
         return Err(not_status("المعاملة ليست بانتظار الموافقة"));
+    }
+    if row.needs_review {
+        return Err(AppError::invalid_transition("راجع بيانات المعاملة واضغط «تأكيد البيانات» قبل الاعتماد"));
+    }
+    if row.hold_status == Some(HoldStatus::PendingEcheck) {
+        return Err(AppError::invalid_transition("دفعة الشيك الإلكتروني ما زالت معلّقة؛ تُعتمد بعد اكتمالها"));
     }
     if row.fee_minor.is_none() {
         return Err(AppError::new(ErrorCode::FeeRequired, "أدخل رسوم PayPal (أو اختر «بلا رسوم») قبل الاعتماد"));
@@ -1021,6 +1089,87 @@ impl Core {
         })
     }
 
+    /// Correct the data of a transaction that needs review or is not assigned yet (SPEC §5.3).
+    pub fn txn_edit_details(&self, id: i64, input: TxnDetailsInput) -> AppResult<Transaction> {
+        self.txn_op(id, |c, now, _| {
+            let row = load_row(c, id)?;
+            if !(row.needs_review || row.status == TxnStatus::Unassigned) {
+                return Err(AppError::invalid_transition("تعديل البيانات متاح للمعاملات غير المخصّصة أو التي تحتاج مراجعة"));
+            }
+            let currency = match &input.currency {
+                Some(c) => normalize_currency(c)?,
+                None => row.currency.clone(),
+            };
+            let gross = match &input.gross_text {
+                Some(t) => parse_positive(t, &currency, "grossText")?,
+                None => row.gross_minor,
+            };
+            if let Some(f) = row.fee_minor {
+                if f > gross {
+                    return Err(AppError::validation("grossText", "المبلغ أقل من الرسوم المسجّلة"));
+                }
+            }
+            let occurred_at = match &input.occurred_at {
+                Some(t) => iso(self.clock.local_to_utc(
+                    parse_local_datetime(t)
+                        .ok_or_else(|| AppError::validation("occurredAt", "التاريخ غير صالح (YYYY-MM-DD HH:mm)"))?,
+                )),
+                None => row.occurred_at.clone(),
+            };
+            let pick = |new: &Option<String>, old: &Option<String>| match new {
+                Some(v) => clean(Some(v.clone())),
+                None => old.clone(),
+            };
+            let payer_name = pick(&input.payer_name, &row.payer_name);
+            let payer_email = pick(&input.payer_email, &row.payer_email);
+            let rule = if row.status == TxnStatus::PendingApproval { row.rule() } else { None };
+            let d = derive(gross, row.fee_minor, rule)?;
+            c.execute(
+                "UPDATE paypal_transactions SET currency = ?1, gross_minor = ?2, net_minor = ?3, commission_minor = ?4,
+                 customer_amount_minor = ?5, occurred_at = ?6, payer_name = ?7, payer_email = ?8, updated_at = ?9
+                 WHERE id = ?10",
+                params![
+                    currency,
+                    gross,
+                    d.net_minor,
+                    d.commission_minor,
+                    d.customer_amount_minor,
+                    occurred_at,
+                    payer_name,
+                    payer_email,
+                    now,
+                    id
+                ],
+            )?;
+            audit::log(
+                c,
+                now,
+                "txn.edit_details",
+                "transaction",
+                Some(id),
+                json!({ "before": { "currency": row.currency, "grossMinor": row.gross_minor, "occurredAt": row.occurred_at,
+                                     "payerName": row.payer_name, "payerEmail": row.payer_email },
+                        "after": { "currency": currency, "grossMinor": gross, "occurredAt": occurred_at,
+                                   "payerName": payer_name, "payerEmail": payer_email } }),
+            )
+        })
+    }
+
+    /// The owner checked the data of a transaction from the generic parser.
+    pub fn txn_confirm_review(&self, id: i64) -> AppResult<Transaction> {
+        self.txn_op(id, |c, now, _| {
+            let row = load_row(c, id)?;
+            if !row.needs_review {
+                return Err(AppError::invalid_transition("المعاملة لا تحتاج مراجعة"));
+            }
+            c.execute(
+                "UPDATE paypal_transactions SET needs_review = 0, updated_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )?;
+            audit::log(c, now, "txn.confirm_review", "transaction", Some(id), json!({ "reason": row.review_reason }))
+        })
+    }
+
     /// Each id runs in its own SQL transaction; the result lists successes and failures.
     pub fn txn_bulk(
         &self,
@@ -1164,16 +1313,18 @@ impl Core {
         let (where_sql, args) = self.where_clause(filter, false)?;
         let mut counts = TxnCounts::default();
         let mut stmt = conn.prepare(&format!(
-            "SELECT t.status, COUNT(*), SUM(CASE WHEN t.fee_minor IS NULL AND t.type = 'payment' AND t.status <> 'excluded' THEN 1 ELSE 0 END)
+            "SELECT t.status, COUNT(*), SUM(CASE WHEN t.fee_minor IS NULL AND t.type = 'payment' AND t.status <> 'excluded' THEN 1 ELSE 0 END),
+                    SUM(t.needs_review)
              FROM paypal_transactions t WHERE {where_sql} GROUP BY t.status"
         ))?;
         let rows = stmt.query_map(rusqlite::params_from_iter(args.iter()), |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?))
         })?;
         for row in rows {
-            let (status, n, needs_fee) = row?;
+            let (status, n, needs_fee, needs_review) = row?;
             counts.all += n;
             counts.needs_fee += needs_fee;
+            counts.needs_review += needs_review;
             match TxnStatus::parse(&status) {
                 TxnStatus::Unassigned => counts.unassigned += n,
                 TxnStatus::PendingApproval => counts.pending_approval += n,
@@ -1219,6 +1370,9 @@ impl Core {
         if let Some(k) = f.kind {
             w.push("t.type = ?".into());
             a.push(k.as_str().to_string().into());
+        }
+        if f.needs_review_only.unwrap_or(false) {
+            w.push("t.needs_review = 1".into());
         }
         if f.needs_fee_only.unwrap_or(false) {
             w.push("t.fee_minor IS NULL AND t.type = 'payment' AND t.status <> 'excluded'".into());

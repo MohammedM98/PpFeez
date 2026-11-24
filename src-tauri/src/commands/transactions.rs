@@ -2,8 +2,8 @@ use crate::error::AppResult;
 use crate::state::AppState;
 use ppfeez_core::audit::HistoryItem;
 use ppfeez_core::transactions::{
-    BulkAction, BulkResult, CommissionInput, FeeInput, ManualTxnInput, Transaction, TxnCounts, TxnFilter,
-    TxnListResult, TxnPreview, TxnSort,
+    BulkAction, BulkResult, CommissionInput, FeeInput, ManualTxnInput, Transaction, TxnCounts, TxnDetailsInput,
+    TxnFilter, TxnListResult, TxnPreview, TxnSort,
 };
 use tauri::State;
 
@@ -123,4 +123,16 @@ pub async fn txn_bulk(
 ) -> AppResult<BulkResult> {
     state.core.guard()?;
     state.core.txn_bulk(action, &ids, customer_id, commission)
+}
+
+#[tauri::command]
+pub async fn txn_edit_details(state: State<'_, AppState>, id: i64, input: TxnDetailsInput) -> AppResult<Transaction> {
+    state.core.guard()?;
+    state.core.txn_edit_details(id, input)
+}
+
+#[tauri::command]
+pub async fn txn_confirm_review(state: State<'_, AppState>, id: i64) -> AppResult<Transaction> {
+    state.core.guard()?;
+    state.core.txn_confirm_review(id)
 }

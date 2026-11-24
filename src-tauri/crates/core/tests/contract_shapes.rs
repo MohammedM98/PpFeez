@@ -58,6 +58,9 @@ const TRANSACTION: &[&str] = &[
     "rawEmailId",
     "refundedBy",
     "allowedActions",
+    "needsReview",
+    "reviewReasonAr",
+    "holdStatus",
 ];
 const CUSTOMER: &[&str] =
     &["id", "name", "phone", "defaultCommissionBps", "notes", "isActive", "balances", "pendingCount", "createdAt"];
@@ -128,6 +131,8 @@ fn app_and_settings_group() {
             "excelLastExportedAt",
             "excelUpdateOnClose",
             "autoCheckUpdates",
+            "extraPaypalDomains",
+            "builtinPaypalDomains",
         ],
     );
     assert_eq!(s["theme"], json!("system"));
@@ -203,7 +208,7 @@ fn transactions_group() {
     assert_eq!(v["type"], json!("payment"));
     assert_eq!(v["status"], json!("unassigned"));
     assert_eq!(v["feeMinor"], Value::Null);
-    assert_eq!(v["allowedActions"], json!(["assign", "set_fee", "exclude", "edit_note"]));
+    assert_eq!(v["allowedActions"], json!(["assign", "set_fee", "exclude", "edit_details", "edit_note"]));
 
     // FeeInput / CommissionInput tagged unions.
     for fee in
@@ -247,7 +252,7 @@ fn transactions_group() {
     assert_eq!(h.core.txn_list(&f2, TxnSort::default(), 1, 50).unwrap().total, 1);
 
     let counts = h.core.txn_counts(&TxnFilter::default()).unwrap();
-    assert_keys(&counts, &["all", "unassigned", "pending_approval", "approved", "excluded", "needsFee"]);
+    assert_keys(&counts, &["all", "unassigned", "pending_approval", "approved", "excluded", "needsFee", "needsReview"]);
 
     let hist = h.core.txn_history(t.id).unwrap();
     assert_keys(&hist[0], &["id", "action", "labelAr", "details", "createdAt"]);
@@ -387,7 +392,10 @@ fn dashboard_and_backup_group() {
     let period: Period = serde_json::from_value(json!({})).unwrap();
     let d = h.core.dashboard_summary(&period).unwrap();
     let dv = assert_keys(&d, &["counts", "byCurrency", "topCustomers", "lastPull"]);
-    assert_eq!(keys(&dv["counts"]), set(&["unassigned", "needsFee", "pendingApproval", "refundAlerts"]));
+    assert_eq!(
+        keys(&dv["counts"]),
+        set(&["unassigned", "needsFee", "pendingApproval", "refundAlerts", "needsReview", "unknownPaypalDomains"])
+    );
     assert_eq!(
         keys(&dv["byCurrency"][0]),
         set(&["currency", "grossMinor", "feeMinor", "commissionMinor", "owedToCustomersMinor", "paidOutMinor"])
