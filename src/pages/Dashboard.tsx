@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { FileSpreadsheet, RefreshCw, TriangleAlert } from 'lucide-react';
+import { FileSpreadsheet, RefreshCw, ShieldQuestion, TriangleAlert } from 'lucide-react';
 import { useExcelUpdate } from '@/components/settings/useExcelUpdate';
-import { pullRangeLabel } from '@/lib/strings';
 import { api } from '@/lib/api';
 import type { Period, RefundAlert } from '@/lib/contract';
 import { formatMinor } from '@/lib/money';
@@ -11,8 +10,9 @@ import { periodLabels, presetPeriod, type PeriodPreset } from '@/lib/period';
 import { useAction } from '@/lib/useAction';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { PullControl, PullProgress } from '@/components/transactions/PullControl';
+import { LastPullLine } from '@/components/transactions/LastPullLine';
 import { Amount } from '@/components/ui/Amount';
-import { Button } from '@/components/ui/Button';
+import { Button, button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Field';
 import { DateRangePicker } from '@/components/ui/DateFields';
 import { DateTime } from '@/components/ui/DateTime';
@@ -31,15 +31,25 @@ function CountCard({ label, value, to, hint, tone, scrollTo }: { label: string; 
   );
 }
 
-function RefundAlerts({ alerts }: { alerts: RefundAlert[] }) {
+function RefundAlerts({ alerts, domains }: { alerts: RefundAlert[]; domains: { domain: string; count: number }[] }) {
   const [confirming, setConfirming] = useState<RefundAlert | null>(null);
   const [amountText, setAmountText] = useState('');
   const { run, pending } = useAction();
-  if (!alerts.length) return null;
+  if (!alerts.length && !domains.length) return null;
   return (
     <section id="refund-alerts" className="mb-6">
       <h2 className="mb-2 text-[15px] font-medium text-fg">تنبيهات تحتاج إجراء</h2>
       <ul className="divide-y divide-line overflow-hidden rounded-card border border-neg/30 bg-surface">
+        {domains.map((d) => (
+          <li key={d.domain} className="flex items-center gap-4 px-4 py-3">
+            <ShieldQuestion className="size-[18px] shrink-0 text-warn" strokeWidth={1.6} />
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="text-fg">رسائل من نطاق PayPal غير معروف: <bdi dir="ltr" className="font-medium">{d.domain}</bdi> <span className="num text-fg-3">({d.count})</span></div>
+              <div className="text-[12.5px] text-fg-3">موقّعة توقيعاً صحيحاً لكنها لم تُقرأ. إن كان نطاق PayPal في بلد المرسل فثق به لتُقرأ</div>
+            </div>
+            <Link to="/emails?tab=ignored" className={button({ variant: 'secondary', size: 'sm' })}>مراجعة الرسائل</Link>
+          </li>
+        ))}
         {alerts.map((a) => (
           <li key={a.refundTxn.id} className="flex items-center gap-4 px-4 py-3">
             <TriangleAlert className="size-[18px] shrink-0 text-neg" strokeWidth={1.6} />
@@ -113,6 +123,7 @@ export function DashboardPage() {
   const period = preset === 'custom' ? custom : presetPeriod(preset);
   const summary = useQuery({ queryKey: ['dashboard', period], queryFn: () => api.dashboardSummary(period) });
   const alerts = useQuery({ queryKey: ['refund_alerts'], queryFn: api.refundAlerts });
+  const unknownDomains = useQuery({ queryKey: ['unknown_paypal_domains'], queryFn: api.unknownPaypalDomains });
   const s = summary.data;
   const run = s?.lastPull;
   const topByCurrency = new Map<string, NonNullable<typeof s>['topCustomers']>();
@@ -122,24 +133,20 @@ export function DashboardPage() {
     <div className="mx-auto flex min-h-full max-w-[1560px] flex-col px-6 pb-8 pt-6">
       <PageHeader
         title="لوحة التحكم"
-        subtitle={run ? (
-          <>آخر سحب من {run.mailboxLabel} <DateTime iso={run.finishedAt ?? run.startedAt} /> ({pullRangeLabel(run.range, true)})، {
-            run.status === 'failed' ? <span className="text-neg">فشل: {run.error}</span>
-              : run.status === 'running' ? 'قيد التشغيل'
-              : <>{run.newTransactionsCount} جديدة، {run.failedCount} فاشلة</>}</>
-        ) : 'لم يُسحب البريد بعد'}
+        subtitle={<LastPullLine run={run} />}
         actions={<PullControl label="سحب الآن" />}
       />
 
       <PullProgress />
-      <div className="mb-6 grid grid-cols-4 gap-3">
+      <div className="mb-6 grid grid-cols-5 gap-3">
         <CountCard label="غير مخصّصة" value={s?.counts.unassigned} to="/transactions?tab=unassigned" hint="خصّصها لعملائها" />
         <CountCard label="تحتاج رسوم" value={s?.counts.needsFee} to="/transactions?tab=all&needsFee=1" hint="أدخل رسوم PayPal أو الصافي" tone="warn" />
         <CountCard label="بانتظار الموافقة" value={s?.counts.pendingApproval} to="/transactions?tab=pending_approval" hint="اعتمدها بعد موافقة العميل" />
-        <CountCard label="تنبيهات استرداد" value={s?.counts.refundAlerts} to="/dashboard" scrollTo="refund-alerts" hint="استردادات لمعاملات معتمدة" tone="warn" />
+        <CountCard label="تحتاج مراجعة" value={s?.counts.needsReview} to="/transactions?tab=all&needsReview=1" hint="أكّد بياناتها قبل الاعتماد" tone="warn" />
+        <CountCard label="تنبيهات" value={s ? s.counts.refundAlerts + (unknownDomains.data?.length ?? 0) : undefined} to="/dashboard" scrollTo="refund-alerts" hint="استردادات ونطاقات غير معروفة" tone="warn" />
       </div>
 
-      <RefundAlerts alerts={alerts.data ?? []} />
+      <RefundAlerts alerts={alerts.data ?? []} domains={unknownDomains.data ?? []} />
 
       <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-6">
         <section>

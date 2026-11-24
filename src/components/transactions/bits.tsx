@@ -1,5 +1,5 @@
 import type { Currency, Minor, Transaction, TxnStatus } from '@/lib/contract';
-import { txn as s, txnStatus } from '@/lib/strings';
+import { holdHint, holdStatus, txn as s, txnStatus } from '@/lib/strings';
 import { Amount } from '@/components/ui/Amount';
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/components/ui/cx';
@@ -68,4 +68,14 @@ export function fromTxn(t: Transaction, commissionHint?: string): BreakdownValue
     currency: t.currency, gross: t.grossMinor, fee: t.feeMinor, net: t.netMinor, commission: t.commissionMinor,
     toCustomer: t.customerAmountMinor, commissionHint, feeHint: t.feeIsEstimated ? s.estimated : undefined,
   };
+}
+
+/** Review / hold markers shown next to the payer (SPEC 5.3). */
+export function TxnFlags({ t }: { t: Transaction }) {
+  return (
+    <>
+      {t.needsReview && <span title={t.reviewReasonAr ?? undefined}><Badge tone="warn">تحتاج مراجعة</Badge></span>}
+      {t.holdStatus && <span title={holdHint[t.holdStatus]}><Badge tone="outline">{holdStatus[t.holdStatus]}</Badge></span>}
+    </>
+  );
 }

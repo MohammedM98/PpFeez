@@ -88,6 +88,9 @@ export const api = {
   txnUnapprove: (id: number, reason: string) => call<Transaction>('txn_unapprove', { id, reason }),
   txnSetExcluded: (id: number, excluded: boolean) => call<Transaction>('txn_set_excluded', { id, excluded }),
   txnSetNote: (id: number, note: string | null) => call<Transaction>('txn_set_note', { id, note }),
+  txnEditDetails: (id: number, input: { payerName?: string; payerEmail?: string; currency?: Currency; grossText?: string; occurredAt?: string }) =>
+    call<Transaction>('txn_edit_details', { id, input }),
+  txnConfirmReview: (id: number) => call<Transaction>('txn_confirm_review', { id }),
   txnBulk: (q: { action: 'assign' | 'approve' | 'unassign' | 'exclude'; ids: number[]; customerId?: number; commission?: CommissionInput }) =>
     call<BulkResult>('txn_bulk', q),
 
@@ -125,6 +128,8 @@ export const api = {
   emailGet: (id: number) => call<RawEmail>('email_get', { id }),
   emailReparse: (ids: number[]) => call<BulkResult>('email_reparse', { ids }),
   emailSetIgnored: (id: number) => call<void>('email_set_ignored', { id }),
+  paypalDomainTrust: (domain: string) => call<{ domain: string; reparsed: BulkResult }>('paypal_domain_trust', { domain }),
+  unknownPaypalDomains: () => call<{ domain: string; count: number }[]>('unknown_paypal_domains'),
 
   // backup
   backupNow: () => call<BackupFile>('backup_now'),

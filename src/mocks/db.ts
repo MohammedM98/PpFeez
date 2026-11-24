@@ -49,6 +49,7 @@ type Seed = {
   id: number; d: number; h?: number; payer: string; email: string; note?: string | null; cur: string; gross: number;
   fee?: number | null; est?: boolean; status?: TxnStatus; cust?: number | null; bps?: number; mode?: CommissionMode; fixed?: number;
   type?: TxnType; related?: string | null; mb?: number; source?: 'email' | 'manual'; pp: string; myNote?: string | null;
+  review?: string; hold?: 'pending_echeck' | 'on_hold';
 };
 
 function mkTxn(s: Seed): TxnRow {
@@ -87,6 +88,9 @@ function mkTxn(s: Seed): TxnRow {
     mailboxId: s.source === 'manual' ? null : (s.mb ?? 1),
     rawEmailId: s.source === 'manual' ? null : 1000 + s.id,
     refundHandled: false,
+    needsReview: !!s.review,
+    reviewReasonAr: s.review ?? null,
+    holdStatus: s.hold ?? null,
   };
 }
 
@@ -124,6 +128,10 @@ export function seed(): Db {
     // refund of approved txn 10 -> alert
     { id: 17, d: 1, h: 8, payer: 'John Doe', email: 'john.doe@gmail.com', note: null, cur: 'USD', gross: -10000, fee: 0, status: 'unassigned', type: 'refund', related: '5TY12345AB678901C', pp: '9RF11111AA222222B' },
     // manual entry
+    // 0.2.1: PayPal Israel mail, a generic-parser result to review, eCheck pending, payment on hold
+    { id: 19, d: 0, h: 11, payer: 'Yossi Cohen', email: 'yossi.cohen@gmail.com', note: 'עבור עיצוב לוגו', cur: 'ILS', gross: 120000, fee: null, pp: '4LK20991BV3318274', review: 'صيغة غير معروفة — راجع المبلغ والعملة والمرسل' },
+    { id: 20, d: 1, h: 15, payer: 'Rachel Levi', email: 'rachel.levi@walla.co.il', note: null, cur: 'USD', gross: 35000, fee: 1250, pp: '6MN44012DE7781925', hold: 'pending_echeck' },
+    { id: 21, d: 3, h: 9, payer: 'Murat Arslan', email: 'murat.arslan@gmail.com', note: 'Web tasarım', cur: 'TRY', gross: 640000, fee: 26880, pp: '2PQ88120RT4419063', hold: 'on_hold' },
     { id: 18, d: 9, h: 13, payer: 'تحويل من بشير', email: '', note: null, cur: 'USD', gross: 15000, fee: 450, status: 'pending_approval', cust: 5, source: 'manual', pp: 'MANUAL-0018', myNote: 'أُدخلت يدوياً من لقطة شاشة' },
   ];
   const txns = T.map(mkTxn);
@@ -158,7 +166,7 @@ export function seed(): Db {
   const emails: RawEmail[] = [];
   for (const t of txns.filter((x) => x.rawEmailId)) {
     emails.push({
-      id: t.rawEmailId!, mailboxLabel: t.mailboxId === 2 ? 'Gmail الاحتياطي' : 'Gmail الرئيسي', fromAddr: 'service@paypal.com',
+      id: t.rawEmailId!, mailboxLabel: t.mailboxId === 2 ? 'Gmail الاحتياطي' : 'Gmail الرئيسي', fromAddr: t.id === 19 || t.id === 20 ? 'service@paypal.co.il' : 'service@paypal.com',
       subject: t.type === 'refund' ? 'You issued a refund' : `You've got money`, receivedAt: t.occurredAt,
       parseStatus: 'parsed', parseReason: null, parseReasonAr: null, transactionId: t.id, parserName: t.type === 'refund' ? 'refund_v1' : 'payment_v2',
       bodyHtml: paypalHtml(t), bodyText: null,
@@ -175,6 +183,8 @@ export function seed(): Db {
     ['service@paypal.com', 'Your monthly account statement is ready', 'not_financial', 'رسالة غير مالية'],
     ['security@paypal.com', 'New login to your account', 'not_financial', 'رسالة غير مالية'],
     ['paypal@mail.paypal-support.net', 'Action required: confirm your account', 'sender_unverified', 'المرسل غير موثَّق (فشل DKIM)'],
+    ['service@paypal.com.eg', 'لقد استلمت دفعة', 'unknown_paypal_domain', 'نطاق PayPal غير معروف'],
+    ['service@paypal.com.eg', 'You received a payment from Omar Nabil', 'unknown_paypal_domain', 'نطاق PayPal غير معروف'],
   ];
   ignored.forEach(([from, subject, reason, reasonAr], i) =>
     emails.push({ id: 3000 + i, mailboxLabel: 'Gmail الرئيسي', fromAddr: from, subject, receivedAt: daysAgo(i + 2, 12), parseStatus: 'ignored', parseReason: reason, parseReasonAr: reasonAr, transactionId: null, parserName: null, bodyText: 'Statement ready.', bodyHtml: null }));
@@ -188,6 +198,8 @@ export function seed(): Db {
       backupDir: 'D:\\Backups\\PpFeez', backupOnClose: true, backupKeep: 30, autoLockMinutes: 15, onboardingDone: true,
       excelExportPath: 'D:\\PpFeez\\PpFeez.xlsx', excelLastExportedAt: daysAgo(1, 22, 40), excelUpdateOnClose: true,
       autoCheckUpdates: true,
+      extraPaypalDomains: [],
+      builtinPaypalDomains: ['paypal.com', 'paypal.co.il', 'paypal.com.tr', 'paypal.co.uk', 'paypal.de', 'paypal.fr', 'paypal.it', 'paypal.es', 'paypal.nl', 'paypal.be', 'paypal.at', 'paypal.ch', 'paypal.pl', 'paypal.se', 'paypal.dk', 'paypal.no', 'paypal.fi', 'paypal.ie', 'paypal.pt', 'paypal.ca', 'paypal.com.au', 'paypal.com.br', 'paypal.com.mx', 'paypal.jp', 'paypal.cn', 'paypal.com.sg', 'paypal.com.hk', 'paypal.ae', 'paypal.in'],
     },
     customers, txns, ledger,
     history: [],

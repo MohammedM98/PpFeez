@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { MenuTrigger, Menu, MenuItem, Popover, type Key } from 'react-aria-components';
-import { FileSpreadsheet, FolderOpen, HardDriveDownload, MoreHorizontal, Plus, RefreshCw } from 'lucide-react';
+import { FileSpreadsheet, FolderOpen, HardDriveDownload, MoreHorizontal, Plus, RefreshCw, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
 import type { BackupFile, Mailbox, Settings as SettingsT, Theme } from '@/lib/contract';
 import { amountTextToMinor2, bpsToPercentText, formatMinor, percentTextToBps } from '@/lib/money';
@@ -58,8 +58,55 @@ function Row({ label, hint, children }: { label: string; hint?: ReactNode; child
 
 const sizeText = (b: number) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`);
 
+// ------------------------------------------------------------------ PayPal domains (SPEC 5.6)
+const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9-]+\.)+[a-z]{2,}$/;
+
+function PaypalDomains({ s }: { s: SettingsT }) {
+  const [text, setText] = useState('');
+  const [error, setError] = useState<string>();
+  const [showBuiltin, setShowBuiltin] = useState(false);
+  const { run, pending } = useAction();
+  const save = (next: string[], msg: string) => run(() => api.updateSettings({ extraPaypalDomains: next }), msg);
+  const add = async () => {
+    const d = text.trim().toLowerCase().replace(/^.*@/, '').replace(/^www\./, '');
+    if (!DOMAIN_RE.test(d)) return setError('اكتب نطاقاً مثل paypal.com.eg');
+    if (s.builtinPaypalDomains.includes(d) || s.extraPaypalDomains.includes(d)) return setError('هذا النطاق موجود');
+    const r = await save([...s.extraPaypalDomains, d], `أُضيف ${d}`);
+    if (r.ok) setText('');
+  };
+  return (
+    <div className="mt-5 border-t border-line pt-5">
+      <div className="text-sm text-fg">نطاقات PayPal الإضافية</div>
+      <p className="mb-3 text-[12.5px] text-fg-3">يقرأ البرنامج رسائل PayPal من نطاقات كل الدول المعروفة. أضف هنا نطاقاً لم يُعرف بعد، فتُقبل رسائله إن كانت موقّعة منه</p>
+      <div className="flex items-start gap-2">
+        <TextField aria-label="نطاق PayPal" ltr value={text} onChange={(v) => { setText(v); setError(undefined); }} placeholder="paypal.com.eg" errorMessage={error} className="w-[280px]"
+          onKeyDown={(e) => { if (e.key === 'Enter') void add(); }} />
+        <Button variant="secondary" onPress={() => void add()} isPending={pending}><Plus />إضافة</Button>
+      </div>
+      {s.extraPaypalDomains.length > 0 && (
+        <ul className="mt-3 flex flex-wrap gap-2" aria-label="النطاقات المضافة">
+          {s.extraPaypalDomains.map((d) => (
+            <li key={d} className="flex h-8 items-center gap-1 rounded-ctl border border-line ps-3 pe-1 text-sm">
+              <bdi dir="ltr">{d}</bdi>
+              <Button size="icon" variant="quiet" className="size-6" aria-label={`حذف ${d}`} onPress={() => void save(s.extraPaypalDomains.filter((x) => x !== d), `حُذف ${d}`)}><X className="size-3.5" /></Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <button className="mt-3 text-[13px] text-fg-3 hover:text-fg-2" onClick={() => setShowBuiltin(!showBuiltin)} aria-expanded={showBuiltin}>
+        {showBuiltin ? 'إخفاء' : 'عرض'} النطاقات المدمجة (<span className="num">{s.builtinPaypalDomains.length}</span>)
+      </button>
+      {showBuiltin && (
+        <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="النطاقات المدمجة">
+          {s.builtinPaypalDomains.map((d) => <li key={d} className="rounded-[6px] bg-raised px-2 py-0.5 text-[12.5px] text-fg-2"><bdi dir="ltr">{d}</bdi></li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ mail
-function MailSection() {
+function MailSection({ s }: { s: SettingsT }) {
   const mailboxes = useQuery({ queryKey: ['mailboxes'], queryFn: api.mailboxList });
   const [editing, setEditing] = useState<Mailbox | 'new' | null>(null);
   const [deleting, setDeleting] = useState<Mailbox | null>(null);
@@ -107,6 +154,7 @@ function MailSection() {
         ))}
         {mailboxes.data?.length === 0 && <li className="py-6 text-center text-sm text-fg-3">لا بريد بعد. أضف Gmail لتسحب منه معاملات PayPal</li>}
       </ul>
+      <PaypalDomains s={s} />
       {editing && <MailboxDialog mailbox={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
       {pwFor && (
         <Dialog isOpen onOpenChange={(o) => !o && setPwFor(null)} title={`كلمة مرور التطبيق لـ ${pwFor.label}`} width="sm"
@@ -341,7 +389,7 @@ export function SettingsPage() {
         </nav>
         {s && (
           <div className="flex flex-col gap-5">
-            <MailSection />
+            <MailSection s={s} />
             <PullsSection />
             <FeesSection key={`${s.defaultCommissionBps}-${s.feeEstimateBps}-${s.feeEstimateFixedMinor}`} s={s} />
             <ExcelSection s={s} />

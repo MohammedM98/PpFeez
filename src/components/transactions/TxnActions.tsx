@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { BulkResult, CommissionInput, CommissionMode, FeeInput, Transaction, TxnAction } from '@/lib/contract';
 import { bpsToPercentText, formatBps, formatMinor, percentTextToBps } from '@/lib/money';
-import { nowLocalMinute } from '@/lib/dates';
+import { formatDateTime, nowLocalMinute } from '@/lib/dates';
 import { useAction } from '@/lib/useAction';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
@@ -23,10 +23,11 @@ export const CURRENCIES = ['USD', 'EUR', 'TRY', 'GBP', 'SAR', 'AED', 'CAD', 'AUD
 export const actionLabel: Record<TxnAction, string> = {
   assign: 'تخصيص لعميل', unassign: 'إلغاء التخصيص', set_fee: 'تعديل الرسوم', set_commission: 'تعديل العمولة',
   approve: 'اعتماد', unapprove: 'إلغاء الاعتماد', exclude: 'استبعاد', include: 'إرجاع', edit_note: 'تعديل الملاحظة',
+  confirm_review: 'تأكيد البيانات', edit_details: 'تعديل البيانات',
 };
 
 type Open =
-  | { kind: 'assign' | 'fee' | 'commission' | 'approve' | 'unapprove' | 'note'; txn: Transaction }
+  | { kind: 'assign' | 'fee' | 'commission' | 'approve' | 'unapprove' | 'note' | 'confirm_review' | 'edit_details'; txn: Transaction }
   | { kind: 'manual'; rawEmailId?: number; prefill?: { payerName?: string; occurredAt?: string } }
   | { kind: 'bulk_assign'; ids: number[] }
   | { kind: 'bulk_approve'; rows: Transaction[] }
@@ -51,6 +52,8 @@ export function TxnActionsHost({ children }: { children: ReactNode }) {
         case 'approve': return setState({ kind: 'approve', txn: t });
         case 'unapprove': return setState({ kind: 'unapprove', txn: t });
         case 'edit_note': return setState({ kind: 'note', txn: t });
+        case 'confirm_review': return setState({ kind: 'confirm_review', txn: t });
+        case 'edit_details': return setState({ kind: 'edit_details', txn: t });
         case 'unassign': return void run(() => api.txnUnassign(t.id), 'أُلغي التخصيص');
         case 'exclude': return void run(() => api.txnSetExcluded(t.id, true), 'استُبعدت المعاملة');
         case 'include': return void run(() => api.txnSetExcluded(t.id, false), 'أُرجعت المعاملة إلى غير المخصّصة');
@@ -72,6 +75,8 @@ export function TxnActionsHost({ children }: { children: ReactNode }) {
       {state?.kind === 'approve' && <ApproveDialog txn={state.txn} onClose={close} />}
       {state?.kind === 'unapprove' && <UnapproveDialog txn={state.txn} onClose={close} />}
       {state?.kind === 'note' && <NoteDialog txn={state.txn} onClose={close} />}
+      {state?.kind === 'confirm_review' && <ConfirmReviewDialog txn={state.txn} onClose={close} onEdit={() => setState({ kind: 'edit_details', txn: state.txn })} />}
+      {state?.kind === 'edit_details' && <EditDetailsDialog txn={state.txn} onClose={close} />}
       {state?.kind === 'manual' && <ManualDialog rawEmailId={state.rawEmailId} prefill={state.prefill} onClose={close} />}
       {state?.kind === 'bulk_approve' && <BulkApproveDialog rows={state.rows} onClose={close} onDone={(res) => reportBulk('الاعتماد', res, state.rows, setState)} />}
       {state?.kind === 'bulk_result' && <BulkResultDialog title={state.title} result={state.result} rows={state.rows} onClose={close} />}
@@ -281,6 +286,64 @@ function UnapproveDialog({ txn, onClose }: { txn: Transaction; onClose: () => vo
 }
 
 // ---------------------------------------------------------------- note
+// ---------------------------------------------------------------- review (SPEC 5.3)
+function ConfirmReviewDialog({ txn, onClose, onEdit }: { txn: Transaction; onClose: () => void; onEdit: () => void }) {
+  const { run, pending } = useAction();
+  return (
+    <ConfirmMoney isOpen onOpenChange={(o) => !o && onClose()} title="تأكيد بيانات المعاملة" amount={txn.grossMinor} currency={txn.currency}
+      confirmLabel="البيانات صحيحة" pending={pending}
+      onConfirm={async () => { const r = await run(() => api.txnConfirmReview(txn.id), 'أُكّدت البيانات'); if (r.ok) onClose(); }}>
+      <div className="flex flex-col gap-3 text-sm text-fg-2">
+        {txn.reviewReasonAr && <p className="rounded-card bg-warn-soft px-3 py-2 text-warn">{txn.reviewReasonAr}</p>}
+        <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-1.5">
+          <dt className="text-fg-3">المرسل</dt><dd><bdi>{txn.payerName ?? '—'}</bdi></dd>
+          <dt className="text-fg-3">الإيميل</dt><dd><bdi dir="ltr">{txn.payerEmail ?? '—'}</bdi></dd>
+          <dt className="text-fg-3">التاريخ</dt><dd><bdi dir="ltr" className="num">{formatDateTime(txn.occurredAt)}</bdi></dd>
+          <dt className="text-fg-3">رقم PayPal</dt><dd><bdi dir="ltr" className="num">{txn.paypalTxnId}</bdi></dd>
+        </dl>
+        <p>قارن المبلغ والعملة والمرسل بالرسالة الأصلية. بعد التأكيد يمكن اعتماد المعاملة.</p>
+        <button className="self-start text-[13px] text-accent-ink hover:underline" onClick={onEdit}>البيانات خاطئة؟ تعديلها</button>
+      </div>
+    </ConfirmMoney>
+  );
+}
+
+function EditDetailsDialog({ txn, onClose }: { txn: Transaction; onClose: () => void }) {
+  const [f, setF] = useState({
+    payerName: txn.payerName ?? '', payerEmail: txn.payerEmail ?? '', currency: txn.currency,
+    grossText: formatMinor(txn.grossMinor, txn.currency).replace(/,/g, ''), occurredAt: formatDateTime(txn.occurredAt),
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const { run, pending } = useAction();
+  const set = (k: keyof typeof f) => (v: string) => { setF((x) => ({ ...x, [k]: v })); setErrors({}); };
+  const currencies = [...new Set([txn.currency, ...CURRENCIES, 'ILS', 'EGP'])];
+  const submit = async () => {
+    const r = await run(() => api.txnEditDetails(txn.id, {
+      payerName: f.payerName.trim(), payerEmail: f.payerEmail.trim(), currency: f.currency, grossText: f.grossText.trim(), occurredAt: f.occurredAt,
+    }), 'حُفظت البيانات', { quiet: (e) => !!e.field });
+    if (r.ok) onClose();
+    else if (r.error.field) setErrors({ [r.error.field === 'gross' ? 'grossText' : r.error.field]: r.error.messageAr });
+  };
+  return (
+    <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="lg" title="تعديل بيانات المعاملة"
+      description={<>كما تظهر في رسالة PayPal الأصلية. رقم المعاملة <bdi dir="ltr" className="num">{txn.paypalTxnId}</bdi> لا يتغيّر</>}
+      footer={<><Button variant="secondary" onPress={onClose}>تراجع</Button><Button variant="primary" onPress={submit} isPending={pending}>حفظ</Button></>}>
+      <div className="grid grid-cols-2 gap-4">
+        <TextField label="المرسل" value={f.payerName} onChange={set('payerName')} autoFocus errorMessage={errors.payerName} />
+        <TextField label="الإيميل" ltr value={f.payerEmail} onChange={set('payerEmail')} errorMessage={errors.payerEmail} />
+        <div className="col-span-2 grid grid-cols-[140px_1fr_1fr] gap-4">
+          <div className="flex flex-col gap-1.5"><span className="text-[13px] text-fg-2">العملة</span>
+            <Select label="العملة" value={f.currency} onChange={(k) => set('currency')(String(k))} options={currencies.map((c) => ({ id: c, label: c }))} />
+            {errors.currency && <span className="text-[12.5px] text-neg">{errors.currency}</span>}</div>
+          <TextField label="المبلغ الأصلي" ltr suffix={f.currency} value={f.grossText} onChange={set('grossText')} errorMessage={errors.grossText} />
+          <DatePicker label="التاريخ والوقت" withTime value={f.occurredAt} onChange={(v) => set('occurredAt')(v ?? '')} />
+        </div>
+        {txn.feeMinor !== null && <p className="col-span-2 text-[12.5px] text-fg-3">بعد تغيير المبلغ راجع الرسوم أيضاً، فالصافي والعمولة يُحسبان منها</p>}
+      </div>
+    </Dialog>
+  );
+}
+
 function NoteDialog({ txn, onClose }: { txn: Transaction; onClose: () => void }) {
   const [note, setNote] = useState(txn.note ?? '');
   const { run, pending } = useAction();

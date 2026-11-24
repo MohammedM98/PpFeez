@@ -70,3 +70,9 @@ export function pullRangeLabel(r: PullRange | undefined | null, short = false): 
     case 'all': return 'كل الرسائل';
   }
 }
+
+export const holdStatus = { pending_echeck: 'eCheck معلّق', on_hold: 'محجوز' } as const;
+export const holdHint = {
+  pending_echeck: 'لا يُعتمد حتى تصل رسالة اكتمال الـ eCheck',
+  on_hold: 'PayPal يحجز هذا المبلغ مؤقتاً',
+} as const;

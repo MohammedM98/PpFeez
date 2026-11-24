@@ -162,3 +162,52 @@ for (const theme of ['dark', 'light'] as const) {
     expect(errors).toEqual([]);
   });
 }
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`0.2.1 review, PayPal domains and empty pull (${theme})`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+
+    // a generic-parser transaction needs review: no approval until the data is confirmed
+    await page.goto(`/?theme=${theme}#/transactions?detail=19`);
+    const panel = page.getByRole('complementary', { name: 'تفاصيل المعاملة' });
+    await expect(panel).toContainText('تحتاج مراجعة قبل الاعتماد');
+    await panel.getByRole('button', { name: 'تعديل البيانات' }).first().click();
+    const edit = page.getByRole('dialog');
+    await edit.getByRole('textbox', { name: 'المبلغ الأصلي' }).fill('1250.00');
+    await edit.getByRole('button', { name: 'حفظ' }).click();
+    await expect(panel).toContainText('1,250.00');
+    await panel.getByRole('button', { name: 'تأكيد البيانات' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'البيانات صحيحة' }).click();
+    await expect(panel).not.toContainText('تحتاج مراجعة قبل الاعتماد');
+    await page.screenshot({ path: `e2e/screenshots/${theme}-12-review-confirmed.png` });
+
+    // trust an unknown PayPal domain from Messages → Ignored; its emails are re-parsed
+    await page.goto(`/?theme=${theme}#/emails?tab=ignored`);
+    await page.reload();
+    await page.getByRole('button', { name: 'الوثوق بهذا النطاق' }).first().click();
+    const trust = page.getByRole('dialog');
+    await expect(trust).toContainText('paypal.com.eg');
+    await expect(trust).toContainText('رسالتان متجاهلتان');
+    await page.screenshot({ path: `e2e/screenshots/${theme}-13-trust-domain.png` });
+    await trust.getByRole('button', { name: 'الوثوق وإعادة التحليل' }).click();
+    await expect(page.getByText('أصبح paypal.com.eg موثوقاً')).toBeVisible();
+
+    // the trusted domain is listed under extra PayPal domains and can be removed
+    await page.getByRole('link', { name: 'الإعدادات' }).click();
+    const extra = page.getByRole('list', { name: 'النطاقات المضافة' });
+    await expect(extra).toContainText('paypal.com.eg');
+    await extra.getByRole('button', { name: 'حذف paypal.com.eg' }).click();
+    await expect(page.getByRole('list', { name: 'النطاقات المضافة' })).toHaveCount(0);
+
+    // a successful pull that finds nothing says so plainly
+    await page.goto(`/?theme=${theme}&pullEmpty=1#/transactions`);
+    await page.reload();
+    await page.getByRole('button', { name: 'سحب المعاملات' }).click();
+    await page.getByRole('dialog').getByText('كل الرسائل').click();
+    await page.getByRole('button', { name: 'بدء السحب' }).click();
+    await expect(page.locator('header').first()).toContainText('لم تُوجد رسائل من PayPal في هذه الفترة', { timeout: 10_000 });
+    await page.screenshot({ path: `e2e/screenshots/${theme}-14-empty-pull.png` });
+    expect(errors).toEqual([]);
+  });
+}

@@ -40,11 +40,12 @@ function customerName(id: number | null) {
 
 function allowedActions(t: TxnRow): TxnAction[] {
   if (t.type !== 'payment') return t.status === 'excluded' ? ['include', 'edit_note'] : ['exclude', 'edit_note'];
+  const review: TxnAction[] = t.needsReview ? ['confirm_review', 'edit_details'] : [];
   switch (t.status) {
-    case 'unassigned': return ['assign', 'set_fee', 'exclude', 'edit_note'];
+    case 'unassigned': return [...review, 'assign', 'set_fee', ...(t.needsReview ? [] : ['edit_details' as const]), 'exclude', 'edit_note'];
     case 'pending_approval': {
-      const a: TxnAction[] = ['set_fee', 'set_commission'];
-      if (t.feeMinor !== null && (t.customerAmountMinor ?? 0) > 0) a.push('approve');
+      const a: TxnAction[] = [...review, 'set_fee', 'set_commission'];
+      if (!t.needsReview && t.holdStatus !== 'pending_echeck' && t.feeMinor !== null && (t.customerAmountMinor ?? 0) > 0) a.push('approve');
       a.push('unassign', 'edit_note');
       return a;
     }
@@ -131,6 +132,7 @@ function matches(t: TxnRow, f: Omit<TxnFilter, 'status'>) {
   if (f.mailboxId && t.mailboxId !== f.mailboxId) return false;
   if (f.customerId && t.customerId !== f.customerId) return false;
   if (f.needsFeeOnly && t.feeMinor !== null) return false;
+  if (f.needsReviewOnly && !t.needsReview) return false;
   if (f.type && t.type !== f.type) return false;
   const day = t.occurredAt.slice(0, 10);
   if (f.period?.from && day < f.period.from) return false;
@@ -169,9 +171,10 @@ function txnList(filter: TxnFilter, sort: TxnSort, page: number, pageSize: numbe
 
 function txnCounts(filter: Omit<TxnFilter, 'status'>): TxnCounts {
   const rows = db.txns.filter((t) => matches(t, filter));
-  const c: TxnCounts = { all: rows.length, unassigned: 0, pending_approval: 0, approved: 0, excluded: 0, needsFee: 0 };
+  const c: TxnCounts = { all: rows.length, unassigned: 0, pending_approval: 0, approved: 0, excluded: 0, needsFee: 0, needsReview: 0 };
   for (const t of rows) {
     c[t.status]++;
+    if (t.needsReview) c.needsReview++;
     if (t.feeMinor === null && t.status !== 'excluded') c.needsFee++;
   }
   return c;
@@ -303,13 +306,53 @@ function refundAlerts(): RefundAlert[] {
   return out;
 }
 
+// ---------- PayPal domains (SPEC 5.6) ----------
+const domainOf = (addr: string) => (addr.split('@')[1] ?? '').toLowerCase();
+
+function unknownDomains() {
+  const m = new Map<string, number>();
+  for (const e of db.emails.filter((x) => x.parseStatus === 'ignored' && x.parseReason === 'unknown_paypal_domain')) {
+    const d = domainOf(e.fromAddr);
+    m.set(d, (m.get(d) ?? 0) + 1);
+  }
+  return [...m.entries()].map(([domain, count]) => ({ domain, count }));
+}
+
+function trusted(domain: string) {
+  return [...db.settings.builtinPaypalDomains, ...db.settings.extraPaypalDomains].some((d) => domain === d || domain.endsWith('.' + d));
+}
+
+/** Re-parse saved emails; an ignored one from a now-trusted domain becomes a transaction to review. */
+function reparse(ids: number[]): BulkResult {
+  const res: BulkResult = { ok: [], failed: [] };
+  for (const id of ids) {
+    const e = db.emails.find((x) => x.id === id);
+    if (!e) { res.failed.push({ id, code: 'not_found', messageAr: 'الرسالة غير موجودة' }); continue; }
+    if (e.parseReason === 'unknown_paypal_domain' && trusted(domainOf(e.fromAddr))) {
+      const tid = Math.max(...db.txns.map((t) => t.id)) + 1;
+      db.txns.push({
+        id: tid, source: 'email', paypalTxnId: `9EG${String(tid).padStart(3, '0')}41KT77210${id % 10}`, relatedTxnId: null, type: 'payment',
+        payerName: e.subject.includes('Omar') ? 'Omar Nabil' : 'Hany Saad', payerEmail: null, payerNote: null, currency: 'EGP', grossMinor: 250000 + (id % 7) * 1000,
+        feeMinor: null, netMinor: null, feeIsEstimated: false, occurredAt: e.receivedAt, status: 'unassigned', customerId: null, commissionMode: null,
+        commissionBps: null, commissionMinor: null, customerAmountMinor: null, assignedAt: null, approvedAt: null, note: null, mailboxId: 1,
+        rawEmailId: e.id, refundHandled: false, needsReview: true, reviewReasonAr: 'صيغة غير معروفة — راجع المبلغ والعملة والمرسل', holdStatus: null,
+      });
+      Object.assign(e, { parseStatus: 'parsed', parseReason: null, parseReasonAr: null, transactionId: tid, parserName: 'generic' });
+      res.ok.push(id);
+    } else {
+      res.failed.push({ id, code: 'validation', messageAr: e.parseReason === 'unknown_paypal_domain' ? 'النطاق غير موثوق بعد' : 'ما زال القالب غير معروف' });
+    }
+  }
+  return res;
+}
+
 // ---------- dashboard ----------
 function dashboard(period: Period): DashboardSummary {
   const inP = (d: string) => (!period.from || d >= period.from) && (!period.to || d <= period.to);
   const curs = [...new Set(db.txns.map((t) => t.currency))].sort();
   const counts = txnCounts({});
   return {
-    counts: { unassigned: counts.unassigned, needsFee: counts.needsFee, pendingApproval: counts.pending_approval, refundAlerts: refundAlerts().length },
+    counts: { unassigned: counts.unassigned, needsFee: counts.needsFee, pendingApproval: counts.pending_approval, refundAlerts: refundAlerts().length, needsReview: counts.needsReview, unknownPaypalDomains: unknownDomains().reduce((n, d) => n + d.count, 0) },
     byCurrency: curs.map((currency) => {
       const pay = db.txns.filter((t) => t.currency === currency && t.type === 'payment' && t.status !== 'excluded' && inP(t.occurredAt.slice(0, 10)));
       return {
@@ -351,7 +394,8 @@ function pullStart(mailboxId: number, range: PullRange = { kind: 'new' }): PullR
   if (!mb.hasPassword) fail('imap_auth', 'لا توجد كلمة مرور تطبيق لهذا البريد');
   // a wider range reads more mail; the numbers are only there to make the progress bar believable
   const total = range.kind === 'all' ? 64 : range.kind === 'last_days' ? Math.min(60, 8 + Math.ceil(range.days / 3)) : range.kind === 'between' ? 32 : 24;
-  const run: PullRun = { id: ++db.seq, mailboxId, mailboxLabel: mb.label, status: 'running', range, totalCount: total - (total % 4), fetchedCount: 0, newTransactionsCount: 0, duplicateCount: 0, ignoredCount: 0, failedCount: 0, error: null, startedAt: nowIso(), finishedAt: null };
+  const empty = new URLSearchParams(location.search).get('pullEmpty') === '1';
+  const run: PullRun = { id: ++db.seq, mailboxId, mailboxLabel: mb.label, status: 'running', range, totalCount: empty ? 0 : total - (total % 4), fetchedCount: 0, newTransactionsCount: 0, duplicateCount: 0, ignoredCount: 0, failedCount: 0, error: null, startedAt: nowIso(), finishedAt: null };
   db.pullRuns.unshift(run);
   const timer = setInterval(() => {
     run.fetchedCount = Math.min(run.totalCount, run.fetchedCount + 4);
@@ -372,6 +416,13 @@ function pullStart(mailboxId: number, range: PullRange = { kind: 'new' }): PullR
   }, 700);
   runningPull = { run, timer };
   setTimeout(() => void emit('pull://progress', { ...run }), 50);
+  if (empty) {
+    clearInterval(timer);
+    setTimeout(() => {
+      run.status = 'done'; run.finishedAt = nowIso(); mb.lastPulledAt = run.finishedAt; runningPull = null;
+      void emit('pull://finished', { ...run });
+    }, 600);
+  }
   return { ...run };
 }
 
@@ -384,7 +435,7 @@ function addPulledTxns(n: number, mailboxId: number) {
       id, source: 'email', paypalTxnId: `${Math.random().toString(36).slice(2, 10).toUpperCase()}${id}PULL`, relatedTxnId: null, type: 'payment',
       payerName: payer, payerEmail: email, payerNote: null, currency: cur, grossMinor: gross, feeMinor: null, netMinor: null, feeIsEstimated: false,
       occurredAt: nowIso(), status: 'unassigned', customerId: null, commissionMode: null, commissionBps: null, commissionMinor: null, customerAmountMinor: null,
-      assignedAt: null, approvedAt: null, note: null, mailboxId, rawEmailId: null, refundHandled: false,
+      assignedAt: null, approvedAt: null, note: null, mailboxId, rawEmailId: null, refundHandled: false, needsReview: false, reviewReasonAr: null, holdStatus: null,
     });
   }
 }
@@ -492,7 +543,7 @@ export function handle(cmd: string, a: Args = {}): unknown {
         id, source: 'manual', paypalTxnId: pp, relatedTxnId: null, type: 'payment', payerName: i.payerName || null, payerEmail: i.payerEmail || null, payerNote: i.payerNote || null,
         currency: i.currency, grossMinor: gross, feeMinor: fee, netMinor: fee === null ? null : gross - fee, feeIsEstimated: false,
         occurredAt: new Date(`${m![1]}T${m![2]}:${m![3]}:00`).toISOString(), status: 'unassigned', customerId: null, commissionMode: null, commissionBps: null,
-        commissionMinor: null, customerAmountMinor: null, assignedAt: null, approvedAt: null, note: i.note || null, mailboxId: null, rawEmailId: i.rawEmailId ?? null, refundHandled: false,
+        commissionMinor: null, customerAmountMinor: null, assignedAt: null, approvedAt: null, note: i.note || null, mailboxId: null, rawEmailId: i.rawEmailId ?? null, refundHandled: false, needsReview: false, reviewReasonAr: null, holdStatus: null,
       };
       db.txns.push(t);
       log(t, 'created', 'أُضيفت يدوياً');
@@ -532,6 +583,30 @@ export function handle(cmd: string, a: Args = {}): unknown {
       if (!a.excluded && t.status !== 'excluded') fail('invalid_transition', 'المعاملة ليست مستبعدة');
       t.status = a.excluded ? 'excluded' : 'unassigned';
       log(t, a.excluded ? 'excluded' : 'included', a.excluded ? 'استُبعدت' : 'أُرجعت');
+      return view(t);
+    }
+    case 'txn_confirm_review': {
+      const t = getTxn(a.id);
+      if (!t.needsReview) fail('invalid_transition', 'المعاملة لا تحتاج مراجعة');
+      t.needsReview = false; t.reviewReasonAr = null;
+      log(t, 'review_confirmed', 'أُكّدت البيانات بعد المراجعة');
+      return view(t);
+    }
+    case 'txn_edit_details': {
+      const t = getTxn(a.id);
+      if (!(t.needsReview || t.status === 'unassigned')) fail('invalid_transition', 'التعديل متاح لغير المخصّصة أو التي تحتاج مراجعة');
+      const i = a.input as { payerName?: string; payerEmail?: string; currency?: string; grossText?: string; occurredAt?: string };
+      if (i.currency !== undefined && !/^[A-Z]{3}$/.test(i.currency)) fail('validation', 'رمز العملة ثلاثة أحرف لاتينية', 'currency');
+      if (i.currency) t.currency = i.currency;
+      if (i.grossText !== undefined) t.grossMinor = parseAmount(i.grossText, t.currency, 'grossText');
+      if (i.occurredAt) {
+        const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})$/.exec(i.occurredAt) ?? fail('validation', 'التاريخ غير صالح', 'occurredAt');
+        t.occurredAt = new Date(`${m[1]}T${m[2]}:${m[3]}:00`).toISOString();
+      }
+      if (i.payerName !== undefined) t.payerName = i.payerName || null;
+      if (i.payerEmail !== undefined) t.payerEmail = i.payerEmail || null;
+      recompute(t);
+      log(t, 'details_edited', 'عُدّلت بيانات المعاملة');
       return view(t);
     }
     case 'txn_set_note': { const t = getTxn(a.id); t.note = a.note; log(t, 'note', 'عُدّلت الملاحظة'); return view(t); }
@@ -642,10 +717,14 @@ export function handle(cmd: string, a: Args = {}): unknown {
       return { items, total: rows.length, page, pageSize } satisfies Page<RawEmailSummary>;
     }
     case 'email_get': return db.emails.find((e) => e.id === a.id) ?? fail('not_found', 'الرسالة غير موجودة');
-    case 'email_reparse': {
-      const res: BulkResult = { ok: [], failed: [] };
-      for (const id of a.ids as number[]) res.failed.push({ id, code: 'validation', messageAr: 'ما زال القالب غير معروف' });
-      return res;
+    case 'email_reparse': return reparse(a.ids as number[]);
+    case 'unknown_paypal_domains': return unknownDomains();
+    case 'paypal_domain_trust': {
+      const domain = String(a.domain ?? '').trim().toLowerCase();
+      if (!/^paypal\.[a-z.]{2,}$/.test(domain)) fail('validation', 'نطاق غير صالح', 'domain');
+      if (!db.settings.extraPaypalDomains.includes(domain)) db.settings.extraPaypalDomains.push(domain);
+      const ids = db.emails.filter((e) => e.parseReason === 'unknown_paypal_domain' && domainOf(e.fromAddr).endsWith(domain)).map((e) => e.id);
+      return { domain, reparsed: reparse(ids) };
     }
     case 'email_set_ignored': { const e = db.emails.find((x) => x.id === a.id)!; e.parseStatus = 'ignored'; e.parseReasonAr = 'تجاهلها المدير'; e.parseReason = 'manual'; return null; }
 

@@ -4,7 +4,7 @@ import { MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
 import { FileText, MoreHorizontal, Pencil, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Transaction, TxnAction } from '@/lib/contract';
-import { txn as s, txnType } from '@/lib/strings';
+import { holdHint, holdStatus, txn as s, txnType } from '@/lib/strings';
 import { formatBps } from '@/lib/money';
 import { Button } from '@/components/ui/Button';
 import { Amount } from '@/components/ui/Amount';
@@ -14,7 +14,7 @@ import { EmailViewer } from '@/components/emails/EmailViewer';
 import { Breakdown, StatusBadge, fromTxn } from './bits';
 import { actionLabel, useTxnActions } from './TxnActions';
 
-const PRIMARY: TxnAction[] = ['approve', 'assign', 'set_fee', 'include'];
+const PRIMARY: TxnAction[] = ['confirm_review', 'approve', 'assign', 'set_fee', 'include'];
 
 export function commissionHint(t: Transaction) {
   return t.commissionMode === 'percent' && t.commissionBps !== null ? formatBps(t.commissionBps) : t.commissionMode === 'fixed' ? 'ثابتة' : undefined;
@@ -34,7 +34,7 @@ export function DetailPanel({ id, onClose }: { id: number; onClose: () => void }
 
   if (!t) return null;
   const primary = PRIMARY.find((a) => t.allowedActions.includes(a));
-  const rest = t.allowedActions.filter((a) => a !== primary && a !== 'edit_note');
+  const rest = t.allowedActions.filter((a) => a !== primary && a !== 'edit_note' && !(t.needsReview && a === 'edit_details'));
 
   return (
     <aside className="fixed inset-y-3 left-3 z-30 flex w-[392px] flex-col overflow-hidden rounded-panel border border-line bg-surface shadow-(--shadow-float)" aria-label="تفاصيل المعاملة">
@@ -52,6 +52,22 @@ export function DetailPanel({ id, onClose }: { id: number; onClose: () => void }
       </header>
 
       <div className="flex-1 space-y-5 overflow-auto p-5">
+        {t.needsReview && (
+          <div className="rounded-card bg-warn-soft px-4 py-3 text-sm">
+            <div className="font-medium text-warn">تحتاج مراجعة قبل الاعتماد</div>
+            {t.reviewReasonAr && <div className="mt-0.5 text-fg-2">{t.reviewReasonAr}</div>}
+            <div className="mt-2 flex gap-2">
+              <Button size="sm" variant="secondary" onPress={() => actions.act('edit_details', t)}>تعديل البيانات</Button>
+              {t.rawEmailId && <Button size="sm" variant="quiet" onPress={() => setEmailOpen(true)}>مقارنة بالرسالة</Button>}
+            </div>
+          </div>
+        )}
+        {t.holdStatus && (
+          <div className="rounded-card border border-line px-4 py-3 text-sm">
+            <div className="font-medium text-fg">{holdStatus[t.holdStatus]}</div>
+            <div className="text-fg-3">{holdHint[t.holdStatus]}</div>
+          </div>
+        )}
         {t.refundedBy.length > 0 && (
           <div className="rounded-card bg-neg-soft px-4 py-3 text-sm text-neg">
             {s.refunded}: {t.refundedBy.map((r) => <span key={r.id}>{' '}<Amount minor={r.grossMinor} currency={t.currency} /></span>)}

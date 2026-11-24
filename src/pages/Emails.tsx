@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, MenuTrigger, Menu, MenuItem, Popover, type Selection, type Key } from 'react-aria-components';
 import { ChevronLeft, ChevronRight, MoreHorizontal, RefreshCw } from 'lucide-react';
@@ -20,11 +20,19 @@ import { EmailViewer } from '@/components/emails/EmailViewer';
 import { useTxnActions } from '@/components/transactions/TxnActions';
 
 const TABS: ParseStatus[] = ['failed', 'ignored', 'parsed'];
+
+/** Arabic counted noun: واحدة / dual / 3–10 plural / 11+ singular. */
+function ignoredCountAr(n: number) {
+  if (n === 1) return 'رسالة متجاهلة واحدة';
+  if (n === 2) return 'رسالتان متجاهلتان';
+  return n <= 10 ? `${n} رسائل متجاهلة` : `${n} رسالة متجاهلة`;
+}
 const PAGE_SIZE = 50;
 
 export function EmailsPage() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<ParseStatus>('failed');
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState<ParseStatus>((params.get('tab') as ParseStatus) || 'failed');
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
@@ -49,6 +57,27 @@ export function EmailsPage() {
   const ids = selected === 'all' ? items.map((e) => e.id) : [...selected].map(Number);
   const pages = Math.max(1, Math.ceil((list.data?.total ?? 0) / PAGE_SIZE));
 
+  const unknown = useQuery({ queryKey: ['unknown_paypal_domains'], queryFn: api.unknownPaypalDomains });
+  // Only the sender host is stored: table rows are memoised, so the domain and its count are
+  // resolved against the latest unknown_paypal_domains list when the dialog renders.
+  const [trustHost, setTrustHost] = useState<string | null>(null);
+  const domainFor = (e: RawEmailSummary) => (e.fromAddr.split('@')[1] ?? e.fromAddr).toLowerCase();
+  const setTrusting = setTrustHost;
+  const trusting = (() => {
+    if (!trustHost) return null;
+    const hit = unknown.data?.find((d) => trustHost === d.domain || trustHost.endsWith('.' + d.domain));
+    return hit ?? { domain: trustHost, count: 0 };
+  })();
+  const trust = async () => {
+    if (!trusting) return;
+    const r = await run(() => api.paypalDomainTrust(trusting.domain));
+    if (!r.ok) return;
+    setTrusting(null);
+    const { ok, failed } = r.value.reparsed;
+    if (failed.length === 0) toast.ok(`أصبح ${r.value.domain} موثوقاً`, `أُعيد تحليل ${ok.length} ${ok.length === 1 ? 'رسالة' : 'رسائل'} بنجاح. راجع المعاملات الجديدة`);
+    else setReport(r.value.reparsed);
+  };
+
   const reparse = async (list: number[]) => {
     const r = await run(() => api.emailReparse(list));
     if (!r.ok) return;
@@ -67,6 +96,7 @@ export function EmailsPage() {
     if (k === 'create') createTxn(e);
     if (k === 'ignore') ignore(e);
     if (k === 'txn') navigate(`/transactions?detail=${e.transactionId}`);
+    if (k === 'trust') setTrusting(domainFor(e));
   };
 
   return (
@@ -89,7 +119,7 @@ export function EmailsPage() {
 
       <div className="mb-4 flex items-center gap-2">
         <SearchField label="بحث بالموضوع أو المرسل" value={search} onChange={setSearch} className="w-[320px]" />
-        {tab === 'failed' && (
+        {tab !== 'parsed' && (
           <Button variant="secondary" className="ms-auto" isPending={pending} isDisabled={items.length === 0} onPress={() => reparse(ids.length ? ids : items.map((e) => e.id))}>
             <RefreshCw />{ids.length ? `إعادة تحليل المحدّد (${ids.length})` : 'إعادة تحليل الكل'}
           </Button>
@@ -97,7 +127,7 @@ export function EmailsPage() {
       </div>
 
       <div className="overflow-hidden rounded-card border border-line bg-surface">
-        <Table aria-label="الرسائل" selectionMode={tab === 'failed' ? 'multiple' : 'none'} selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
+        <Table aria-label="الرسائل" selectionMode={tab !== 'parsed' ? 'multiple' : 'none'} selectionBehavior="toggle" selectedKeys={selected} onSelectionChange={setSelected}
           onRowAction={(k) => { const e = items.find((x) => x.id === Number(k)); if (e) setViewing(e); }}>
           <TableHeader>
             <Column isRowHeader>التاريخ</Column>
@@ -118,7 +148,12 @@ export function EmailsPage() {
                 <Cell className="max-w-[260px]">
                   {tab === 'parsed'
                     ? <span className="text-[13px] text-fg-3">{e.transactionId ? 'أنشأت معاملة' : '—'}</span>
-                    : <span className={cx('text-[13px]', tab === 'failed' ? 'text-warn' : 'text-fg-2')}>{e.parseReasonAr ?? e.parseReason ?? '—'}</span>}
+                    : e.parseReason === 'unknown_paypal_domain'
+                      ? <span className="flex items-center gap-2 text-[13px] text-warn">
+                          <span className="whitespace-nowrap">{e.parseReasonAr ?? 'نطاق PayPal غير معروف'}</span>
+                          <Button size="sm" variant="secondary" className="h-7" onPress={() => setTrusting(domainFor(e))}>الوثوق بهذا النطاق</Button>
+                        </span>
+                      : <span className={cx('text-[13px]', tab === 'failed' ? 'text-warn' : 'text-fg-2')}>{e.parseReasonAr ?? e.parseReason ?? '—'}</span>}
                 </Cell>
                 <Cell className="whitespace-nowrap text-[13px] text-fg-3">{e.mailboxLabel}</Cell>
                 <Cell className="w-12 pe-2">
@@ -130,6 +165,7 @@ export function EmailsPage() {
                         {e.transactionId !== null && <MenuItem id="txn" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">فتح المعاملة</MenuItem>}
                         {e.parseStatus !== 'parsed' && <MenuItem id="reparse" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">إعادة التحليل</MenuItem>}
                         {e.transactionId === null && <MenuItem id="create" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">إنشاء معاملة يدوياً منها</MenuItem>}
+                        {e.parseReason === 'unknown_paypal_domain' && <MenuItem id="trust" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">الوثوق بهذا النطاق</MenuItem>}
                         {e.parseStatus === 'failed' && <MenuItem id="ignore" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">تجاهل</MenuItem>}
                       </Menu>
                     </Popover>
@@ -152,10 +188,28 @@ export function EmailsPage() {
       {viewing && (
         <EmailViewer id={viewing.id} onClose={() => setViewing(null)} actions={viewing.transactionId === null && (
           <span className="me-auto flex gap-2">
-            <Button variant="primary" onPress={() => createTxn(viewing)}>إنشاء معاملة يدوياً منها</Button>
+            {viewing.parseReason === 'unknown_paypal_domain'
+              ? <Button variant="primary" onPress={() => { setViewing(null); setTrusting(domainFor(viewing)); }}>الوثوق بهذا النطاق</Button>
+              : <Button variant="primary" onPress={() => createTxn(viewing)}>إنشاء معاملة يدوياً منها</Button>}
             {viewing.parseStatus === 'failed' && <Button variant="quiet" onPress={() => ignore(viewing)}>تجاهل</Button>}
           </span>
         )} />
+      )}
+      {trusting && (
+        <Dialog isOpen onOpenChange={(o) => !o && setTrusting(null)} title="الوثوق بنطاق PayPal" width="md"
+          footer={<>
+            <Button variant="secondary" onPress={() => setTrusting(null)}>تراجع</Button>
+            <Button variant="primary" isPending={pending} onPress={trust}>الوثوق وإعادة التحليل</Button>
+          </>}>
+          <div className="flex flex-col gap-3 text-sm text-fg-2">
+            <div className="rounded-card bg-raised/60 px-4 py-4 text-center">
+              <bdi dir="ltr" className="text-[22px] font-medium text-fg">{trusting.domain}</bdi>
+              {trusting.count > 0 && <div className="mt-1 text-[13px] text-fg-3">{ignoredCountAr(trusting.count)} من هذا النطاق</div>}
+            </div>
+            <p>رسائله موقّعة توقيعاً صحيحاً لكنه ليس في قائمة نطاقات PayPal المعروفة. ثق به فقط إن كان نطاق PayPal في بلدك أو بلد من يرسل لك.</p>
+            <p>يُضاف إلى «نطاقات PayPal الإضافية» في الإعدادات، وتُعاد قراءة رسائله المتجاهلة. يمكنك حذفه من هناك لاحقاً.</p>
+          </div>
+        </Dialog>
       )}
       {report && (
         <Dialog isOpen onOpenChange={(o) => !o && setReport(null)} title={`إعادة التحليل: نجح ${report.ok.length}، فشل ${report.failed.length}`} width="md"

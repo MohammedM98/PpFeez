@@ -20,7 +20,7 @@ import { DateRangePicker } from '@/components/ui/DateFields';
 import { Table, TableHeader, Column, TableBody, Row, Cell } from '@/components/ui/Table';
 import { cx } from '@/components/ui/cx';
 import { Trunc } from '@/components/ui/Trunc';
-import { FeeCell, StatusBadge } from './bits';
+import { FeeCell, StatusBadge, TxnFlags } from './bits';
 import { DetailPanel } from './DetailPanel';
 import { actionLabel, useTxnActions } from './TxnActions';
 
@@ -48,6 +48,7 @@ export function TransactionsView({ customerId, exportSlot }: { customerId?: numb
   const [preset, setPreset] = useState<PeriodPreset>('all');
   const [custom, setCustom] = useState<Period>({});
   const [needsFeeOnly, setNeedsFeeOnly] = useState(params.get('needsFee') === '1');
+  const [needsReviewOnly, setNeedsReviewOnly] = useState(params.get('needsReview') === '1');
   const [sort, setSort] = useState<SortDescriptor>({ column: 'occurredAt', direction: 'descending' });
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Selection>(new Set());
@@ -56,10 +57,11 @@ export function TransactionsView({ customerId, exportSlot }: { customerId?: numb
   const { run } = useAction();
 
   // Follow links that change the query while this page stays mounted (dashboard cards, deep links).
-  const pDetail = params.get('detail'), pTab = params.get('tab'), pNeedsFee = params.get('needsFee');
+  const pDetail = params.get('detail'), pTab = params.get('tab'), pNeedsFee = params.get('needsFee'), pNeedsReview = params.get('needsReview');
   useEffect(() => { if (!embedded) setDetailId(pDetail ? Number(pDetail) : null); }, [pDetail, embedded]);
   useEffect(() => { if (!embedded && pTab) setTab(pTab as TxnStatus); }, [pTab, embedded]);
   useEffect(() => { if (!embedded && pNeedsFee) setNeedsFeeOnly(pNeedsFee === '1'); }, [pNeedsFee, embedded]);
+  useEffect(() => { if (!embedded && pNeedsReview) setNeedsReviewOnly(pNeedsReview === '1'); }, [pNeedsReview, embedded]);
 
   const q = useDebounced(search);
   const period = preset === 'custom' ? custom : presetPeriod(preset);
@@ -70,7 +72,8 @@ export function TransactionsView({ customerId, exportSlot }: { customerId?: numb
     customerId: customerId ?? (customer === 'all' ? undefined : Number(customer)),
     period: period.from || period.to ? period : undefined,
     needsFeeOnly: needsFeeOnly || undefined,
-  }), [q, currency, mailboxId, customer, customerId, period.from, period.to, needsFeeOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+    needsReviewOnly: needsReviewOnly || undefined,
+  }), [q, currency, mailboxId, customer, customerId, period.from, period.to, needsFeeOnly, needsReviewOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { setPage(1); setSelected(new Set()); }, [filter, tab, sort]);
 
@@ -138,7 +141,12 @@ export function TransactionsView({ customerId, exportSlot }: { customerId?: numb
         <Select label="الفترة" value={preset} onChange={(k) => setPreset(k as PeriodPreset)} className="w-[130px]"
           options={(Object.keys(periodLabels) as PeriodPreset[]).map((k) => ({ id: k, label: periodLabels[k] }))} />
         {preset === 'custom' && <DateRangePicker label="الفترة المخصّصة" value={custom} onChange={setCustom} className="w-[250px]" />}
-        <div className="ms-1"><Checkbox isSelected={needsFeeOnly} onChange={setNeedsFeeOnly}>{s.needsFeeOnly}<span className="num text-fg-3">{counts.data?.needsFee}</span></Checkbox></div>
+        <div className="ms-1 flex gap-4">
+          <Checkbox isSelected={needsFeeOnly} onChange={setNeedsFeeOnly}>{s.needsFeeOnly}<span className="num text-fg-3">{counts.data?.needsFee}</span></Checkbox>
+          {(!!counts.data?.needsReview || needsReviewOnly) && (
+            <Checkbox isSelected={needsReviewOnly} onChange={setNeedsReviewOnly}>تحتاج مراجعة<span className="num text-warn">{counts.data?.needsReview}</span></Checkbox>
+          )}
+        </div>
         {exportSlot && createPortal(
           <Button variant="secondary" onPress={exportExcel} isDisabled={!list.data?.total}><FileSpreadsheet />تصدير إلى Excel</Button>, exportSlot)}
       </div>
@@ -187,6 +195,7 @@ export function TransactionsView({ customerId, exportSlot }: { customerId?: numb
                       <Trunc className="min-w-0">{t.payerName ?? '—'}</Trunc>
                       {t.type !== 'payment' && <Badge tone="neg">{txnType[t.type]}</Badge>}
                       {t.source === 'manual' && <Badge tone="outline">يدوية</Badge>}
+                      <TxnFlags t={t} />
                     </div>
                     {t.refundedBy.length
                       ? <div className="text-[12px] leading-tight text-neg">{s.refunded}</div>

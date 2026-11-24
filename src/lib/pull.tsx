@@ -20,7 +20,8 @@ export function PullProvider({ children }: { children: ReactNode }) {
       events.onPullProgress((r) => setRun(r)),
       events.onPullFinished((r) => {
         setRun(null);
-        if (r.status === 'done') toast.ok(`انتهى السحب من ${r.mailboxLabel} (${pullRangeLabel(r.range)})`, `${r.newTransactionsCount} معاملة جديدة، ${r.duplicateCount} مكررة، ${r.ignoredCount} متجاهلة، ${r.failedCount} فاشلة`);
+        if (r.status === 'done' && r.totalCount === 0) toast.error(`لم تُوجد رسائل من PayPal في ${r.mailboxLabel}`, `النطاق: ${pullRangeLabel(r.range)}. جرّب «كل الرسائل»، أو أضف نطاق PayPal بلدك من الإعدادات`);
+        else if (r.status === 'done') toast.ok(`انتهى السحب من ${r.mailboxLabel} (${pullRangeLabel(r.range)})`, `${r.newTransactionsCount} معاملة جديدة، ${r.duplicateCount} مكررة، ${r.ignoredCount} متجاهلة، ${r.failedCount} فاشلة`);
         else if (r.status === 'cancelled') toast.ok('أُلغي السحب', `قُرئت ${r.fetchedCount} من ${r.totalCount}`);
         else toast.error('فشل السحب', r.error ?? undefined);
         void qc.invalidateQueries();
