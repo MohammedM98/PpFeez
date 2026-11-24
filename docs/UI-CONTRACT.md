@@ -64,9 +64,15 @@ export type AppStatus = {
   dataDir: string;
   lockedUntil?: IsoDate;    // بعد 5 محاولات خاطئة
 };
-export type Theme = 'dark' | 'light' | 'system';
+export type Theme = 'dark' | 'light' | 'system' | 'high_contrast';
+export type Accent = 'blue' | 'emerald' | 'violet' | 'amber' | 'rose' | 'slate';   // SPEC §6.10
+export type Density = 'comfortable' | 'regular' | 'compact';
 export type Settings = {
   theme: Theme;
+  accent: Accent;                     // SPEC §6.10، افتراضي 'blue'
+  density: Density;                   // افتراضي 'regular'
+  uiScale: number;                    // 90..150، افتراضي 100
+  uiPrefs: string;                    // JSON تملكه الواجهة وحدها (أعمدة الجداول، طرق العرض المحفوظة، الشريط الجانبي...)؛ القلب يخزنه كما هو (حد 256KB)
   defaultCommissionBps: number;
   feeEstimateEnabled: boolean;
   feeEstimateBps: number;
@@ -222,7 +228,7 @@ export type TxnPreview = {        // معاينة بلا حفظ
 };
 export type HistoryItem = { id: number; action: string; labelAr: string; details: Record<string, unknown>; createdAt: IsoDate };
 
-// txn_list({ filter: TxnFilter, sort: TxnSort, page: number, pageSize: number }): TxnListResult
+// txn_list({ filter: TxnFilter, sort: TxnSort, page: number, pageSize: number }): TxnListResult   // pageSize حتى 500 (للتمرير الافتراضي)
 //   الوارد (SPEC §6.3): filter.status = 'unassigned' | 'excluded' بلا customerId. صفحة العميل: customerId + status = 'pending_approval' | 'approved'.
 export type TxnLocation =
   | { kind: 'inbox' } | { kind: 'excluded' }
