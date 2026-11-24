@@ -176,6 +176,9 @@ fn draft_then_sent_then_cancelled() {
     assert_eq!(s.h.balance(s.cid, "USD"), before, "a draft does not touch the balance");
     let t = s.h.core.txn_get(s.t[3].id).unwrap();
     assert_eq!(t.payout.as_ref().map(|p| p.status.as_str()), Some("draft"));
+    let sum = s.h.core.customer_summary(s.cid, "USD").unwrap();
+    assert_eq!((sum.not_paid_count, sum.paid_count), (4, 0), "a draft only reserves: still not paid");
+    assert_eq!(sum.not_paid_count + sum.paid_count, sum.txn_count);
     assert_eq!(code(s.h.core.txn_unapprove(s.t[3].id, "x")), ErrorCode::InvalidTransition);
 
     let p = s.h.core.payout_mark_sent(p.id, Some("2026-11-25")).unwrap();

@@ -817,7 +817,8 @@ impl Core {
                 |r| r.get(0),
             )?)
         };
-        let any_payout = in_payout("p.status <> 'cancelled'")?;
+        // A draft payout only reserves its transfers: they stay "not paid" until it is sent, so
+        // paid + not paid = transfers (as in the owner's "تم الإرسال؟ نعم/لا" column).
         let paid = in_payout("p.status = 'sent'")?;
         let returns: i64 = conn.query_row(
             "SELECT COALESCE(SUM(e.amount_minor),0) FROM ledger_entries e
@@ -842,7 +843,7 @@ impl Core {
             net_completed_minor: cust + returns,
             sent_minor: -payouts_net,
             remaining_minor: balance,
-            not_paid_count: count - any_payout,
+            not_paid_count: count - paid,
             gross_before_commission_minor: net,
             commission_minor: commission,
             txn_count: count,

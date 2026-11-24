@@ -117,7 +117,15 @@ fn header_block(customer: &str, currency: &str, today: NaiveDate) -> Vec<RowB> {
             money,
         ),
         ("المتبقي", format!("SUM({})-SUM({})", col("له"), col("عليه")), money),
-        ("غير مدفوع", format!("COUNTIFS({},\"T:*\",{},\"لا\")", col("مفتاح"), col("تم الإرسال؟")), St::Int),
+        (
+            "غير مدفوع",
+            format!(
+                "COUNTIFS({k},\"T:*\")-COUNTIFS({k},\"T:*\",{s},\"نعم*\")",
+                k = col("مفتاح"),
+                s = col("تم الإرسال؟")
+            ),
+            St::Int,
+        ),
         ("المبلغ قبل العمولة", format!("SUMIFS({},{},\"T:*\")", col("الصافي من PayPal"), col("مفتاح")), money),
         ("إجمالي العمولة", format!("SUMIFS({},{},\"T:*\")", col("قيمة العمولة"), col("مفتاح")), money),
         ("عدد المعاملات", format!("COUNTIFS({},\"T:*\")", col("مفتاح")), St::Int),

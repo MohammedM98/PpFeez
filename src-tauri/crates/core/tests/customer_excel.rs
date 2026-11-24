@@ -88,7 +88,9 @@ fn create_add_and_the_spec_example() {
     assert_eq!(head_row.iter().map(s).collect::<Vec<_>>(), HEADERS.map(str::to_string).to_vec(), "column order");
     let f = formulas(&path, "كشف USD");
     assert!(f.iter().any(|x| x.contains("SUMIFS(Statement_USD[له],Statement_USD[مفتاح],\"T:*\")")), "{f:?}");
-    assert!(f.iter().any(|x| x.contains("COUNTIFS(Statement_USD[مفتاح],\"T:*\",Statement_USD[تم الإرسال؟],\"لا\")")));
+    assert!(f.iter().any(|x| x.contains(
+        "COUNTIFS(Statement_USD[مفتاح],\"T:*\")-COUNTIFS(Statement_USD[مفتاح],\"T:*\",Statement_USD[تم الإرسال؟],\"نعم*\")"
+    )));
     assert!(String::from_utf8_lossy(&parts(&path)["docProps/custom.xml"]).contains("PpFeezCustomerId"));
 
     // The transfer, then a payout of 50.00: running balance 71.25 → 21.25.
