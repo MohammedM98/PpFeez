@@ -482,3 +482,43 @@ fn upgrade_from_0_5_0_tracking() {
     assert_eq!((link.exported_count, link.pending_count, link.not_exported_count), (2, 0, 0));
     assert_eq!(h.core.txn_get(1).unwrap().excel_status, ExcelStatus::Exported);
 }
+
+#[test]
+fn a_manual_add_is_written_in_statement_order_not_selection_order() {
+    use ppfeez_core::excel::customer::{ItemKind, ItemRef};
+    let h = harness();
+    let c = h.customer("Ali", 2500);
+    let t1 = approve(&h, c.id, "10");
+    let t2 = approve(&h, c.id, "20");
+    let u = h
+        .core
+        .ledger_add_payout(
+            c.id,
+            PayoutInput {
+                currency: "USD".into(),
+                amount_text: "5".into(),
+                entry_date: "2026-11-23".into(),
+                method: PayoutMethod::Usdt,
+                platform: None,
+                network: None,
+                destination: None,
+                reference: None,
+                description: None,
+                confirm_overdraw: None,
+            },
+        )
+        .unwrap();
+    let t3 = approve(&h, c.id, "30");
+    let path = h.dir.path().join("ali.xlsx");
+    h.core.customer_excel_create(c.id, &path.display().to_string(), false).unwrap();
+    let items = [
+        ItemRef { kind: ItemKind::Txn, id: t3 },
+        ItemRef { kind: ItemKind::Ledger, id: u.id },
+        ItemRef { kind: ItemKind::Txn, id: t1 },
+        ItemRef { kind: ItemKind::Txn, id: t2 },
+    ];
+    assert_eq!(h.core.customer_excel_add(c.id, &items).unwrap().added, 4);
+    let written: Vec<String> = rows(&path).iter().map(|r| s(&r[stmt::C_SEQ as usize])).collect();
+    assert_eq!(written, vec!["Float(1.0)", "Float(2.0)", "", "Float(3.0)"]);
+    assert_eq!(keys(&path)[2], format!("U:{}", u.id));
+}
