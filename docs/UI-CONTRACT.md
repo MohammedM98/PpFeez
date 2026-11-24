@@ -181,6 +181,7 @@ export type TxnFilter = {
   needsFeeOnly?: boolean;
   needsReviewOnly?: boolean;
   type?: TxnType;
+  ids?: number[];                // يقصر النتيجة على هذه المعاملات: إجماليات تأكيد الاعتماد الجماعي لكل عملة (SPEC 6.5) من totals
 };
 export type TxnSortKey = 'occurredAt' | 'payerName' | 'grossMinor' | 'feeMinor' | 'netMinor' | 'customerAmountMinor' | 'status';
 export type TxnSort = { key: TxnSortKey; dir: 'asc' | 'desc' };
