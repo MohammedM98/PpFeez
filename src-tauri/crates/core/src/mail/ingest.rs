@@ -272,3 +272,78 @@ pub fn ingest(
         _ => Ok(Ingested::Failed),
     }
 }
+
+/// Fill what an earlier parse left empty on an existing transaction (SPEC: backfill after a
+/// parser improvement). Only empty fields are filled — payer name, email, note, related id, and
+/// the fee while the transaction is not approved. Amounts, currency and the customer never
+/// change. `needs_review` is cleared only when a specialised parser fully matches (same amount
+/// and currency); for an unassigned reviewed transaction its type is corrected too.
+/// Returns the names of the fields changed (empty when nothing changed).
+pub fn backfill_transaction(
+    conn: &Connection,
+    now: &str,
+    txn_id: i64,
+    t: &ParsedTransaction,
+    parser: &str,
+) -> AppResult<Vec<&'static str>> {
+    use crate::transactions::{derive, load_row, TxnStatus};
+    let row = load_row(conn, txn_id)?;
+    let mut changed: Vec<&'static str> = vec![];
+    let fill = |old: &Option<String>, new: &Option<String>| -> Option<String> {
+        match (old, new) {
+            (None, Some(v)) if !v.trim().is_empty() => Some(v.clone()),
+            _ => None,
+        }
+    };
+    if let Some(v) = fill(&row.payer_name, &t.payer_name) {
+        conn.execute("UPDATE paypal_transactions SET payer_name = ?1 WHERE id = ?2", params![v, txn_id])?;
+        changed.push("payerName");
+    }
+    if let Some(v) = fill(&row.payer_email, &t.payer_email) {
+        conn.execute("UPDATE paypal_transactions SET payer_email = ?1 WHERE id = ?2", params![v, txn_id])?;
+        changed.push("payerEmail");
+    }
+    if let Some(v) = fill(&row.payer_note, &t.payer_note) {
+        conn.execute("UPDATE paypal_transactions SET payer_note = ?1 WHERE id = ?2", params![v, txn_id])?;
+        changed.push("payerNote");
+    }
+    if let Some(v) = fill(&row.related_txn_id, &t.related_txn_id) {
+        conn.execute("UPDATE paypal_transactions SET related_txn_id = ?1 WHERE id = ?2", params![v, txn_id])?;
+        changed.push("relatedTxnId");
+    }
+    let same_money = t.gross_minor == row.gross_minor && t.currency == row.currency;
+    if row.fee_minor.is_none() && row.status != TxnStatus::Approved && same_money {
+        if let Some(fee) = t.fee_minor.filter(|f| *f <= row.gross_minor) {
+            let rule = if row.status == TxnStatus::PendingApproval { row.rule() } else { None };
+            if let Ok(d) = derive(row.gross_minor, Some(fee), rule) {
+                conn.execute(
+                    "UPDATE paypal_transactions SET fee_minor = ?1, fee_is_estimated = 0, net_minor = ?2,
+                     commission_minor = ?3, customer_amount_minor = ?4 WHERE id = ?5",
+                    params![fee, d.net_minor, d.commission_minor, d.customer_amount_minor, txn_id],
+                )?;
+                changed.push("feeMinor");
+            }
+        }
+    }
+    let specialised = parser != "paypal_generic" && !t.needs_review;
+    if row.needs_review && specialised && same_money {
+        if row.status == TxnStatus::Unassigned && row.kind != t.kind {
+            conn.execute("UPDATE paypal_transactions SET type = ?1 WHERE id = ?2", params![t.kind.as_str(), txn_id])?;
+            changed.push("type");
+        }
+        conn.execute("UPDATE paypal_transactions SET needs_review = 0 WHERE id = ?1", params![txn_id])?;
+        changed.push("needsReview");
+    }
+    if !changed.is_empty() {
+        conn.execute("UPDATE paypal_transactions SET updated_at = ?1 WHERE id = ?2", params![now, txn_id])?;
+        audit::log(
+            conn,
+            now,
+            "txn.backfill",
+            "transaction",
+            Some(txn_id),
+            json!({ "fields": changed, "parser": parser }),
+        )?;
+    }
+    Ok(changed)
+}

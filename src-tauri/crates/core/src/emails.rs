@@ -3,7 +3,7 @@
 
 use crate::clock::parse_iso;
 use crate::error::{AppError, AppResult};
-use crate::mail::ingest::{apply_transaction, evaluate, record_applied, Ingested, StoredEmail};
+use crate::mail::ingest::{apply_transaction, backfill_transaction, evaluate, record_applied, Ingested, StoredEmail};
 use crate::paypal::reason_ar;
 use crate::transactions::{escape_like, BulkResult};
 use crate::Core;
@@ -162,8 +162,9 @@ impl Core {
         Ok(load(&self.conn(), id)?.0)
     }
 
-    /// Run the current parsers (and the current PayPal domain list) again on stored emails that
-    /// are not parsed yet (`failed` and `ignored`), without contacting the mailbox.
+    /// Run the current parsers (and the current PayPal domain list) again on stored emails,
+    /// without contacting the mailbox. Failed and ignored emails may create transactions;
+    /// already parsed emails only fill empty fields of their transaction (backfill).
     pub fn email_reparse(&self, ids: &[i64]) -> AppResult<BulkResult> {
         let domains = crate::settings::domain_set(&self.conn())?;
         let mut result = BulkResult::default();
@@ -173,7 +174,26 @@ impl Core {
                 let conn = self.conn();
                 let (email, mailbox_id, stored) = load(&conn, id)?;
                 if email.summary.parse_status == ParseStatus::Parsed {
-                    return Err(AppError::invalid_transition("الرسالة محلَّلة مسبقاً"));
+                    let (status, _, parser, txn) = evaluate(&stored, &domains);
+                    let (Some(t), Some(parser)) = (txn.filter(|_| status == "parsed"), parser) else {
+                        return Err(AppError::validation("parse", "لم تتعرّف المحلّلات الحالية على الرسالة؛ بقيت كما هي"));
+                    };
+                    // The transaction with the same PayPal id, else the one created from this email.
+                    let txn_id: Option<i64> = conn
+                        .query_row(
+                            "SELECT id FROM paypal_transactions WHERE paypal_txn_id = ?1
+                             UNION ALL SELECT id FROM paypal_transactions WHERE raw_email_id = ?2 LIMIT 1",
+                            params![t.paypal_txn_id, id],
+                            |r| r.get(0),
+                        )
+                        .optional()?;
+                    let tx = conn.unchecked_transaction()?;
+                    if let Some(txn_id) = txn_id {
+                        backfill_transaction(&tx, &now, txn_id, &t, &parser)?;
+                    }
+                    tx.execute("UPDATE raw_emails SET parser_name = ?1 WHERE id = ?2", params![parser, id])?;
+                    tx.commit()?;
+                    return Ok(());
                 }
                 let (status, reason, parser, txn) = evaluate(&stored, &domains);
                 let tx = conn.unchecked_transaction()?;
@@ -259,5 +279,34 @@ impl Core {
             params![id],
         )?;
         Ok(())
+    }
+}
+
+/// Bump when the parsers improve: emails are re-parsed once at the next start (backfill).
+pub const PARSER_VERSION: i64 = 2;
+const K_PARSER_VERSION: &str = "parser_version";
+
+impl Core {
+    /// Re-parse every stored email once after a parser update (called at startup). Parsed emails
+    /// fill empty fields of their transaction; failed/ignored ones may now create transactions.
+    /// Emails the owner ignored by hand stay ignored.
+    pub fn reparse_after_update(&self) -> AppResult<Option<BulkResult>> {
+        let ids: Vec<i64> = {
+            let conn = self.conn();
+            let done: i64 =
+                crate::settings::get_raw(&conn, K_PARSER_VERSION)?.and_then(|v| v.parse().ok()).unwrap_or(0);
+            if done >= PARSER_VERSION {
+                return Ok(None);
+            }
+            let mut stmt = conn.prepare(
+                "SELECT id FROM raw_emails WHERE NOT (parse_status = 'ignored' AND parse_reason = 'manual')
+                 AND COALESCE(parse_reason, '') <> 'manual' ORDER BY id",
+            )?;
+            let ids = stmt.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+            ids
+        };
+        let result = self.email_reparse(&ids)?;
+        crate::settings::set_raw(&self.conn(), K_PARSER_VERSION, &PARSER_VERSION.to_string())?;
+        Ok(Some(result))
     }
 }

@@ -91,6 +91,10 @@ impl Core {
         };
         core.init_lock_state()?;
         core.fail_stale_pulls()?;
+        // One-off re-parse after a parser update; never blocks startup.
+        if let Err(e) = core.reparse_after_update() {
+            eprintln!("re-parse after update failed: {e}");
+        }
         Ok(core)
     }
 

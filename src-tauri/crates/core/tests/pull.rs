@@ -322,10 +322,11 @@ fn emails_screen_reparse_and_ignore() {
     let parsed = h.core.emails_list(ParseStatus::Parsed, None, 1, 50).unwrap();
     assert!(parsed.items[0].transaction_id.is_some());
 
-    // Re-parse keeps failing (no new parser), and parsed ones are refused.
+    // Re-parse keeps failing (no new parser); a parsed one is re-checked (backfill) without duplicates.
     let r = h.core.email_reparse(&[f.id, parsed.items[0].id]).unwrap();
-    assert!(r.ok.is_empty());
-    assert_eq!(r.failed.len(), 2);
+    assert_eq!(r.ok, vec![parsed.items[0].id]);
+    assert_eq!(r.failed.len(), 1);
+    assert_eq!(h.core.txn_counts(&TxnFilter::default()).unwrap().all, 1);
     // A forged email stays ignored on re-parse.
     let r = h.core.email_reparse(&[ignored.items[0].id]).unwrap();
     assert_eq!(r.failed.len(), 1);

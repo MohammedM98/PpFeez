@@ -154,6 +154,15 @@ fn walk(node: NodeRef<'_, Node>, out: &mut String) {
             for child in node.children() {
                 walk(child, out);
             }
+            // Keep the address of mailto: links ("Dana White" → "Dana White (dana@example.com)").
+            if name == "a" {
+                if let Some(addr) = e.attr("href").and_then(|h| h.trim().strip_prefix("mailto:")) {
+                    let addr = addr.split('?').next().unwrap_or("").trim();
+                    if addr.contains('@') && !out.contains(addr) {
+                        out.push_str(&format!(" ({addr})"));
+                    }
+                }
+            }
             if block && !out.ends_with('\n') {
                 out.push('\n');
             }
