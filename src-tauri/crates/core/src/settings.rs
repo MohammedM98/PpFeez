@@ -21,6 +21,7 @@ pub const K_ONBOARDING_DONE: &str = "onboarding_done";
 pub const K_EXCEL_EXPORT_PATH: &str = "excel_export_path";
 pub const K_EXCEL_LAST_EXPORTED_AT: &str = "excel_last_exported_at";
 pub const K_EXCEL_UPDATE_ON_CLOSE: &str = "excel_update_on_close";
+pub const K_EXCEL_MODE: &str = "excel_mode";
 pub const K_AUTO_CHECK_UPDATES: &str = "auto_check_updates";
 pub const K_EXTRA_PAYPAL_DOMAINS: &str = "extra_paypal_domains";
 
@@ -42,6 +43,25 @@ impl Theme {
     }
 }
 
+/// SPEC §6.8.1: how "update Excel file" treats the main workbook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExcelMode {
+    /// Add new transactions, update the program's columns, keep everything the owner wrote.
+    Append,
+    /// Write the whole file anew (the behaviour before 0.4).
+    Rewrite,
+}
+
+impl ExcelMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            ExcelMode::Append => "append",
+            ExcelMode::Rewrite => "rewrite",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -58,6 +78,7 @@ pub struct Settings {
     pub excel_export_path: Option<String>,
     pub excel_last_exported_at: Option<String>,
     pub excel_update_on_close: bool,
+    pub excel_mode: ExcelMode,
     pub auto_check_updates: bool,
     /// SPEC §5.6: domains the owner added (layer 2).
     pub extra_paypal_domains: Vec<String>,
@@ -93,6 +114,7 @@ pub struct SettingsPatch {
     #[serde(default, deserialize_with = "double_option")]
     pub excel_export_path: Option<Option<String>>,
     pub excel_update_on_close: Option<bool>,
+    pub excel_mode: Option<ExcelMode>,
     pub auto_check_updates: Option<bool>,
     pub extra_paypal_domains: Option<Vec<String>>,
 }
@@ -172,6 +194,10 @@ pub fn load(conn: &Connection) -> AppResult<Settings> {
         excel_export_path: get_raw(conn, K_EXCEL_EXPORT_PATH)?.filter(|s| !s.is_empty()),
         excel_last_exported_at: get_raw(conn, K_EXCEL_LAST_EXPORTED_AT)?.filter(|s| !s.is_empty()),
         excel_update_on_close: get_bool(conn, K_EXCEL_UPDATE_ON_CLOSE, true)?,
+        excel_mode: match get_raw(conn, K_EXCEL_MODE)?.as_deref() {
+            Some("rewrite") => ExcelMode::Rewrite,
+            _ => ExcelMode::Append,
+        },
         auto_check_updates: get_bool(conn, K_AUTO_CHECK_UPDATES, true)?,
         extra_paypal_domains: extra_domains(conn)?,
         builtin_paypal_domains: crate::paypal::domains::BUILTIN.iter().map(|d| d.to_string()).collect(),
@@ -244,6 +270,9 @@ impl Core {
         }
         if let Some(b) = patch.excel_update_on_close {
             set_raw(&tx, K_EXCEL_UPDATE_ON_CLOSE, bool_str(b))?;
+        }
+        if let Some(m) = patch.excel_mode {
+            set_raw(&tx, K_EXCEL_MODE, m.as_str())?;
         }
         if let Some(b) = patch.auto_check_updates {
             set_raw(&tx, K_AUTO_CHECK_UPDATES, bool_str(b))?;

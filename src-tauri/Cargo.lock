@@ -3471,6 +3471,7 @@ dependencies = [
  "mail-parser",
  "native-tls",
  "psl",
+ "quick-xml",
  "regex",
  "rusqlite",
  "rust_xlsxwriter",

@@ -10,6 +10,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0002_pull_range.sql"),
     include_str!("migrations/0003_review_hold.sql"),
     include_str!("migrations/0004_ledger_delete_flow.sql"),
+    include_str!("migrations/0005_excel_exported.sql"),
 ];
 
 pub fn schema_version() -> i64 {

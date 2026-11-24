@@ -92,21 +92,22 @@ fn main_workbook_has_four_arabic_rtl_sheets_with_numeric_amounts() {
     assert_eq!(eur[8], Data::Empty, "unknown fee stays empty");
 
     let summary = rows(&path, "الملخص");
-    assert_eq!(s(&summary[0][3]), "عمولتي");
+    assert_eq!(s(&summary[0][0]), ppfeez_core::excel::model::NOTE, "program sheets start with the note row");
+    assert_eq!(s(&summary[1][3]), "عمولتي");
     let usd = summary.iter().find(|r| s(&r[0]) == "USD").unwrap();
     assert_eq!([f(&usd[1]), f(&usd[2]), f(&usd[3]), f(&usd[4])], [100.0, 5.0, 23.75, 71.25]);
     let needs_fee = summary.iter().find(|r| s(&r[0]) == "تحتاج رسوم").unwrap();
     assert_eq!(f(&needs_fee[1]), 1.0);
 
     let cust = rows(&path, "العملاء");
-    assert_eq!(s(&cust[0][4]), "الرصيد JPY");
-    assert_eq!(s(&cust[0][5]), "الرصيد USD");
-    assert_eq!(s(&cust[1][0]), "أحمد");
-    assert_eq!((f(&cust[1][4]), f(&cust[1][5])), (3750.0, 71.25));
+    assert_eq!(s(&cust[1][4]), "الرصيد JPY");
+    assert_eq!(s(&cust[1][5]), "الرصيد USD");
+    assert_eq!(s(&cust[2][0]), "أحمد");
+    assert_eq!((f(&cust[2][4]), f(&cust[2][5])), (3750.0, 71.25));
 
     let ledger = rows(&path, "الدفتر");
-    assert_eq!(s(&ledger[0][7]), "الرصيد الجاري");
-    assert_eq!(ledger.len(), 3);
+    assert_eq!(s(&ledger[1][7]), "الرصيد الجاري");
+    assert_eq!(ledger.len(), 4);
     let _ = cid;
 }
 
@@ -122,7 +123,7 @@ fn update_twice_rewrites_the_same_path_with_new_data() {
         })
         .unwrap();
     h.core.excel_update().unwrap();
-    assert_eq!(rows(&path, "الدفتر").len(), 3);
+    assert_eq!(rows(&path, "الدفتر").len(), 4);
     h.core
         .ledger_add_payout(
             cid,
@@ -139,7 +140,7 @@ fn update_twice_rewrites_the_same_path_with_new_data() {
         .unwrap();
     h.core.excel_update().unwrap();
     let ledger = rows(&path, "الدفتر");
-    assert_eq!(ledger.len(), 4);
+    assert_eq!(ledger.len(), 5);
     let last_usd = ledger.iter().rfind(|r| s(&r[1]) == "USD").unwrap();
     assert_eq!((f(&last_usd[6]), f(&last_usd[7])), (20.0, 51.25));
     assert_eq!(s(&last_usd[9]), "USDT");

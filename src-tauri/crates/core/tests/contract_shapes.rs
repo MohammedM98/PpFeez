@@ -132,6 +132,7 @@ fn app_and_settings_group() {
             "excelExportPath",
             "excelLastExportedAt",
             "excelUpdateOnClose",
+            "excelMode",
             "autoCheckUpdates",
             "extraPaypalDomains",
             "builtinPaypalDomains",
@@ -424,14 +425,20 @@ fn excel_group() {
     assert_eq!(st["excelExportPath"], json!(path.display().to_string()));
     assert_eq!(st["excelUpdateOnClose"], json!(true));
     let r = h.core.excel_update().unwrap();
-    let v = assert_keys(&r, &["path", "sheets", "rows", "exportedAt"]);
+    let v = assert_keys(&r, &["path", "sheets", "rows", "exportedAt", "added", "updated", "created"]);
     assert_eq!(v["sheets"], json!(4));
+    assert_eq!((v["created"].clone(), v["added"].clone(), v["updated"].clone()), (json!(true), json!(0), json!(0)));
+    assert_eq!(st["excelMode"], json!("append"));
+    let again = serde_json::to_value(h.core.excel_update().unwrap()).unwrap();
+    assert_eq!(again["created"], json!(false));
+    let e = serde_json::to_value(ppfeez_core::AppError::new(ppfeez_core::ErrorCode::ExcelLayout, "x")).unwrap();
+    assert_eq!(e["code"], json!("excel_layout"));
     let filter: TxnFilter = serde_json::from_value(json!({ "status": "all" })).unwrap();
     let sort: TxnSort = serde_json::from_value(json!({ "key": "occurredAt", "dir": "desc" })).unwrap();
     let q = h.dir.path().join("q.xlsx");
     assert_keys(
         &h.core.excel_export_transactions(&filter, sort, &q).unwrap(),
-        &["path", "sheets", "rows", "exportedAt"],
+        &["path", "sheets", "rows", "exportedAt", "added", "updated", "created"],
     );
     let patch: SettingsPatch =
         serde_json::from_value(json!({ "excelExportPath": null, "excelUpdateOnClose": false })).unwrap();
