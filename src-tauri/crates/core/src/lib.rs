@@ -71,6 +71,10 @@ pub struct Core {
     pub(crate) lock_state: Mutex<lock::LockState>,
     /// Cancel flags of running pulls, by run id.
     pub(crate) pulls: Mutex<HashMap<i64, Arc<AtomicBool>>>,
+    /// SPEC 6.8.3: one writer of customer statements at a time (background sync and "send now").
+    pub(crate) excel_write: Mutex<()>,
+    /// Tests only: make statement writes fail as if the file were open in Excel.
+    pub(crate) excel_fault: Mutex<Option<error::AppError>>,
 }
 
 impl Core {
@@ -90,9 +94,13 @@ impl Core {
             fetchers: cfg.fetchers,
             lock_state: Mutex::new(lock::LockState::default()),
             pulls: Mutex::new(HashMap::new()),
+            excel_write: Mutex::new(()),
+            excel_fault: Mutex::new(None),
         };
         core.init_lock_state()?;
         core.fail_stale_pulls()?;
+        // SPEC 6.8.3: lines left pending (file was open, app closed) are retried by the writer.
+        core.excel_mark_pending_dirty()?;
         // One-off re-parse after a parser update; never blocks startup.
         if let Err(e) = core.reparse_after_update() {
             eprintln!("re-parse after update failed: {e}");

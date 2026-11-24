@@ -89,7 +89,7 @@ fn create_add_and_the_spec_example() {
     let f = formulas(&path, "كشف USD");
     assert!(f.iter().any(|x| x.contains("SUMIFS(Statement_USD[له],Statement_USD[مفتاح],\"T:*\")")), "{f:?}");
     assert!(f.iter().any(|x| x.contains(
-        "COUNTIFS(Statement_USD[مفتاح],\"T:*\")-COUNTIFS(Statement_USD[مفتاح],\"T:*\",Statement_USD[تم الإرسال؟],\"نعم*\")"
+        "(COUNTIFS(Statement_USD[مفتاح],\"T:*\")-COUNTIFS(Statement_USD[مفتاح],\"-T:*\"))-COUNTIFS(Statement_USD[مفتاح],\"T:*\",Statement_USD[تم الإرسال؟],\"نعم*\")"
     )));
     assert!(String::from_utf8_lossy(&parts(&path)["docProps/custom.xml"]).contains("PpFeezCustomerId"));
 
@@ -113,7 +113,10 @@ fn create_add_and_the_spec_example() {
     assert_eq!(tr[stmt::C_PCT as usize], Data::Float(0.25));
     assert_eq!(s(&tr[stmt::C_SENT as usize]), "لا");
     assert_eq!(s(&tr[stmt::C_REF as usize]), t.paypal_txn_id);
-    assert_eq!(s(&tr[stmt::C_KEY as usize]), format!("T:{}", t.paypal_txn_id));
+    assert!(
+        s(&tr[stmt::C_KEY as usize]).starts_with(&format!("T:{}:", t.paypal_txn_id)),
+        "transfer key with its credit"
+    );
     let pr = &d[1];
     assert_eq!(pr[stmt::C_DEBIT as usize], Data::Float(50.0));
     assert_eq!(s(&pr[stmt::C_METHOD as usize]), "USDT");
@@ -133,7 +136,8 @@ fn create_add_and_the_spec_example() {
     assert!(h.core.txn_get(t.id).unwrap().in_customer_excel);
     let entries = h.core.ledger_entries(c.id, "USD", None).unwrap().entries;
     assert!(entries.iter().find(|e| e.id == pay.id).unwrap().in_customer_excel);
-    assert!(!entries.iter().find(|e| e.transaction_id == Some(t.id)).unwrap().in_customer_excel);
+    // 6.8.3: the approval credit shows the state of its transfer's line.
+    assert!(entries.iter().find(|e| e.transaction_id == Some(t.id)).unwrap().in_customer_excel);
 }
 
 #[test]

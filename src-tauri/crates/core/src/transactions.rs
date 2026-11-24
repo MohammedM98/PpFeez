@@ -166,6 +166,8 @@ pub struct Transaction {
     pub in_customer_excel: bool,
     /// Added to the customer's Excel statement, then unapproved.
     pub changed_after_excel: bool,
+    /// SPEC §6.8.3: exported / pending / not_exported in the linked statement.
+    pub excel_status: crate::excel::customer::ExcelStatus,
     /// SPEC §4.8: transfer number (#) of the customer for this currency, while approved.
     pub customer_seq: Option<i64>,
     pub matched: bool,
@@ -587,7 +589,7 @@ fn to_dto(conn: &Connection, row: TxnRow) -> AppResult<Transaction> {
     };
     let payout = if row.status == TxnStatus::Approved { payout_of(conn, row.id)? } else { None };
     let allowed = allowed_actions_with(&row, payout.is_some());
-    let (in_customer_excel, changed_after_excel) = crate::excel::customer::txn_flags(conn, &row)?;
+    let (excel_status, in_customer_excel, changed_after_excel) = crate::excel::customer::txn_flags(conn, &row)?;
     let review_reason_ar = if row.needs_review { row.review_reason.as_deref().map(review_reason_ar) } else { None };
     Ok(Transaction {
         id: row.id,
@@ -622,6 +624,7 @@ fn to_dto(conn: &Connection, row: TxnRow) -> AppResult<Transaction> {
         hold_status: row.hold_status,
         in_customer_excel,
         changed_after_excel,
+        excel_status,
         customer_seq: row.customer_seq,
         matched: row.matched,
         payout,
@@ -877,6 +880,15 @@ pub(crate) fn approve_in(conn: &Connection, now: &str, today: &str, id: i64) -> 
          WHERE id = ?2",
         params![now, id, seq],
     )?;
+    crate::excel::customer::enqueue(
+        conn,
+        now,
+        customer_id,
+        crate::excel::customer::ItemKind::Txn,
+        id,
+        Some(entry_id),
+        Some(json!({ "seq": seq })),
+    )?;
     audit::log(
         conn,
         now,
@@ -933,6 +945,14 @@ pub(crate) fn unapprove_in(conn: &Connection, now: &str, today: &str, id: i64, r
         }
     })?;
     let reversal_id = conn.last_insert_rowid();
+    crate::excel::customer::on_reversed(
+        conn,
+        now,
+        customer_id,
+        crate::excel::customer::Orig::Txn { txn_id: id, credit: entry_id },
+        reversal_id,
+        Some(json!({ "seq": row.customer_seq, "netMinor": row.net_minor, "commissionMinor": row.commission_minor })),
+    )?;
     conn.execute(
         "UPDATE paypal_transactions SET status = 'unassigned', customer_id = NULL, commission_mode = NULL,
          commission_bps = NULL, commission_minor = NULL, customer_amount_minor = NULL, assigned_at = NULL,

@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::fmt;
 
 /// Error codes, exactly the `ErrorCode` union of the UI contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     Locked,
@@ -70,12 +70,12 @@ impl ErrorCode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppError {
     pub code: ErrorCode,
     pub message_ar: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
 }
 

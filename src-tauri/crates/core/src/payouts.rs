@@ -8,6 +8,7 @@
 use crate::audit;
 use crate::clock::{date_str, parse_date};
 use crate::error::{AppError, AppResult, ErrorCode};
+use crate::excel::customer::ItemKind;
 use crate::ledger::{self, get_entry, LedgerEntry, LedgerType, PayoutMethod};
 use crate::money::{format_amount, ltr, normalize_currency, parse_positive};
 use crate::transactions::{self, get_dto, load_row, BulkResult, HoldStatus, Period, Transaction, TxnStatus};
@@ -113,6 +114,8 @@ pub struct Payout {
     pub ledger_entry_id: Option<i64>,
     pub item_ids: PayoutItemIds,
     pub in_customer_excel: bool,
+    /// SPEC §6.8.3: exported / pending / not_exported in the linked statement.
+    pub excel_status: crate::excel::customer::ExcelStatus,
     pub created_at: String,
 }
 
@@ -211,6 +214,8 @@ pub enum StatementShow {
     Unpaid,
     Paid,
     Payouts,
+    /// SPEC 6.8.3: lines not (yet) in the customer's linked Excel statement.
+    NotExported,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -275,6 +280,7 @@ fn payout_from_row(r: &Row<'_>) -> rusqlite::Result<Payout> {
         ledger_entry_id: r.get("ledger_entry_id")?,
         item_ids: PayoutItemIds { txns: vec![], ledger: vec![] },
         in_customer_excel: false,
+        excel_status: crate::excel::customer::ExcelStatus::NotExported,
         created_at: r.get("created_at")?,
     })
 }
@@ -301,7 +307,9 @@ pub(crate) fn get_payout(conn: &Connection, id: i64) -> AppResult<Payout> {
         params![p.customer_id, p.currency, p.seq],
         |r| r.get(0),
     )?;
-    p.in_customer_excel = crate::excel::customer::tracked(conn, p.customer_id, "payout", p.id)?;
+    p.excel_status =
+        crate::excel::customer::item_status(conn, p.customer_id, crate::excel::customer::ItemKind::Payout, p.id)?;
+    p.in_customer_excel = p.excel_status == crate::excel::customer::ExcelStatus::Exported;
     Ok(p)
 }
 
@@ -396,6 +404,15 @@ fn send_in(conn: &Connection, now: &str, payout: &Payout, date: &str) -> AppResu
     conn.execute(
         "UPDATE payouts SET status = 'sent', ledger_entry_id = ?1, payout_date = ?2, updated_at = ?3 WHERE id = ?4",
         params![entry_id, date, now, payout.id],
+    )?;
+    crate::excel::customer::enqueue(
+        conn,
+        now,
+        payout.customer_id,
+        crate::excel::customer::ItemKind::Payout,
+        payout.id,
+        None,
+        None,
     )?;
     Ok(entry_id)
 }
@@ -670,6 +687,15 @@ impl Core {
             params![d.method.as_str(), d.platform, d.network, d.destination, d.reference, d.note, now, payout_id],
         )?;
         save_defaults(&tx, before.customer_id, &d)?;
+        if before.status == PayoutStatus::Sent {
+            crate::excel::customer::requeue(
+                &tx,
+                &now,
+                before.customer_id,
+                crate::excel::customer::ItemKind::Payout,
+                payout_id,
+            )?;
+        }
         audit::log(
             &tx,
             &now,
@@ -710,6 +736,16 @@ impl Core {
             "UPDATE payouts SET status = 'cancelled', cancel_reason = ?1, updated_at = ?2 WHERE id = ?3",
             params![reason, now, payout_id],
         )?;
+        if let Some(rev) = reversal {
+            crate::excel::customer::on_reversed(
+                &tx,
+                &now,
+                p.customer_id,
+                crate::excel::customer::Orig::Payout(payout_id),
+                rev,
+                None,
+            )?;
+        }
         audit::log(
             &tx,
             &now,
@@ -878,6 +914,11 @@ impl Core {
             ids.into_iter().map(|id| get_payout(&conn, id)).collect::<AppResult<_>>()?
         };
         let show = filter.show.unwrap_or_default();
+        let missing = if show == StatementShow::NotExported {
+            self.excel_missing(&conn, customer_id)?
+        } else {
+            Default::default()
+        };
         let mut rows: Vec<StatementRow> = vec![];
         let mut running = view.opening_balance_minor;
         let mut push_pending_until = |date: Option<&str>, running: i64, rows: &mut Vec<StatementRow>| {
@@ -919,6 +960,15 @@ impl Core {
                 }
                 (StatementRow::Payout { .. }, StatementShow::Payouts) => true,
                 (StatementRow::Entry { entry, .. }, StatementShow::Payouts) => entry.kind == LedgerType::Payout,
+                (StatementRow::Txn { txn, .. }, StatementShow::NotExported) => {
+                    missing.contains(&(ItemKind::Txn, txn.id))
+                }
+                (StatementRow::Payout { payout, .. }, StatementShow::NotExported) => {
+                    missing.contains(&(ItemKind::Payout, payout.id))
+                }
+                (StatementRow::Entry { entry, .. }, StatementShow::NotExported) => {
+                    missing.contains(&(ItemKind::Ledger, entry.id))
+                }
                 _ => false,
             };
             if keep {

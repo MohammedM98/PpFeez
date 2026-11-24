@@ -117,6 +117,8 @@ pub struct LedgerEntry {
     pub not_deletable_reason_ar: Option<String>,
     /// SPEC §6.8.2: in the customer's linked Excel statement.
     pub in_customer_excel: bool,
+    /// SPEC §6.8.3: exported / pending / not_exported in the linked statement.
+    pub excel_status: crate::excel::customer::ExcelStatus,
     /// SPEC §4.8: the linked payout this entry records (not part of the contract).
     #[serde(skip)]
     pub payout_id: Option<i64>,
@@ -194,9 +196,13 @@ const SELECT: &str = "SELECT e.*, (SELECT r.id FROM ledger_entries r WHERE r.rev
        (SELECT o.payout_id FROM ledger_entries o WHERE o.id = e.reverses_entry_id) AS reversed_payout_id,
        (SELECT p.payout_seq FROM payout_items i JOIN payouts p ON p.id = i.payout_id
          WHERE i.item_kind = 'ledger' AND i.item_id = e.id AND p.status <> 'cancelled' LIMIT 1) AS in_payout_seq,
-       EXISTS(SELECT 1 FROM customer_excel_items x JOIN customer_excel c
+       (SELECT x.status FROM customer_excel_items x JOIN customer_excel c
                 ON c.customer_id = x.customer_id AND c.file_path = x.file_path
-              WHERE x.customer_id = e.customer_id AND x.item_kind = 'ledger' AND x.item_id = e.id) AS in_excel
+              WHERE x.customer_id = e.customer_id
+                AND ((x.item_kind = 'ledger' AND x.item_id = e.id)
+                  OR (x.item_kind = 'txn' AND x.source_id = e.id)
+                  OR (x.item_kind = 'payout' AND x.item_id = e.payout_id))
+              ORDER BY x.status = 'exported' DESC LIMIT 1) AS excel_status
      FROM ledger_entries e";
 
 /// Credits and unapprove reversals of a payment are managed from the transaction (SPEC §4.7).
@@ -228,6 +234,8 @@ fn payout_reason(
 fn entry_from_row(r: &Row<'_>) -> rusqlite::Result<LedgerEntry> {
     let kind = LedgerType::parse(&r.get::<_, String>("type")?);
     let payout_id: Option<i64> = r.get("payout_id")?;
+    let excel_status =
+        crate::excel::customer::ExcelStatus::from_db(r.get::<_, Option<String>>("excel_status").ok().flatten());
     let reason = not_deletable_reason(kind, r.get::<_, Option<String>>("txn_type")?.as_deref())
         .map(str::to_string)
         .or_else(|| {
@@ -236,7 +244,8 @@ fn entry_from_row(r: &Row<'_>) -> rusqlite::Result<LedgerEntry> {
     Ok(LedgerEntry {
         deletable: reason.is_none(),
         not_deletable_reason_ar: reason,
-        in_customer_excel: r.get::<_, Option<bool>>("in_excel").ok().flatten().unwrap_or(false),
+        in_customer_excel: excel_status == crate::excel::customer::ExcelStatus::Exported,
+        excel_status,
         payout_id,
         payout_platform: r.get("payout_platform")?,
         payout_network: r.get("payout_network")?,
@@ -434,6 +443,15 @@ impl Core {
             ],
         )?;
         let id = tx.last_insert_rowid();
+        crate::excel::customer::enqueue(
+            &tx,
+            &now,
+            customer_id,
+            crate::excel::customer::ItemKind::Ledger,
+            id,
+            None,
+            None,
+        )?;
         audit::log(
             &tx,
             &now,
@@ -469,6 +487,15 @@ impl Core {
             params![customer_id, currency, signed, description, entry_date, now],
         )?;
         let id = tx.last_insert_rowid();
+        crate::excel::customer::enqueue(
+            &tx,
+            &now,
+            customer_id,
+            crate::excel::customer::ItemKind::Ledger,
+            id,
+            None,
+            None,
+        )?;
         audit::log(
             &tx,
             &now,
@@ -508,6 +535,11 @@ impl Core {
         }
         let tx = conn.unchecked_transaction()?;
         let id = insert_reversal_of(&tx, &now, &today, entry_id, reason)?;
+        let target = match orig.payout_id {
+            Some(p) => crate::excel::customer::Orig::Payout(p),
+            None => crate::excel::customer::Orig::Entry(entry_id),
+        };
+        crate::excel::customer::on_reversed(&tx, &now, orig.customer_id, target, id, None)?;
         audit::log(
             &tx,
             &now,

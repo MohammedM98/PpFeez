@@ -138,6 +138,15 @@ impl Core {
             params![customer_id, original.currency, amount, refund.id, description, today, now],
         )?;
         let entry_id = tx.last_insert_rowid();
+        crate::excel::customer::enqueue(
+            &tx,
+            &now,
+            customer_id,
+            crate::excel::customer::ItemKind::Ledger,
+            entry_id,
+            None,
+            None,
+        )?;
         tx.execute(
             "UPDATE paypal_transactions SET status = 'excluded', updated_at = ?1 WHERE id = ?2",
             params![now, refund.id],

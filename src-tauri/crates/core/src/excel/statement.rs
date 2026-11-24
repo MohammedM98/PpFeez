@@ -9,8 +9,8 @@
 //! apart; the file's key column is what decides duplicates.
 
 use super::append::{
-    append_rows, apply_sheet, extend_table, formula_of, patch_workbook_xml, program_cell, remove_calc_chain,
-    sheet_tables, AppendCtx, Fitter, NewRow, TableInfo,
+    append_rows, apply_sheet, extend_table, patch_workbook_xml, program_cell, remove_calc_chain, sheet_tables,
+    AppendCtx, Fitter, NewRow, TableInfo,
 };
 use super::model::{self, Keep, MCell, RowB, SheetModel, St, TxnCells, V};
 use super::xlsx::{
@@ -78,15 +78,33 @@ pub fn table_name(currency: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct Line {
     pub key: String,
+    /// Keys an earlier version may have written for the same line (duplicate check only).
+    pub alt_keys: Vec<String>,
     pub currency: String,
     pub date: NaiveDate,
-    /// Sort order inside a batch: date, then transfers, entries, payouts.
-    pub order: (NaiveDate, u8, i64),
+    /// Statement order (SPEC 6.8.3): the ledger entry's date and id.
+    pub order: (NaiveDate, i64),
     /// Program cells except the running balance (filled in when the row is known).
     pub cells: Vec<(u16, Option<V>, St)>,
     pub fill: bool,
-    /// Payout lines: keys of their transfers and the text for their "تم الإرسال؟" cell.
-    pub marks: Vec<(String, String)>,
+    /// Cells of rows already in the sheet to bring up to date (a payout's transfers, its own
+    /// details row, a cancelled payout).
+    pub marks: Vec<Mark>,
+}
+
+/// One cell of an existing row, found by its key (exactly, or as `{key}:…` when `prefix`).
+#[derive(Debug, Clone)]
+pub struct Mark {
+    pub key: String,
+    pub prefix: bool,
+    pub col: u16,
+    pub value: V,
+}
+
+impl Mark {
+    fn matches(&self, k: &str) -> bool {
+        k == self.key || (self.prefix && k.starts_with(&format!("{}:", self.key)))
+    }
 }
 
 /// The running balance of row `r` (1-based) with data starting at `first`.
@@ -96,41 +114,54 @@ fn balance_formula(cols: &[u32], first: u32, r: u32) -> String {
     format!("SUM({c}${first}:{c}{r})-SUM({d}${first}:{d}{r})")
 }
 
-fn header_block(customer: &str, currency: &str, today: NaiveDate) -> Vec<RowB> {
+/// The eight figures of SPEC 4.8 as formulas over the statement table. Reversal rows (keys
+/// starting with "-") cancel the line they reverse; "X:" are payout reversals written by 0.5.0.
+pub fn figures(currency: &str) -> Vec<(&'static str, String, St)> {
     let t = table_name(currency);
     let col = |name: &str| format!("{t}[{name}]");
     let money = St::money(currency, true);
-    let figures: [(&str, String, St); 8] = [
+    let (k, c, d, s) = (col("مفتاح"), col("له"), col("عليه"), col("تم الإرسال؟"));
+    let sumifs = |what: &str, prefix: &str| format!("SUMIFS({what},{k},\"{prefix}*\")");
+    let count = |prefix: &str| format!("COUNTIFS({k},\"{prefix}*\")");
+    let txn_count = format!("({}-{})", count("T:"), count("-T:"));
+    let paid = format!("COUNTIFS({k},\"T:*\",{s},\"نعم*\")");
+    vec![
         (
             "الصافي المكتمل",
-            format!("SUMIFS({},{},\"T:*\")-SUMIFS({},{},\"R:*\")", col("له"), col("مفتاح"), col("عليه"), col("مفتاح")),
+            format!("{}-{}-{}+{}", sumifs(&c, "T:"), sumifs(&d, "-T:"), sumifs(&d, "R:"), sumifs(&c, "-R:")),
             money,
         ),
         (
             "المُرسل",
             format!(
-                "SUMIFS({d},{k},\"P:*\")+SUMIFS({d},{k},\"U:*\")-SUMIFS({c},{k},\"X:*\")",
-                d = col("عليه"),
-                c = col("له"),
-                k = col("مفتاح")
+                "{}+{}-{}-{}-{}",
+                sumifs(&d, "P:"),
+                sumifs(&d, "U:"),
+                sumifs(&c, "-P:"),
+                sumifs(&c, "-U:"),
+                sumifs(&c, "X:")
             ),
             money,
         ),
-        ("المتبقي", format!("SUM({})-SUM({})", col("له"), col("عليه")), money),
+        ("المتبقي", format!("SUM({c})-SUM({d})"), money),
+        ("غير مدفوع", format!("{txn_count}-{paid}"), St::Int),
         (
-            "غير مدفوع",
-            format!(
-                "COUNTIFS({k},\"T:*\")-COUNTIFS({k},\"T:*\",{s},\"نعم*\")",
-                k = col("مفتاح"),
-                s = col("تم الإرسال؟")
-            ),
-            St::Int,
+            "المبلغ قبل العمولة",
+            format!("{}-{}", sumifs(&col("الصافي من PayPal"), "T:"), sumifs(&col("الصافي من PayPal"), "-T:")),
+            money,
         ),
-        ("المبلغ قبل العمولة", format!("SUMIFS({},{},\"T:*\")", col("الصافي من PayPal"), col("مفتاح")), money),
-        ("إجمالي العمولة", format!("SUMIFS({},{},\"T:*\")", col("قيمة العمولة"), col("مفتاح")), money),
-        ("عدد المعاملات", format!("COUNTIFS({},\"T:*\")", col("مفتاح")), St::Int),
-        ("عدد المدفوع", format!("COUNTIFS({},\"T:*\",{},\"نعم*\")", col("مفتاح"), col("تم الإرسال؟")), St::Int),
-    ];
+        (
+            "إجمالي العمولة",
+            format!("{}-{}", sumifs(&col("قيمة العمولة"), "T:"), sumifs(&col("قيمة العمولة"), "-T:")),
+            money,
+        ),
+        ("عدد المعاملات", txn_count.clone(), St::Int),
+        ("عدد المدفوع", paid, St::Int),
+    ]
+}
+
+fn header_block(customer: &str, currency: &str, today: NaiveDate) -> Vec<RowB> {
+    let figures = figures(currency);
     let mut rows = vec![];
     let mut title = RowB::default();
     title.str(0, &format!("كشف حساب — {customer}"), St::Bold);
@@ -280,6 +311,7 @@ pub fn append_lines(
     customer: &str,
     today: NaiveDate,
     lines: &BTreeMap<String, Vec<Line>>,
+    marks: &BTreeMap<String, Vec<Mark>>,
 ) -> LResult<(Vec<u8>, Vec<String>)> {
     let mut pkg = Package::open(bytes)?;
     let wb = workbook_info(&mut pkg)?;
@@ -293,13 +325,21 @@ pub fn append_lines(
     let mut styles = StylesDoc::parse(pkg.read(&styles_path)?.ok_or_else(|| layout("ملف Excel بلا أنماط."))?)?;
     let mut sheets = vec![];
     let existing_tables: Vec<String> = xlsx::table_names(&mut pkg)?.into_iter().map(|(_, n)| n).collect();
-    for (currency, batch) in lines {
-        if batch.is_empty() {
-            continue;
-        }
-        sheets.push(sheet_name(currency));
+    let empty: Vec<Line> = vec![];
+    let currencies: std::collections::BTreeSet<&String> = lines
+        .iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(c, _)| c)
+        .chain(marks.iter().filter(|(_, v)| !v.is_empty()).map(|(c, _)| c))
+        .collect();
+    for currency in currencies {
+        let batch = lines.get(currency).unwrap_or(&empty);
+        let mut cur_marks: Vec<&Mark> = marks.get(currency).map(|m| m.iter().collect()).unwrap_or_default();
+        cur_marks.extend(batch.iter().flat_map(|l| l.marks.iter()));
         match find_statement(&mut pkg, &sst, currency)? {
+            None if batch.is_empty() => continue,
             Some(f) => {
+                sheets.push(sheet_name(currency));
                 let mut fitter = Fitter::new(&mut styles);
                 let fill = if batch.iter().any(|l| l.fill) {
                     let fid = fitter.styles.solid_fill(&format!("FF{PAYOUT_FILL:06X}"));
@@ -340,44 +380,39 @@ pub fn append_lines(
                     what: &what,
                 };
                 let mut row_edits: BTreeMap<u32, BTreeMap<u32, String>> = BTreeMap::new();
-                // Transfers already in the sheet that a payout of this batch covers.
+                // Cells of rows already in the sheet (a payout's transfers, its own details, a
+                // cancelled payout): only where the value differs.
                 let key_col = f.cols[C_KEY as usize];
-                let sent_col = f.cols[C_SENT as usize];
-                for line in batch {
-                    for (tkey, text) in &line.marks {
-                        for row in f.doc.rows.iter().filter(|r| r.r > f.header_row) {
-                            let is_it = matches!(row.cell(key_col).map(|c| c.value(&sst)),
-                                Some(CellValue::Str(k)) if k.trim() == tkey);
-                            if !is_it {
-                                continue;
-                            }
-                            let cell = row.cell(sent_col);
-                            if cell.map(|c| c.value(&sst)) != Some(CellValue::Str(text.clone())) {
-                                let x = program_cell(
-                                    sent_col,
-                                    row.r,
-                                    cell.and_then(|c| c.s),
-                                    &Some(V::Str(text.clone())),
-                                    wb.date1904,
-                                );
-                                row_edits.entry(row.r).or_default().insert(sent_col, x);
-                            }
+                for row in f.doc.rows.iter().filter(|r| r.r > f.header_row) {
+                    let Some(CellValue::Str(k)) = row.cell(key_col).map(|c| c.value(&sst)) else { continue };
+                    let k = k.trim();
+                    for m in cur_marks.iter().filter(|m| m.matches(k)) {
+                        let col = f.cols[m.col as usize];
+                        let cell = row.cell(col);
+                        let current = cell.map(|c| c.value(&sst)).unwrap_or(CellValue::Empty);
+                        let differs = match &m.value {
+                            V::Str(t) => current != CellValue::Str(t.clone()),
+                            V::Blank => current != CellValue::Empty,
+                            v => model::value_number(v, wb.date1904)
+                                .is_none_or(|n| !matches!(current, CellValue::Num(x) if (x - n).abs() < 1e-9)),
+                        };
+                        if differs {
+                            let x =
+                                program_cell(col, row.r, cell.and_then(|c| c.s), &Some(m.value.clone()), wb.date1904);
+                            row_edits.entry(row.r).or_default().insert(col, x);
                         }
                     }
                 }
-                // Header-block formulas without a cached value, so every spreadsheet program
-                // (not only Excel, which recalculates on open) shows current figures.
+                // Header-block formulas, current definitions without a cached value, so every
+                // spreadsheet program (not only Excel, which recalculates on open) shows them.
+                let defs = figures(currency);
                 for row in f.doc.rows.iter().filter(|r| r.r < f.header_row) {
                     for c in &row.cells {
-                        if c.v.is_some() {
-                            if let Some((text, from)) = formula_of(&f.doc, c, row.r) {
-                                if from == row.r {
-                                    row_edits
-                                        .entry(row.r)
-                                        .or_default()
-                                        .insert(c.col, xlsx::cell_formula(c.col, row.r, c.s, &text));
-                                }
-                            }
+                        let CellValue::Str(label) = c.value(&sst) else { continue };
+                        if let Some((_, formula, _)) = defs.iter().find(|(l, _, _)| *l == label.trim()) {
+                            let col = c.col + 1;
+                            let s = row.cell(col).and_then(|x| x.s);
+                            row_edits.entry(row.r).or_default().insert(col, xlsx::cell_formula(col, row.r, s, formula));
                         }
                     }
                 }
@@ -402,6 +437,7 @@ pub fn append_lines(
                 extend_table(&mut pkg, &f.table, last_row);
             }
             None => {
+                sheets.push(sheet_name(currency));
                 let tname = table_name(currency);
                 if existing_tables.contains(&tname) {
                     return Err(layout(format!("يوجد في الملف جدول آخر اسمه «{tname}». غيّر اسمه ثم أعد المحاولة.")));

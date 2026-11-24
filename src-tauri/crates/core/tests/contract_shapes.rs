@@ -63,6 +63,7 @@ const TRANSACTION: &[&str] = &[
     "holdStatus",
     "inCustomerExcel",
     "changedAfterExcel",
+    "excelStatus",
     "customerSeq",
     "matched",
     "payout",
@@ -97,6 +98,7 @@ const LEDGER_ENTRY: &[&str] = &[
     "deletable",
     "notDeletableReasonAr",
     "inCustomerExcel",
+    "excelStatus",
 ];
 const PULL_RUN: &[&str] = &[
     "range",
@@ -607,6 +609,7 @@ fn payouts_group() {
             "ledgerEntryId",
             "itemIds",
             "inCustomerExcel",
+            "excelStatus",
             "createdAt",
         ],
     );
@@ -665,7 +668,17 @@ fn customer_excel_group() {
     assert_keys(&created, &["path", "added", "sheets"]);
     assert_keys(
         &h.core.customer_excel_get(c.id).unwrap().unwrap(),
-        &["path", "updatedAt", "exists", "addToExcelByDefault"],
+        &[
+            "path",
+            "updatedAt",
+            "exists",
+            "addToExcelByDefault",
+            "autoSync",
+            "exportedCount",
+            "pendingCount",
+            "notExportedCount",
+            "lastError",
+        ],
     );
     let items: Vec<ItemRef> = serde_json::from_value(json!([{ "kind": "txn", "id": t.id }])).unwrap();
     let p = assert_keys(
