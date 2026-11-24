@@ -58,21 +58,39 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(assign).toContainText('388.00');
     await shot(page, theme, '4-assign');
     await assign.getByRole('button', { name: 'تخصيص', exact: true }).click();
-    await expect(row).toContainText('بانتظار الموافقة');
-
-    // 5. approve, the confirmation shows the amount
+    // SPEC 6.3: an assigned row leaves the inbox; the toast offers "open" and "undo"
+    await expect(row).toHaveCount(0);
+    const moved = page.locator('[role=alertdialog]').filter({ hasText: 'نُقلت إلى نادر الشامي' });
+    await expect(moved).toBeVisible();
+    await shot(page, theme, '4b-moved');
+    await moved.getByRole('button', { name: 'تراجع' }).click();
+    await expect(page.getByText('أُعيدت إلى الوارد')).toBeVisible();
+    await expect(row).toBeVisible();
     await row.getByRole('button', { name: 'إجراءات' }).click();
-    await page.getByRole('menuitem', { name: 'اعتماد' }).click();
+    await page.getByRole('menuitem', { name: 'تخصيص لعميل' }).click();
+    await page.getByRole('dialog').getByRole('combobox', { name: 'العميل' }).fill('نادر');
+    await page.getByRole('option', { name: /نادر الشامي/ }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'تخصيص', exact: true }).click();
+    await page.locator('[role=alertdialog]').filter({ hasText: 'نُقلت إلى نادر الشامي' }).getByRole('button', { name: 'فتح' }).click();
+
+    // 5. on the customer's page, "awaiting approval": approve, the confirmation shows the amount
+    await expect(page.getByRole('heading', { name: 'نادر الشامي' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /بانتظار الموافقة/ })).toHaveAttribute('aria-selected', 'true');
+    const pending = page.getByRole('row').filter({ hasText: 'Samer Ali' });
+    await expect(pending).toContainText('388.00');
+    // "فتح" opened the transaction's panel: approve from there
+    const panel = page.getByRole('complementary', { name: 'تفاصيل المعاملة' });
+    await panel.getByRole('button', { name: /اعتماد/ }).click();
     const approve = page.getByRole('dialog');
     await expect(approve).toContainText('388.00');
     await shot(page, theme, '5-approve');
     await approve.getByRole('button', { name: 'اعتماد' }).click();
-    await expect(row).toContainText('معتمدة');
+    await expect(pending).toHaveCount(0);
+    await panel.getByRole('button', { name: 'إغلاق' }).click();
+    await page.getByRole('tab', { name: /معتمدة/ }).click();
+    await expect(page.getByRole('row').filter({ hasText: 'Samer Ali' })).toContainText('388.00');
 
-    // 6. payout from the customer's ledger
-    await page.getByRole('link', { name: 'العملاء' }).click();
-    await page.getByRole('row').filter({ hasText: 'نادر الشامي' }).getByRole('rowheader').click();
-    await expect(page.getByRole('heading', { name: 'نادر الشامي' })).toBeVisible();
+    // 6. payout from the same page
     await page.getByRole('button', { name: 'تسجيل دفعة' }).click();
     const payout = page.getByRole('dialog');
     await payout.getByRole('textbox', { name: 'المبلغ' }).fill('100.00');
@@ -83,12 +101,26 @@ for (const theme of ['dark', 'light'] as const) {
     await confirm.getByRole('button', { name: 'تسجيل الدفعة' }).click();
 
     // 7. remaining balance
+    await page.getByRole('tab', { name: 'دفتر USD' }).click();
     const card = page.locator('div').filter({ hasText: /^المتبقي له/ }).first();
     await expect(card).toContainText('288.00');
     await expect(page.getByRole('table', { name: 'الرصيد الختامي' })).toContainText(/الرصيد الختامي USD.*288\.00/);
     // numbers in the generated description are isolated so "20.00%" keeps its order in RTL
     await expect(page.getByRole('cell', { name: /Samer Ali/ })).toContainText('\u206620.00%\u2069');
     await shot(page, theme, '7-balance');
+
+    // 8. Ctrl+K finds it from anywhere and says where it lives; a result opens there
+    await page.getByRole('link', { name: 'لوحة التحكم' }).click();
+    await page.keyboard.press('Control+k');
+    const search = page.getByRole('dialog', { name: 'البحث في كل المعاملات' });
+    await search.getByRole('searchbox').fill('Samer');
+    const hit = search.getByRole('option').filter({ hasText: 'Samer Ali' });
+    await expect(hit).toContainText('نادر الشامي · معتمدة');
+    await shot(page, theme, '7b-search');
+    await hit.click();
+    await expect(page.getByRole('heading', { name: 'نادر الشامي' })).toBeVisible();
+    await expect(page.getByRole('complementary', { name: 'تفاصيل المعاملة' })).toContainText('Samer Ali');
+    await expect(page.getByRole('row').filter({ hasText: 'Samer Ali' })).toBeVisible();
 
     expect(errors).toEqual([]);
   });
@@ -247,7 +279,7 @@ for (const theme of ['dark', 'light'] as const) {
     const shot = (n: string) => page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-${n}.png` });
 
     // 1. approved transaction: the preview shows the balance change, then the balance moves
-    await page.goto(`/?theme=${theme}#/transactions?tab=approved`);
+    await page.goto(`/?theme=${theme}#/customers/2?tab=txns&sub=approved`);
     const row = page.getByRole('row').filter({ hasText: 'Noah Smith' });
     await row.getByRole('button', { name: 'إجراءات' }).click();
     await page.getByRole('menuitem', { name: 'حذف' }).click();
@@ -261,13 +293,13 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(row).toHaveCount(0);
 
     // 2. bulk delete from the selection bar takes a backup first
-    await page.getByRole('tab', { name: /غير مخصّصة/ }).click();
+    await page.getByRole('link', { name: 'المعاملات' }).click();
     await page.getByRole('row').filter({ hasText: 'Marta Nowak' }).getByRole('checkbox').check({ force: true });
     await page.getByRole('row').filter({ hasText: 'Lucas Brown' }).getByRole('checkbox').check({ force: true });
     await page.getByRole('toolbar', { name: 'إجراءات جماعية' }).getByRole('button', { name: 'حذف' }).click();
     await expect(page.getByRole('dialog')).toContainText('تُؤخذ نسخة احتياطية قبل الحذف');
     await page.getByRole('dialog').getByRole('button', { name: 'حذف نهائياً' }).click();
-    await expect(page.getByText('حُذفت 2 معاملة')).toBeVisible();
+    await expect(page.getByText('حُذفت معاملتان')).toBeVisible();
     await expect(page.getByText(/before-delete\.db/).first()).toBeVisible();
 
     // 3. ledger: a credit shows why it cannot be deleted; a payout is deleted with balance before/after
@@ -305,7 +337,8 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.getByRole('heading', { name: 'العملاء' })).toBeVisible();
     await expect(page.getByRole('row').filter({ hasText: 'أحمد يلماز' })).toHaveCount(0);
     await page.getByRole('link', { name: 'المعاملات' }).click();
-    await expect(page.getByRole('row').filter({ hasText: 'Website hosting' })).toContainText('غير مخصّصة');
+    // back in the inbox
+    await expect(page.getByRole('row').filter({ hasText: 'Website hosting' })).toBeVisible();
 
     // 5. deleted transactions stay out of the list; re-parse brings one back
     await page.getByRole('link', { name: 'الرسائل' }).click();
@@ -332,7 +365,50 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(result).toContainText('before-delete.db');
     await result.getByRole('button', { name: 'تم' }).click();
     await page.getByRole('link', { name: 'المعاملات' }).click();
-    await expect(page.getByText('لا معاملات بهذا الفلتر')).toBeVisible();
+    await expect(page.getByText('الوارد فارغ: كل المعاملات مخصّصة')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`0.4.0 customer transactions: bulk approve totals, move, pending customers (${theme})`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    const shot = (n: string) => page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-${n}.png` });
+
+    // the dashboard's "awaiting approval" opens the customers who have something waiting
+    await page.goto(`/?theme=${theme}#/dashboard`);
+    await page.getByRole('link', { name: /بانتظار الموافقة/ }).click();
+    await expect(page.getByRole('checkbox', { name: 'لديهم بانتظار الموافقة' })).toBeChecked();
+    await expect(page.getByRole('row').filter({ hasText: 'علي حسن' })).toHaveCount(0);
+    await shot('28-pending-customers');
+    await page.getByRole('row').filter({ hasText: 'أحمد يلماز' }).getByRole('rowheader').click();
+
+    // opened on "awaiting approval"; bulk approve shows the total per currency from the core
+    await expect(page.getByRole('tab', { name: /بانتظار الموافقة/ })).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('row').filter({ hasText: 'John Doe' }).getByRole('checkbox').check({ force: true });
+    await page.getByRole('toolbar', { name: 'إجراءات جماعية' }).getByRole('button', { name: 'اعتماد' }).click();
+    const bulk = page.getByRole('dialog');
+    await expect(bulk).toContainText('المجموع للعملاء');
+    await expect(bulk).toContainText('71.25');
+    await shot('29-bulk-approve');
+    await page.keyboard.press('Escape');
+
+    // move to another customer: it leaves this page and lands on theirs
+    const maria = page.getByRole('row').filter({ hasText: 'Maria Garcia' });
+    await maria.getByRole('button', { name: 'إجراءات' }).click();
+    await page.getByRole('menuitem', { name: 'نقل لعميل آخر' }).click();
+    const move = page.getByRole('dialog');
+    await expect(move).toContainText('مخصّصة الآن لـ أحمد يلماز');
+    const who = move.getByRole('combobox', { name: 'العميل' });
+    await who.fill('سارة');
+    await page.getByRole('option', { name: /سارة المصري/ }).click();
+    await move.getByRole('button', { name: 'نقل', exact: true }).click();
+    await expect(maria).toHaveCount(0);
+    await page.locator('[role=alertdialog]').filter({ hasText: 'نُقلت إلى سارة المصري' }).getByRole('button', { name: 'فتح' }).click();
+    await expect(page.getByRole('heading', { name: 'سارة المصري' })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'Maria Garcia' })).toBeVisible();
+    await shot('30-customer-pending');
     expect(errors).toEqual([]);
   });
 }

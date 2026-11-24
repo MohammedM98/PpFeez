@@ -4,8 +4,9 @@ import type {
   AppError, BalanceCard, BulkResult, CommissionInput, Customer, CustomerInput, DashboardSummary, ErrorCode,
   FeeInput, LedgerEntry, LedgerView, ManualTxnInput, Money, Page, Period, PullRun, RawEmailSummary,
   RefundAlert, Transaction, TxnAction, TxnCounts, TxnFilter, TxnListResult, TxnPreview, TxnSort, AdjustmentInput, PayoutInput,
-  MailboxInput, ParseStatus, PullRange,
+  MailboxInput, ParseStatus, PullRange, TxnLocation, TxnSearchHit,
 } from '@/lib/contract';
+import { decimalsOf, formatMinor } from '@/lib/money';
 import { creditDescription, halfUp, ltr, seed, type Db, type LedgerRow, type TxnRow } from './db';
 
 let db: Db = seed();
@@ -128,6 +129,7 @@ function applyCommission(t: TxnRow, c: CommissionInput) {
 }
 
 function matches(t: TxnRow, f: Omit<TxnFilter, 'status'>) {
+  if (f.ids?.length && !f.ids.includes(t.id)) return false;
   if (f.currency && t.currency !== f.currency) return false;
   if (f.mailboxId && t.mailboxId !== f.mailboxId) return false;
   if (f.customerId && t.customerId !== f.customerId) return false;
@@ -167,6 +169,28 @@ function txnList(filter: TxnFilter, sort: TxnSort, page: number, pageSize: numbe
     total: rows.length, page, pageSize,
     totals: [...totals.values()].sort((a, b) => a.currency.localeCompare(b.currency)),
   };
+}
+
+/** SPEC 6.3 global search: every status; id, payer, e-mail, note, or an amount typed as text. */
+function txnSearchAll(query: string, limit = 50): TxnSearchHit[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const amount = q.replace(/,/g, '');
+  const isAmount = /^-?\d+(\.\d{1,2})?$/.test(amount);
+  const hits = db.txns.filter((t) => {
+    const hay = [t.payerName, t.payerEmail, t.paypalTxnId, t.payerNote].filter(Boolean).join(' ').toLowerCase();
+    if (hay.includes(q)) return true;
+    if (!isAmount) return false;
+    return [t.grossMinor, t.netMinor, t.customerAmountMinor].some((m) => m !== null && formatMinor(m, t.currency).replace(/,/g, '') === (amount.includes('.') || decimalsOf(t.currency) === 0 ? amount : `${amount}.00`));
+  });
+  hits.sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1));
+  return hits.slice(0, limit).map((t) => {
+    const c = customerName(t.customerId);
+    const location: TxnLocation = t.status === 'excluded' ? { kind: 'excluded' }
+      : (t.status === 'pending_approval' || t.status === 'approved') && c ? { kind: 'customer', customerId: c.id, customerName: c.name, status: t.status }
+      : { kind: 'inbox' };
+    return { txn: view(t), location };
+  });
 }
 
 function txnCounts(filter: Omit<TxnFilter, 'status'>): TxnCounts {
@@ -543,7 +567,8 @@ export function handle(cmd: string, a: Args = {}): unknown {
       const q = (a.search ?? '').trim().toLowerCase();
       return db.customers
         .filter((c) => (a.active === undefined || c.isActive === a.active) && (!q || c.name.toLowerCase().includes(q) || (c.phone ?? '').includes(q)))
-        .map(customerView);
+        .map(customerView)
+        .filter((c) => a.hasPending === undefined || (c.pendingCount > 0) === a.hasPending);
     }
     case 'customer_get': return customerView(db.customers.find((c) => c.id === a.id) ?? fail('not_found', 'العميل غير موجود'));
     case 'customer_create': case 'customer_update': {
@@ -570,6 +595,7 @@ export function handle(cmd: string, a: Args = {}): unknown {
     // transactions
     case 'txn_list': return txnList(a.filter ?? {}, a.sort ?? { key: 'occurredAt', dir: 'desc' }, a.page ?? 1, a.pageSize ?? 50);
     case 'txn_counts': return txnCounts(a.filter ?? {});
+    case 'txn_search_all': return txnSearchAll(String(a.query ?? ''), a.limit ?? 50);
     case 'txn_get': return view(getTxn(a.id));
     case 'txn_history': return db.history.filter((h) => h.txnId === a.id).sort((x, y) => (x.createdAt < y.createdAt ? 1 : -1)).map(({ txnId: _t, ...h }) => h);
     case 'txn_preview': {

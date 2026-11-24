@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { MenuTrigger, Menu, MenuItem, Popover, type Key } from 'react-aria-components';
 import { MoreHorizontal, Plus } from 'lucide-react';
@@ -53,15 +53,23 @@ export function CustomersPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
+  const [params, setParams] = useSearchParams();
   const [active, setActive] = useState<ActiveFilter>('active');
+  // dashboard "بانتظار الموافقة" opens this list filtered (SPEC 6.2)
+  const pendingOnly = params.get('pending') === '1';
+  const setPendingOnly = (v: boolean) => {
+    const p = new URLSearchParams(params);
+    if (v) p.set('pending', '1'); else p.delete('pending');
+    setParams(p, { replace: true });
+  };
   const [editing, setEditing] = useState<Customer | 'new' | null>(null);
   const [deleting, setDeleting] = useState<Customer | null>(null);
   const { run } = useAction();
   useEffect(() => { const t = setTimeout(() => setQ(search), 200); return () => clearTimeout(t); }, [search]);
 
   const list = useQuery({
-    queryKey: ['customers', { q, active }],
-    queryFn: () => api.customersList({ search: q || undefined, active: active === 'all' ? undefined : active === 'active' }),
+    queryKey: ['customers', { q, active, pendingOnly }],
+    queryFn: () => api.customersList({ search: q || undefined, active: active === 'all' ? undefined : active === 'active', hasPending: pendingOnly || undefined }),
   });
 
   const onMenu = (c: Customer, k: Key) => {
@@ -80,10 +88,11 @@ export function CustomersPage() {
         <SearchField label="بحث بالاسم أو الهاتف" value={search} onChange={setSearch} className="w-[300px]" />
         <Segmented label="الحالة" value={active} onChange={setActive} className="w-[240px]"
           options={[{ id: 'active', label: 'النشطون' }, { id: 'inactive', label: 'المعطّلون' }, { id: 'all', label: 'الكل' }]} />
+        <Checkbox isSelected={pendingOnly} onChange={setPendingOnly} className="ms-2">لديهم بانتظار الموافقة</Checkbox>
       </div>
 
       <TableFrame>
-        <Table aria-label="العملاء" onRowAction={(k) => navigate(`/customers/${k}`)} minWidth={CW.min}>
+        <Table aria-label="العملاء" onRowAction={(k) => navigate(pendingOnly ? `/customers/${k}?tab=txns&sub=pending_approval` : `/customers/${k}`)} minWidth={CW.min}>
           <TableHeader>
             <Column isRowHeader width={CW.name} sticky="start">الاسم</Column>
             <Column width={CW.phone}>الهاتف</Column>
@@ -94,8 +103,8 @@ export function CustomersPage() {
           </TableHeader>
           <TableBody items={list.data ?? []} renderEmptyState={() => (
             <div className="py-16 text-center">
-              <p className="text-fg-2">{q ? 'لا عميل بهذا الاسم' : active === 'inactive' ? 'لا عملاء معطّلون' : 'لا عملاء بعد'}</p>
-              {!q && active !== 'inactive' && <Button variant="secondary" className="mt-3" onPress={() => setEditing('new')}><Plus />إضافة أول عميل</Button>}
+              <p className="text-fg-2">{pendingOnly ? 'لا عميل لديه معاملات بانتظار الموافقة' : q ? 'لا عميل بهذا الاسم' : active === 'inactive' ? 'لا عملاء معطّلون' : 'لا عملاء بعد'}</p>
+              {!q && !pendingOnly && active !== 'inactive' && <Button variant="secondary" className="mt-3" onPress={() => setEditing('new')}><Plus />إضافة أول عميل</Button>}
             </div>
           )}>
             {(c) => (

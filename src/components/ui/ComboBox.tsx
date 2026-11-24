@@ -6,11 +6,13 @@ import { fieldShell } from './Field';
 
 export type ComboItem = { id: Key; label: string; hint?: ReactNode };
 
-export function ComboBox({ label, items, value, onChange, placeholder, className, autoFocus, errorMessage }: {
+export function ComboBox({ label, items, value, onChange, placeholder, className, autoFocus, errorMessage, isDisabled }: {
   label: string; items: ComboItem[]; value: Key | null; onChange: (k: Key | null) => void; placeholder?: string; className?: string; autoFocus?: boolean; errorMessage?: string;
+  /** e.g. while the items are still loading, so nothing typed is lost against an empty list */
+  isDisabled?: boolean;
 }) {
   return (
-    <RacComboBox selectedKey={value} onSelectionChange={onChange} defaultItems={items} menuTrigger="focus" autoFocus={autoFocus} className={cx('flex flex-col gap-1.5', className)}>
+    <RacComboBox selectedKey={value} onSelectionChange={onChange} defaultItems={items} menuTrigger="focus" autoFocus={autoFocus} isDisabled={isDisabled} className={cx('flex flex-col gap-1.5', className)}>
       <Label className="text-[13px] text-fg-2">{label}</Label>
       <div className={cx('relative flex items-center', fieldShell, errorMessage && 'border-neg')}>
         <Input placeholder={placeholder} className="h-full w-full bg-transparent px-3 text-sm outline-none placeholder:text-fg-3" />

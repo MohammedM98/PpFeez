@@ -6,6 +6,7 @@ import { nav } from '@/lib/strings';
 import { useTheme } from '@/lib/theme';
 import { cx } from '@/components/ui/cx';
 import type { ReactNode } from 'react';
+import { SearchDialog } from '@/components/transactions/SearchDialog';
 
 function NavItem({ to, icon, label, count, tone = 'muted' }: { to: string; icon: ReactNode; label: string; count?: number; tone?: 'muted' | 'warn' }) {
   return (
@@ -106,6 +107,7 @@ export function Shell() {
       </aside>
       <main className="relative min-w-0 flex-1 overflow-auto">
         <Outlet />
+        <SearchDialog />
       </main>
     </div>
   );

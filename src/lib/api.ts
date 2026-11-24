@@ -10,7 +10,7 @@ import type {
   LedgerView, Mailbox, MailboxInput, ManualTxnInput, Page, PayoutInput, Period, PullRun,
   RawEmail, RawEmailSummary, ParseStatus, RefundAlert, Settings, Transaction, TxnCounts,
   TxnFilter, TxnListResult, TxnPreview, TxnSort, Currency, ExcelExportResult, PullRange,
-  DeleteEffect, ResetScope, ResetPreview, Money,
+  DeleteEffect, ResetScope, ResetPreview, Money, TxnSearchHit,
 } from './contract';
 
 const KNOWN_CODES = new Set<ErrorCode>([
@@ -65,7 +65,7 @@ export const api = {
   dashboardSummary: (period: Period) => call<DashboardSummary>('dashboard_summary', { period }),
 
   // customers
-  customersList: (q: { search?: string; active?: boolean } = {}) => call<Customer[]>('customers_list', q),
+  customersList: (q: { search?: string; active?: boolean; hasPending?: boolean } = {}) => call<Customer[]>('customers_list', q),
   customerGet: (id: number) => call<Customer>('customer_get', { id }),
   customerCreate: (input: CustomerInput) => call<Customer>('customer_create', { input }),
   customerUpdate: (id: number, input: CustomerInput) => call<Customer>('customer_update', { id, input }),
@@ -75,6 +75,8 @@ export const api = {
   txnList: (filter: TxnFilter, sort: TxnSort, page: number, pageSize: number) =>
     call<TxnListResult>('txn_list', { filter, sort, page, pageSize }),
   txnCounts: (filter: Omit<TxnFilter, 'status'>) => call<TxnCounts>('txn_counts', { filter }),
+  /** SPEC 6.3: every status, with where each transaction lives */
+  txnSearchAll: (query: string, limit?: number) => call<TxnSearchHit[]>('txn_search_all', { query, limit }),
   txnGet: (id: number) => call<Transaction>('txn_get', { id }),
   txnHistory: (id: number) => call<HistoryItem[]>('txn_history', { id }),
   txnPreview: (q: { id: number; fee?: FeeInput; commission?: CommissionInput; customerId?: number }) =>

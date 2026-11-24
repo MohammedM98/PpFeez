@@ -94,7 +94,7 @@
   --warn-soft: color-mix(in oklab, #e9a23b 14%, transparent);
   --focus: var(--accent-ink);
   --shadow-float: 0 16px 40px rgb(0 0 0 / 0.45);
-  --sticky-shadow: rgb(0 0 0 / 0.6);
+  --sticky-shadow: rgb(0 0 0 / 0.4);
 }
 [data-theme='light'] {
   color-scheme: light;
@@ -122,6 +122,8 @@
   /* columns that stay in place get a soft edge while there is more to scroll to (RTL: start = right) */
   [data-more-start] [data-sticky='start'] { box-shadow: -10px 0 10px -10px var(--sticky-shadow); }
   [data-more-end] [data-sticky='end'] { box-shadow: 10px 0 10px -10px var(--sticky-shadow); }
+  /* toasts never cover the transaction panel (both sit on the left): they move beside it */
+  body:has([data-detail-panel]) .toasts { left: calc(392px + 28px) !important; }
   .t-foot { background: linear-gradient(color-mix(in oklab, var(--raised) 40%, transparent), color-mix(in oklab, var(--raised) 40%, transparent)), var(--surface); }
 }
 

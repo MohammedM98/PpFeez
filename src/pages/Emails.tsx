@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/Button';
 import { SearchField } from '@/components/ui/Field';
 import { Table, TableFrame, TableHeader, Column, TableBody, Row, Cell, SELECT_W, sumWidths } from '@/components/ui/Table';
 import { DateCell } from '@/components/transactions/bits';
+import { txnHref } from '@/components/transactions/SearchDialog';
 import { Trunc } from '@/components/ui/Trunc';
 import { Dialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
@@ -101,7 +102,7 @@ export function EmailsPage() {
     if (k === 'reparse') void reparse([e.id]);
     if (k === 'create') createTxn(e);
     if (k === 'ignore') ignore(e);
-    if (k === 'txn') navigate(`/transactions?detail=${e.transactionId}`);
+    if (k === 'txn' && e.transactionId !== null) void api.txnGet(e.transactionId).then((t) => navigate(txnHref(t)), () => toast.error('المعاملة غير موجودة'));
     if (k === 'trust') setTrusting(domainFor(e));
   };
 

@@ -146,9 +146,9 @@ export function DashboardPage() {
       <PullProgress />
       <div className="mb-6 grid grid-cols-5 gap-3">
         <CountCard label="غير مخصّصة" value={s?.counts.unassigned} to="/transactions?tab=unassigned" hint="خصّصها لعملائها" />
-        <CountCard label="تحتاج رسوم" value={s?.counts.needsFee} to="/transactions?tab=all&needsFee=1" hint="أدخل رسوم PayPal أو الصافي" tone="warn" />
-        <CountCard label="بانتظار الموافقة" value={s?.counts.pendingApproval} to="/transactions?tab=pending_approval" hint="اعتمدها بعد موافقة العميل" />
-        <CountCard label="تحتاج مراجعة" value={s?.counts.needsReview} to="/transactions?tab=all&needsReview=1" hint="أكّد بياناتها قبل الاعتماد" tone="warn" />
+        <CountCard label="تحتاج رسوم" value={s?.counts.needsFee} to="/transactions?tab=unassigned&needsFee=1" hint="أدخل رسوم PayPal أو الصافي" tone="warn" />
+        <CountCard label="بانتظار الموافقة" value={s?.counts.pendingApproval} to="/customers?pending=1" hint="في صفحات العملاء، اعتمدها بعد موافقتهم" />
+        <CountCard label="تحتاج مراجعة" value={s?.counts.needsReview} to="/transactions?tab=unassigned&needsReview=1" hint="أكّد بياناتها قبل الاعتماد" tone="warn" />
         <CountCard label="تنبيهات" value={s ? s.counts.refundAlerts + (unknownDomains.data?.length ?? 0) : undefined} to="/dashboard" scrollTo="refund-alerts" hint="استردادات ونطاقات غير معروفة" tone="warn" />
       </div>
 

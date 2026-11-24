@@ -5,6 +5,7 @@ import type { BulkResult, CommissionInput, CommissionMode, FeeInput, Transaction
 import { bpsToPercentText, formatBps, formatMinor, percentTextToBps } from '@/lib/money';
 import { formatDateTime, nowLocalMinute } from '@/lib/dates';
 import { useAction } from '@/lib/useAction';
+import { txnCountLabel } from '@/lib/strings';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { TextField } from '@/components/ui/TextField';
@@ -30,6 +31,7 @@ export const actionLabel: Record<TxnAction, string> = {
 type Open =
   | { kind: 'assign' | 'fee' | 'commission' | 'approve' | 'unapprove' | 'note' | 'confirm_review' | 'edit_details'; txn: Transaction }
   | { kind: 'manual'; rawEmailId?: number; prefill?: { payerName?: string; occurredAt?: string } }
+  | { kind: 'move'; txn: Transaction }
   | { kind: 'bulk_assign'; ids: number[] }
   | { kind: 'bulk_approve'; rows: Transaction[] }
   | { kind: 'delete'; rows: Transaction[] }
@@ -72,6 +74,7 @@ export function TxnActionsHost({ children }: { children: ReactNode }) {
     <TxnActionsCtx.Provider value={ctx}>
       {children}
       {state?.kind === 'assign' && <AssignDialog txn={state.txn} onClose={close} />}
+      {state?.kind === 'move' && <AssignDialog txn={state.txn} move onClose={close} />}
       {state?.kind === 'bulk_assign' && <AssignDialog ids={state.ids} onClose={close} onBulk={(res, title) => setState({ kind: 'bulk_result', result: res, title, rows: [] })} />}
       {state?.kind === 'fee' && <FeeDialog txn={state.txn} onClose={close} />}
       {state?.kind === 'commission' && <CommissionDialog txn={state.txn} onClose={close} />}
@@ -124,7 +127,17 @@ function CommissionFields({ c, currency }: { c: ReturnType<typeof useCommissionI
 }
 
 // ---------------------------------------------------------------- assign
-function AssignDialog({ txn, ids, onClose, onBulk }: { txn?: Transaction; ids?: number[]; onClose: () => void; onBulk?: (r: BulkResult, title: string) => void }) {
+/** Where a transaction lives after it is assigned (SPEC 6.3); the host sits above the router. */
+export function customerTxnsHref(customerId: number, sub: 'pending_approval' | 'approved', txnId?: number) {
+  return `#/customers/${customerId}?tab=txns&sub=${sub}${txnId ? `&detail=${txnId}` : ''}`;
+}
+const go = (href: string) => { window.location.hash = href.slice(1); };
+
+/**
+ * Assign (one or many) or, with `move`, move a pending transaction to another customer
+ * (= unassign, then assign). The row leaves the inbox; the toast offers "فتح" and "تراجع".
+ */
+function AssignDialog({ txn, ids, move, onClose, onBulk }: { txn?: Transaction; ids?: number[]; move?: boolean; onClose: () => void; onBulk?: (r: BulkResult, title: string) => void }) {
   const customers = useQuery({ queryKey: ['customers', { active: true }], queryFn: () => api.customersList({ active: true }) });
   const [customerId, setCustomerId] = useState<number | null>(null);
   const customer = customers.data?.find((c) => c.id === customerId) ?? null;
@@ -137,46 +150,67 @@ function AssignDialog({ txn, ids, onClose, onBulk }: { txn?: Transaction; ids?: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
-  const preview = usePreview(txn && customerId ? { id: txn.id, customerId, commission: c.input } : null);
+  // the preview of a pending transaction keeps its current commission; a move starts from the new customer's
+  const preview = usePreview(txn && customerId && !move ? { id: txn.id, customerId, commission: c.input } : null);
   const p = preview.data;
-  const canApprove = !!txn && txn.feeMinor !== null;
-  const items = (customers.data ?? []).map((x) => ({ id: x.id, label: x.name, hint: <bdi dir="ltr" className="num">{formatBps(x.defaultCommissionBps)}</bdi> }));
+  const canApprove = !!txn && txn.feeMinor !== null && !move;
+  const items = (customers.data ?? []).filter((x) => !move || x.id !== txn?.customer?.id)
+    .map((x) => ({ id: x.id, label: x.name, hint: <bdi dir="ltr" className="num">{formatBps(x.defaultCommissionBps)}</bdi> }));
 
   const submit = async () => {
-    if (!customerId) return;
+    if (!customerId || !customer) return;
+    const name = customer.name;
     if (txn) {
-      const r = await run(() => api.txnAssign(txn.id, customerId, c.input, approve && canApprove), approve ? 'خُصّصت واعتُمدت' : `خُصّصت لـ ${customer?.name}`);
-      if (r.ok) onClose();
+      const approved = approve && canApprove;
+      const r = await run(async () => {
+        if (move) await api.txnUnassign(txn.id);
+        return api.txnAssign(txn.id, customerId, c.input, approved);
+      });
+      if (!r.ok) return;
+      onClose();
+      toast.action(approved ? `اعتُمدت ونُقلت إلى ${name}` : `نُقلت إلى ${name}`, [
+        { label: 'فتح', onPress: () => go(customerTxnsHref(customerId, approved ? 'approved' : 'pending_approval', txn.id)) },
+        // undoing an approval needs a reason, so an approved move is undone from the customer page
+        ...(approved || move ? [] : [{ label: 'تراجع', onPress: () => void run(() => api.txnUnassign(txn.id), 'أُعيدت إلى الوارد') }]),
+      ]);
     } else if (ids) {
       const r = await run(() => api.txnBulk({ action: 'assign', ids, customerId, commission: c.input }));
-      if (r.ok) {
-        if (r.value.failed.length === 0) { toast.ok(`خُصّصت ${r.value.ok.length} معاملة لـ ${customer?.name}`); onClose(); }
-        else onBulk?.(r.value, 'التخصيص');
+      if (!r.ok) return;
+      const moved = r.value.ok;
+      if (r.value.failed.length === 0) onClose();
+      else onBulk?.(r.value, 'التخصيص');
+      if (moved.length) {
+        toast.action(`نُقلت ${txnCountLabel(moved.length)} إلى ${name}`, [
+          { label: 'فتح', onPress: () => go(customerTxnsHref(customerId, 'pending_approval')) },
+          { label: 'تراجع', onPress: () => void run(() => api.txnBulk({ action: 'unassign', ids: moved }), 'أُعيدت إلى الوارد') },
+        ]);
       }
     }
   };
 
   return (
     <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="md"
-      title={txn ? 'تخصيص لعميل' : `تخصيص ${ids?.length} معاملة لعميل`}
-      description={txn && <>دفعة من <bdi>{txn.payerName}</bdi> بقيمة <Amount minor={txn.grossMinor} currency={txn.currency} /></>}
+      title={move ? 'نقل لعميل آخر' : txn ? 'تخصيص لعميل' : `تخصيص ${ids?.length} معاملة لعميل`}
+      description={txn && <>دفعة من <bdi>{txn.payerName || txn.payerEmail}</bdi> بقيمة <Amount minor={txn.grossMinor} currency={txn.currency} />{move && txn.customer && <> مخصّصة الآن لـ {txn.customer.name}</>}</>}
       footer={<>
         <Button variant="secondary" onPress={onClose}>تراجع</Button>
         <Button variant="primary" isDisabled={!customerId || !!c.pctError || (!!p?.error && !!txn)} isPending={pending} onPress={submit}>
-          {approve && canApprove ? <>تخصيص واعتماد {p?.customerAmountMinor != null && <Amount minor={p.customerAmountMinor} currency={txn!.currency} className="[&_span]:text-accent-fg/75" />}</> : 'تخصيص'}
+          {approve && canApprove ? <>تخصيص واعتماد {p?.customerAmountMinor != null && <Amount minor={p.customerAmountMinor} currency={txn!.currency} className="[&_span]:text-accent-fg/75" />}</> : move ? 'نقل' : 'تخصيص'}
         </Button>
       </>}>
       <div className="flex flex-col gap-4">
-        <ComboBox label="العميل" items={items} value={customerId} onChange={(k) => setCustomerId(k === null ? null : Number(k))} placeholder="ابحث باسم العميل" autoFocus />
+        <ComboBox key={customers.isSuccess ? 'ready' : 'loading'} label="العميل" items={items} value={customerId} onChange={(k) => setCustomerId(k === null ? null : Number(k))}
+          placeholder={customers.isSuccess ? 'ابحث باسم العميل' : 'جارٍ تحميل العملاء…'} isDisabled={!customers.isSuccess} autoFocus />
         <CommissionFields c={c} currency={txn?.currency ?? ''} />
-        {txn && (
+        {txn && !move && (
           <Breakdown title="معاينة" v={{
             currency: txn.currency, gross: txn.grossMinor, fee: txn.feeMinor, net: p?.netMinor ?? txn.netMinor,
             commission: customerId ? p?.commissionMinor ?? null : null, toCustomer: customerId ? p?.customerAmountMinor ?? null : null, commissionHint: customerId ? c.hint : undefined,
           }} />
         )}
         {p?.error && <p className="text-[13px] text-neg">{p.error.messageAr}</p>}
-        {txn && (
+        {move && <p className="text-[13px] text-fg-3">تُلغى من {txn?.customer?.name} وتُخصَّص للعميل الجديد بعمولته، وتبقى بانتظار الموافقة</p>}
+        {txn && !move && (
           canApprove
             ? <Checkbox isSelected={approve} onChange={setApprove}>اعتماد مباشرة (العميل وافق)</Checkbox>
             : <p className="text-[13px] text-fg-3">الاعتماد يحتاج إدخال رسوم PayPal أولاً</p>
@@ -304,7 +338,7 @@ function DeleteTxnsDialog({ rows, onClose, onFailed }: { rows: Transaction[]; on
         const r = await run(() => api.txnDelete(ids, reason || undefined));
         if (!r.ok) return;
         if (r.value.failed.length) onFailed(r.value);
-        else { deletedToast(one ? 'حُذفت المعاملة' : `حُذفت ${r.value.ok.length} معاملة`, r.value.backup); onClose(); }
+        else { deletedToast(one ? 'حُذفت المعاملة' : `حُذفت ${txnCountLabel(r.value.ok.length)}`, r.value.backup); onClose(); }
       }}>
       {one && (
         <div className="rounded-card bg-raised/60 px-4 py-3 text-sm">
@@ -450,16 +484,35 @@ function ManualDialog({ rawEmailId, prefill, onClose }: { rawEmailId?: number; p
 }
 
 // ---------------------------------------------------------------- bulk
+/** Bulk approve; the total per currency comes from the core (txn_list with ids), never added up here. */
 function BulkApproveDialog({ rows, onClose, onDone }: { rows: Transaction[]; onClose: () => void; onDone: (r: BulkResult) => void }) {
   const { run, pending } = useAction();
+  const ids = rows.map((x) => x.id);
+  const totals = useQuery({
+    queryKey: ['txn_list', 'approve-totals', ids],
+    queryFn: () => api.txnList({ ids, status: 'pending_approval' }, { key: 'occurredAt', dir: 'desc' }, 1, ids.length),
+  });
   return (
-    <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="md" title={`اعتماد ${rows.length} معاملة`}
+    <Dialog isOpen onOpenChange={(o) => !o && onClose()} width="md" title={`اعتماد ${txnCountLabel(rows.length)}`}
       description="يُضاف لكل عميل قيد بالمبلغ المقابل له"
       footer={<>
         <Button variant="secondary" onPress={onClose}>تراجع</Button>
-        <Button variant="primary" isPending={pending} onPress={async () => { const r = await run(() => api.txnBulk({ action: 'approve', ids: rows.map((x) => x.id) })); if (r.ok) onDone(r.value); }}>اعتماد الكل</Button>
+        <Button variant="primary" isPending={pending} isDisabled={totals.isLoading} onPress={async () => { const r = await run(() => api.txnBulk({ action: 'approve', ids })); if (r.ok) onDone(r.value); }}>اعتماد الكل</Button>
       </>}>
-      <ul className="divide-y divide-line rounded-card border border-line">
+      {!!totals.data?.totals.length && (
+        <div className="mb-3 rounded-card bg-raised/60 px-4 py-3">
+          <div className="mb-1 text-[13px] text-fg-3">المجموع للعملاء</div>
+          <div className="flex flex-wrap gap-x-6 gap-y-1">
+            {totals.data.totals.map((x) => (
+              <span key={x.currency} className="text-[17px] font-medium">
+                <Amount minor={x.customerAmountMinor} currency={x.currency} className="text-accent-ink" />
+                <span className="num ms-2 text-[13px] font-normal text-fg-3">{txnCountLabel(x.count)}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      <ul className="max-h-[300px] divide-y divide-line overflow-auto rounded-card border border-line">
         {rows.map((t) => (
           <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
             <span className="min-w-0 truncate"><span className="text-fg">{t.customer?.name ?? '—'}</span> <span className="text-fg-3">من <bdi>{t.payerName}</bdi></span></span>

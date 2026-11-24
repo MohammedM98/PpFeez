@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, TabPanel, MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
 import { ArrowRight, Download, FileSpreadsheet, HandCoins, MoreHorizontal, Pencil, Printer, Scale, Trash2 } from 'lucide-react';
@@ -168,7 +168,7 @@ function LedgerTable({ customer, currency }: { customer: Customer; currency: str
                       <Button variant="quiet" size="icon" aria-label="إجراءات القيد"><MoreHorizontal /></Button>
                       <Popover placement="bottom end" className="w-60 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
                         <Menu className="outline-none" disabledKeys={['no-delete']}
-                          onAction={(k) => (k === 'txn' ? navigate(`/transactions?detail=${e.transactionId}`) : k === 'delete' ? setDeleting(e) : setReversing(e))}>
+                          onAction={(k) => (k === 'txn' ? navigate(`/customers/${customer.id}?tab=txns&sub=approved&detail=${e.transactionId}`) : k === 'delete' ? setDeleting(e) : setReversing(e))}>
                           {e.transactionId !== null && <MenuItem id="txn" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">فتح المعاملة</MenuItem>}
                           {!reversed && e.reversesEntryId === null && <MenuItem id="reverse" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">عكس القيد</MenuItem>}
                           {e.deletable
@@ -333,10 +333,18 @@ function MoneyEntryDialog({ kind, customer, currencies, defaultCurrency, onClose
 
 export function CustomerLedgerPage() {
   const { id } = useParams();
-  const customerId = Number(id);
+  // a different customer is a fresh page (tabs, filters, selection)
+  return <CustomerPage key={id} customerId={Number(id)} />;
+}
+
+function CustomerPage({ customerId }: { customerId: number }) {
+  const [params] = useSearchParams();
   const customer = useQuery({ queryKey: ['customer', customerId], queryFn: () => api.customerGet(customerId) });
   const cards = useQuery({ queryKey: ['ledger_balances', customerId], queryFn: () => api.ledgerBalances(customerId) });
-  const [tab, setTab] = useState<string | null>(null);
+  const pTab = params.get('tab');
+  const [tab, setTab] = useState<string | null>(pTab === 'txns' ? 'txns' : null);
+  // links into this page ("فتح" after assigning, search results, the ledger's "فتح المعاملة")
+  useEffect(() => { if (pTab === 'txns') setTab('txns'); }, [pTab, params]);
   const [dialog, setDialog] = useState<'payout' | 'adjustment' | 'edit' | 'delete' | null>(null);
   const navigate = useNavigate();
   const currencies = cards.data?.map((c) => c.currency) ?? [];
@@ -371,10 +379,12 @@ export function CustomerLedgerPage() {
         <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(String(k))}>
           <TabList aria-label="العملة" className="mb-4 flex gap-1 border-b border-line">
             {currencies.map((cur) => <Tab key={cur} id={cur} className={tabCls}>دفتر {cur}</Tab>)}
-            <Tab id="txns" className={tabCls}>معاملاته</Tab>
+            <Tab id="txns" className={tabCls}>
+              <span className="flex items-center gap-2">معاملاته{c.pendingCount > 0 && <Badge tone="accent"><span className="num">{c.pendingCount}</span></Badge>}</span>
+            </Tab>
           </TabList>
           {currencies.map((cur) => <TabPanel key={cur} id={cur} className="outline-none"><LedgerTable customer={c} currency={cur} /></TabPanel>)}
-          <TabPanel id="txns" className="outline-none"><TransactionsView customerId={c.id} /></TabPanel>
+          <TabPanel id="txns" className="outline-none"><TransactionsView scope={{ kind: 'customer', customerId: c.id }} /></TabPanel>
         </Tabs>
       )}
 

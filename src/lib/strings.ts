@@ -52,6 +52,13 @@ export const txn = {
   },
 };
 
+/** "معاملة واحدة" / "معاملتان" / "3 معاملات" / "11 معاملة": Arabic counted noun. */
+export function txnCountLabel(n: number): string {
+  if (n === 1) return 'معاملة واحدة';
+  if (n === 2) return 'معاملتان';
+  return n >= 3 && n <= 10 ? `${n} معاملات` : `${n} معاملة`;
+}
+
 /** "آخر 7 أيام" / "آخر 30 يوماً": Arabic counted noun (3–10 plural, 11+ singular accusative). */
 export function daysLabel(n: number): string {
   if (n === 1) return 'آخر يوم';

@@ -116,9 +116,13 @@ for (const theme of ['dark', 'light'] as const) {
       await page.waitForTimeout(150);
       problems.push(...await checkTables(page, 'ledger TRY'));
       await shot('23-align-ledger');
-      await page.getByRole('tab', { name: 'معاملاته' }).click();
+      await page.getByRole('tab', { name: /معاملاته/ }).click();
+      await expect(page.getByRole('tab', { name: /بانتظار الموافقة/ })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByText('Second instalment')).toBeVisible();
+      problems.push(...await checkTables(page, 'customer pending'));
+      await page.getByRole('tab', { name: /معتمدة/ }).click();
       await expect(page.getByText('Ayşegül Karadeniz-Yıldırım')).toBeVisible();
-      problems.push(...await checkTables(page, 'customer transactions'));
+      problems.push(...await checkTables(page, 'customer approved'));
       await shot('24-align-customer-transactions');
 
       await open('emails');

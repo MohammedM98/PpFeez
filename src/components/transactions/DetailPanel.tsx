@@ -36,10 +36,11 @@ export function DetailPanel({ id, onClose }: { id: number; onClose: () => void }
 
   if (!t) return null;
   const primary = PRIMARY.find((a) => t.allowedActions.includes(a));
-  const rest = t.allowedActions.filter((a) => a !== primary && a !== 'edit_note' && !(t.needsReview && a === 'edit_details'));
+  const rest: (TxnAction | 'move')[] = t.allowedActions.filter((a) => a !== primary && a !== 'edit_note' && !(t.needsReview && a === 'edit_details'));
+  if (t.allowedActions.includes('unassign')) rest.splice(rest.indexOf('unassign') + 1, 0, 'move');
 
   return (
-    <aside className="fixed inset-y-3 left-3 z-30 flex w-[392px] flex-col overflow-hidden rounded-panel border border-line bg-surface shadow-(--shadow-float)" aria-label="تفاصيل المعاملة">
+    <aside data-detail-panel="" className="fixed inset-y-3 left-3 z-30 flex w-[392px] flex-col overflow-hidden rounded-panel border border-line bg-surface shadow-(--shadow-float)" aria-label="تفاصيل المعاملة">
       <header className="flex items-start justify-between gap-3 border-b border-line p-5">
         <div className="min-w-0">
           <div className="mb-1.5 flex items-center gap-1.5">
@@ -126,9 +127,9 @@ export function DetailPanel({ id, onClose }: { id: number; onClose: () => void }
           <MenuTrigger>
             <Button variant="secondary" size="icon" aria-label="إجراءات أخرى" className="size-9"><MoreHorizontal /></Button>
             <Popover placement="top end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-              <Menu className="outline-none" onAction={(k) => actions.act(k as TxnAction, t)}>
+              <Menu className="outline-none" onAction={(k) => (k === 'move' ? actions.open({ kind: 'move', txn: t }) : actions.act(k as TxnAction, t))}>
                 {rest.map((a) => (
-                  <MenuItem key={a} id={a} className={`flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised ${a === 'unapprove' || a === 'delete' ? 'text-neg' : ''}`}>{actionLabel[a]}</MenuItem>
+                  <MenuItem key={a} id={a} className={`flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised ${a === 'unapprove' || a === 'delete' ? 'text-neg' : ''}`}>{a === 'move' ? 'نقل لعميل آخر' : actionLabel[a]}</MenuItem>
                 ))}
               </Menu>
             </Popover>
