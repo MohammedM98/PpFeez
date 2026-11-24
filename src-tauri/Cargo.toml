@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "ppfeez"
-version = "0.1.0"
+version = "0.2.0"
 description = "PpFeez — محاسبة دفعات PayPal للعملاء"
 edition = "2021"
 publish = false
