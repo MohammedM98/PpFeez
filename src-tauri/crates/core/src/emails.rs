@@ -283,7 +283,7 @@ impl Core {
 }
 
 /// Bump when the parsers improve: emails are re-parsed once at the next start (backfill).
-pub const PARSER_VERSION: i64 = 2;
+pub const PARSER_VERSION: i64 = 3;
 const K_PARSER_VERSION: &str = "parser_version";
 
 impl Core {

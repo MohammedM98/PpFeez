@@ -188,8 +188,9 @@ fn every_fixture_has_an_expected_outcome() {
     let mut n = 0;
     for entry in std::fs::read_dir(dir).unwrap() {
         let name = entry.unwrap().file_name().to_string_lossy().to_string();
-        // Type x language, generic and domain fixtures are covered by tests/paypal_types.rs.
-        let newer = ["en_", "he_", "ar_", "tr_", "generic_", "spoof_", "unknown_"];
+        // Type x language, generic and domain fixtures are covered by tests/paypal_types.rs, the
+        // redacted real samples by tests/real_il.rs.
+        let newer = ["en_", "he_", "ar_", "tr_", "generic_", "spoof_", "unknown_", "real_"];
         if !name.ends_with(".eml") || newer.iter().any(|p| name.starts_with(p)) {
             continue;
         }

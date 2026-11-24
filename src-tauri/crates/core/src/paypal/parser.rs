@@ -131,8 +131,9 @@ pub fn parse_paypal_date_with(value: &str, received_at: DateTime<Utc>, day_first
             Some(DateTime::<Utc>::from_naive_utc_and_offset(local - chrono::Duration::hours(offset_h), Utc))
         }
         None => {
-            // Date only: keep the reception time when it is the same calendar day.
-            if received_at.date_naive() == date {
+            // Date only: keep the reception time when it is the same calendar day, give or take
+            // one day (the date is in the account's time zone, e.g. Israel, the reception in UTC).
+            if (received_at.date_naive() - date).num_days().abs() <= 1 {
                 Some(received_at)
             } else {
                 Some(DateTime::<Utc>::from_naive_utc_and_offset(date.and_hms_opt(12, 0, 0)?, Utc))

@@ -104,6 +104,9 @@ pub const EN: Lang = Lang {
     sent_you: &[
         r"(?i)^(?P<name>.+?)\s+(?:has\s+)?sent\s+you\s+(?P<amount>.+)$",
         r"(?i)^(?P<name>.+?)\s+paid\s+your\s+(?:request|invoice)\b(?:\s+(?:of|for)\s+(?P<amount>.+))?",
+        // PayPal Israel (en-IL) "You've got money": "Accept your $100.00 USD from Jane Doe".
+        r"(?i)^accept\s+your\s+(?P<amount>.+?)\s+from\s+(?P<name>.+)$",
+        r"(?i)^you(?:'ve|\s+have)?\s+received\s+(?P<amount>.+?)\s+from\s+(?P<name>.+)$",
     ],
     subject_from: &[r"(?i)(?:received|payment)\s+(?:of\s+)?(?:.*?\s)?from\s+(?P<name>.+?)\s*$"],
 };
