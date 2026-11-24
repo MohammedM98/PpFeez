@@ -49,7 +49,7 @@ export type ErrorCode =
   | 'customer_inactive' | 'duplicate'
   | 'already_reversed' | 'has_dependents'
   | 'imap_auth' | 'imap_connect' | 'imap_disabled' | 'pull_running' | 'invalid_range'
-  | 'not_deletable' | 'confirm_mismatch'
+  | 'not_deletable' | 'confirm_mismatch' | 'excel_layout'
   | 'backup_failed' | 'restore_failed'
   | 'file_locked' | 'no_export_path' | 'export_failed'
   | 'internal';
@@ -79,6 +79,7 @@ export type Settings = {
   excelExportPath: string | null;     // الملف الرئيسي (SPEC §6.8)
   excelLastExportedAt: IsoDate | null;
   excelUpdateOnClose: boolean;
+  excelMode: 'append' | 'rewrite';    // SPEC §6.8.1، افتراضي 'append'
   autoCheckUpdates: boolean;          // SPEC §6.9، افتراضي true
   extraPaypalDomains: string[];       // SPEC §5.6، نطاقات يضيفها المدير
   builtinPaypalDomains: string[];     // للقراءة فقط (update_settings يتجاهله)
@@ -349,9 +350,9 @@ export type ResetPreview = { transactions: number; rawEmails: number; pullRuns: 
 // data_reset({ scope: ResetScope, confirmText: string }): { backup: BackupFile }   // confirmText يجب أن يكون "حذف"; throws confirm_mismatch | backup_failed
 
 // ===== Excel (SPEC §6.8) =====
-export type ExcelExportResult = { path: string; sheets: number; rows: number; exportedAt: IsoDate };
+export type ExcelExportResult = { path: string; sheets: number; rows: number; exportedAt: IsoDate; added: number; updated: number; created: boolean };  // added/updated لورقة المعاملات في وضع append؛ created = أُنشئ الملف لأول مرة
 // excel_set_path({ path }): Settings                    // المسار من نافذة الحفظ
-// excel_update(): ExcelExportResult                     // يعيد كتابة الملف الرئيسي   throws no_export_path | file_locked | export_failed
+// excel_update(): ExcelExportResult                     // append (افتراضي): يضيف الجديد ويحدّث أعمدة البرنامج ويحفظ تعديلات المدير؛ rewrite: إعادة كتابة   throws no_export_path | file_locked | excel_layout | export_failed
 // excel_export_transactions({ filter: TxnFilter, sort: TxnSort, path }): ExcelExportResult
 // excel_export_ledger({ customerId, currency?: Currency, period?: Period, path }): ExcelExportResult  // بلا currency => ورقة لكل عملة
 // open_path({ path }): void                             // فتح الملف في Excel
