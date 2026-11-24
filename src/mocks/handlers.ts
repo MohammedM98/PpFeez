@@ -906,10 +906,10 @@ export function handle(cmd: string, a: Args = {}): unknown {
       if (!db.settings.excelExportPath) fail('no_export_path', 'اختر مسار ملف Excel أولاً');
       if (new URLSearchParams(location.search).get('excelLocked') === '1') fail('file_locked', 'أغلق الملف في Excel ثم أعد المحاولة');
       db.settings.excelLastExportedAt = nowIso();
-      return { path: db.settings.excelExportPath, sheets: 4, rows: db.txns.length + db.ledger.length + db.customers.length + 8, exportedAt: db.settings.excelLastExportedAt };
+      return { path: db.settings.excelExportPath, sheets: 4, rows: db.txns.length + db.ledger.length + db.customers.length + 8, exportedAt: db.settings.excelLastExportedAt, added: 3, updated: 2, created: false };
     }
-    case 'excel_export_transactions': return { path: a.path, sheets: 1, rows: txnList(a.filter ?? {}, a.sort, 1, 100000).total + 1, exportedAt: nowIso() };
-    case 'excel_export_ledger': return { path: a.path, sheets: a.currency ? 1 : balances(a.customerId).length, rows: db.ledger.filter((e) => e.customerId === a.customerId).length, exportedAt: nowIso() };
+    case 'excel_export_transactions': return { path: a.path, sheets: 1, rows: txnList(a.filter ?? {}, a.sort, 1, 100000).total + 1, exportedAt: nowIso(), added: 0, updated: 0, created: true };
+    case 'excel_export_ledger': return { path: a.path, sheets: a.currency ? 1 : balances(a.customerId).length, rows: db.ledger.filter((e) => e.customerId === a.customerId).length, exportedAt: nowIso(), added: 0, updated: 0, created: true };
     case 'open_path': return null;
 
     // plugins

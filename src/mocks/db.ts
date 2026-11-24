@@ -200,6 +200,7 @@ export function seed(): Db {
       backupDir: 'D:\\Backups\\PpFeez', backupOnClose: true, backupKeep: 30, autoLockMinutes: 15, onboardingDone: true,
       excelExportPath: 'D:\\PpFeez\\PpFeez.xlsx', excelLastExportedAt: daysAgo(1, 22, 40), excelUpdateOnClose: true,
       autoCheckUpdates: true,
+      excelMode: 'append',
       extraPaypalDomains: [],
       builtinPaypalDomains: ['paypal.com', 'paypal.co.il', 'paypal.co.uk'], // same as BUILTIN in the backend
     },
