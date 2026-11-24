@@ -355,6 +355,11 @@ export function addStressData(db: Db) {
   ];
   const txns = T.map(mkTxn);
   db.txns.push(...txns);
+  // approved transfers carry their number (#) per customer and currency, as the core gives them (SPEC 4.8)
+  for (const t of txns.filter((x) => x.status === 'approved')) {
+    const k = `${t.customerId}:${t.currency}`;
+    t.customerSeq = db.txnSeq[k] = (db.txnSeq[k] ?? 0) + 1;
+  }
   for (const t of txns) {
     db.history.push({ txnId: t.id, id: ++db.seq, action: 'created', labelAr: 'سُحبت من البريد', details: {}, createdAt: t.occurredAt });
     db.emails.push({
