@@ -416,7 +416,9 @@ export type ExcelExportResult = { path: string; sheets: number; rows: number; ex
 // ===== ملف Excel للعميل (SPEC §6.8.2) =====
 export type ExcelStatus = 'exported' | 'pending' | 'not_exported';   // SPEC §6.8.3
 export type CustomerExcel = { path: string; updatedAt: IsoDate | null; exists: boolean; addToExcelByDefault: boolean;
-  autoSync: boolean; exportedCount: number; pendingCount: number; notExportedCount: number; lastError: AppError | null;
+  autoSync: boolean;   // افتراضي false (SPEC §6.8.3 تحديث)
+  fileName: string;    // اسم الملف للعرض في نافذة الإرسال
+  exportedCount: number; pendingCount: number; notExportedCount: number; lastError: AppError | null;
   currentFileId: number; filesCount: number };   // القيم كلها للملف الحالي (SPEC §6.8.4)
 export type CustomerExcelItemRef = { kind: 'txn' | 'ledger' | 'payout'; id: number };
 export type CustomerExcelPreview = {
