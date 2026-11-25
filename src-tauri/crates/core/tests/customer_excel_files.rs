@@ -154,7 +154,7 @@ fn all_copies_every_movement() {
     sync(&h);
     let (_, new, added) = new_file(&h, c, "copy.xlsx", ExcelStart::All);
     assert_eq!(added, 3);
-    assert_eq!(seqs(&new), vec!["Float(1.0)", "Float(2.0)", ""]);
+    assert_eq!(seqs(&new), vec!["Float(1.0)", "Float(2.0)", "دفعة 1"], "a standalone payout shows its number");
     assert!(!keys(&new, "USD").iter().any(|k| k.starts_with("B:")));
     assert_eq!(counts(&h, c), (3, 0, 0));
 }

@@ -67,8 +67,6 @@ const WIDTHS: [f64; 17] =
     [7.0, 12.0, 38.0, 14.0, 11.0, 14.0, 10.0, 12.0, 13.0, 13.0, 14.0, 13.0, 14.0, 9.0, 22.0, 24.0, 12.0];
 pub const NOT_PAID: &str = "غير مدفوع";
 pub const PAID: &str = "عدد المدفوع";
-/// 0-based row of the table header; data starts on the next row.
-pub const HEADER_ROW: u32 = 12;
 /// Calm fill of payout rows.
 pub const PAYOUT_FILL: u32 = 0xEAF3EA;
 pub const LAST_UPDATED: &str = "آخر تحديث";
@@ -180,7 +178,9 @@ fn figure_formulas(currency: &str) -> Vec<(&'static str, String, St)> {
 /// Unpaid and paid transfer counts written in the header (SPEC §6.8.6).
 pub type Counts = (i64, i64);
 
-fn header_block(customer: &str, currency: &str, today: NaiveDate, counts: Option<Counts>) -> Vec<RowB> {
+/// The block above the table. SPEC §6.8.6 / §4.9: new files have no "غير مدفوع" / "عدد المدفوع"
+/// (payouts are no longer tied to transfers); `legacy` is the 0.5.x/0.6.0 block with them.
+fn header_block(customer: &str, currency: &str, today: NaiveDate, legacy: bool) -> Vec<RowB> {
     let mut rows = vec![];
     let mut title = RowB::default();
     title.str(0, &format!("كشف حساب — {customer}"), St::Bold);
@@ -189,13 +189,11 @@ fn header_block(customer: &str, currency: &str, today: NaiveDate, counts: Option
     cur.str(C_LABEL, "العملة", St::Bold).str(C_GROSS, currency, St::Bold);
     rows.push(cur);
     for (label, formula, st) in figure_formulas(currency) {
+        if !legacy && (label == NOT_PAID || label == PAID) {
+            continue;
+        }
         let mut r = RowB::default();
-        r.str(C_LABEL, label, St::Bold);
-        match (counts, label) {
-            (Some((not_paid, _)), NOT_PAID) => r.num(C_GROSS, not_paid as f64, st),
-            (Some((_, paid)), PAID) => r.num(C_GROSS, paid as f64, st),
-            _ => r.formula(C_GROSS, &formula, st),
-        };
+        r.str(C_LABEL, label, St::Bold).formula(C_GROSS, &formula, st);
         rows.push(r);
     }
     let mut upd = RowB::default();
@@ -206,8 +204,8 @@ fn header_block(customer: &str, currency: &str, today: NaiveDate, counts: Option
 }
 
 /// A statement sheet as a model: header block, table header and `lines` from the first data row.
-pub fn sheet_model(customer: &str, currency: &str, today: NaiveDate, lines: &[Line], counts: Counts) -> SheetModel {
-    model_with(customer, currency, today, lines, Some(counts), false)
+pub fn sheet_model(customer: &str, currency: &str, today: NaiveDate, lines: &[Line]) -> SheetModel {
+    model_with(customer, currency, today, lines, false, false)
 }
 
 /// Header texts of a sheet; `with_sent` is the 0.5.x/0.6.0 layout, "تم الإرسال؟" after "الرصيد".
@@ -219,7 +217,7 @@ pub fn headers(with_sent: bool) -> Vec<&'static str> {
     h
 }
 
-/// Tests only: the layout of 0.5.x/0.6.0 files (`counts: None` keeps their COUNTIFS formulas;
+/// Tests only: the layout of 0.5.x/0.6.0 files (`legacy`: the two counts as COUNTIFS formulas;
 /// `with_sent: false` is such a file whose "تم الإرسال؟" column the owner deleted).
 #[doc(hidden)]
 pub fn model_with(
@@ -227,9 +225,12 @@ pub fn model_with(
     currency: &str,
     today: NaiveDate,
     lines: &[Line],
-    counts: Option<Counts>,
+    legacy: bool,
     with_sent: bool,
 ) -> SheetModel {
+    let block = header_block(customer, currency, today, legacy);
+    // 0-based row of the table header, right under the block; data starts on the next row.
+    let header_row = block.len() as u32;
     let heads = headers(with_sent);
     // Program column → sheet column (0-based).
     let at = |c: u16| -> Option<u16> {
@@ -248,14 +249,14 @@ pub fn model_with(
     let mut m = SheetModel {
         name: sheet_name(currency),
         rows: vec![],
-        header_row: HEADER_ROW,
-        filter_last: HEADER_ROW,
+        header_row,
+        filter_last: header_row,
         cols: heads.len() as u16,
         widths,
         table: Some(table_name(currency)),
         hidden: vec![key_at],
     };
-    for r in header_block(customer, currency, today, counts) {
+    for r in block {
         m.push_extra(r);
     }
     let mut head = RowB::default();
@@ -264,7 +265,7 @@ pub fn model_with(
     }
     m.push_extra(head);
     let cols: Vec<u32> = (0..PROGRAM_COLS as u16).map(|c| at(c).map_or(0, |x| x as u32 + 1)).collect();
-    let first = HEADER_ROW + 2;
+    let first = header_row + 2;
     for (k, line) in lines.iter().enumerate() {
         let r = first + k as u32;
         let mut row = RowB::default();
@@ -519,13 +520,13 @@ pub fn append_lines(
                 if existing_tables.contains(&tname) {
                     return Err(layout(format!("يوجد في الملف جدول آخر اسمه «{tname}». غيّر اسمه ثم أعد المحاولة.")));
                 }
-                let m = sheet_model(customer, currency, today, batch, counts.get(currency).copied().unwrap_or((0, 0)));
+                let m = sheet_model(customer, currency, today, batch);
                 let keep = Keep { sheet_pr: None, tab_selected: false, tail: vec![] };
                 let xml = model::render_xml(&m, &mut styles, wb.date1904, &keep, Some("rId1"));
                 let last = (m.filter_last.max(m.header_row + 1)) + 1;
                 let table = NewTable {
                     name: tname,
-                    range: format!("A{}:{}{last}", HEADER_ROW + 1, col_name(HEADERS.len() as u32)),
+                    range: format!("A{}:{}{last}", m.header_row + 1, col_name(HEADERS.len() as u32)),
                     columns: HEADERS.iter().map(|h| h.to_string()).collect(),
                     style: "TableStyleLight9".into(),
                 };

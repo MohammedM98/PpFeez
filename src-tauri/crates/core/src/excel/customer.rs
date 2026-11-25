@@ -773,6 +773,10 @@ impl Core {
         } else {
             cells.push((stmt::C_DEBIT, money(Some(-e.amount_minor), cur), m));
         }
+        // SPEC §4.9: a standalone payout carries its number like a linked one ("دفعة N").
+        if let (LedgerType::Payout, Some(n), None) = (e.kind, e.payout_seq, e.payout_id) {
+            cells.push((stmt::C_SEQ, Some(V::Str(format!("دفعة {n}"))), St::Bold));
+        }
         if let Some(method) = e.payout_method {
             cells.push((stmt::C_METHOD, Some(V::Str(method.label_ar().into())), St::Text));
             cells.push((stmt::C_PLATFORM, opt_str(e.payout_platform.as_deref()), St::Text));
@@ -1918,9 +1922,8 @@ impl Core {
 
     /// A new, empty statement (one sheet per currency) saved at `path`.
     fn save_new_workbook(&self, customer_id: i64, name: &str, currencies: &[String], path: &Path) -> AppResult<()> {
-        let counts = self.paid_counts(customer_id)?;
         self.save_workbook_with(customer_id, name, currencies, path, |cur, today| {
-            stmt::sheet_model(name, cur, today, &[], counts.get(cur).copied().unwrap_or((0, 0)))
+            stmt::sheet_model(name, cur, today, &[])
         })
     }
 
@@ -1933,7 +1936,7 @@ impl Core {
             (crate::customers::get(&conn, customer_id)?, customer_currencies(&conn, customer_id)?)
         };
         self.save_workbook_with(customer_id, &customer.name, &currencies, Path::new(path), |cur, today| {
-            stmt::model_with(&customer.name, cur, today, &[], None, with_sent)
+            stmt::model_with(&customer.name, cur, today, &[], true, with_sent)
         })?;
         self.customer_excel_link(customer_id, path)?;
         Ok(())

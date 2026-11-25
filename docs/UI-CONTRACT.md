@@ -275,6 +275,7 @@ export type LedgerEntry = {
   excelStatus: ExcelStatus;         // SPEC §6.8.3
   notDeletableReasonAr: string | null;
   payoutMethod: PayoutMethod | null;
+  payoutSeq: number | null;      // SPEC §4.9: رقم الدفعة ("دفعة N") لقيد دفعة، مستقلة أو مرتبطة؛ null لغيرها
   reference: string | null;
   description: string;
   entryDate: string;             // YYYY-MM-DD
@@ -282,7 +283,7 @@ export type LedgerEntry = {
 };
 export type BalanceCard = { currency: Currency; creditsMinor: Minor; debitsMinor: Minor; balanceMinor: Minor };
 export type LedgerView = { openingBalanceMinor: Minor; entries: LedgerEntry[]; closingBalanceMinor: Minor };
-export type PayoutInput = { currency: Currency; amountText: string; entryDate: string; method: PayoutMethod; platform?: string; network?: string; destination?: string; reference?: string; description?: string; confirmOverdraw?: boolean };  // دفعة غير مرتبطة بحوالات
+export type PayoutInput = { currency: Currency; amountText: string; entryDate: string; method: PayoutMethod; platform?: string; network?: string; destination?: string; reference?: string; description?: string; confirmOverdraw?: boolean };  // دفعة مستقلة (SPEC §4.9): description = الملاحظة؛ تأخذ الرقم التالي "دفعة N" وتحفظ آخر طريقة/منصة/شبكة/عنوان للعميل (payout_defaults)
 export type AdjustmentInput = { currency: Currency; amountText: string; direction: 'credit' | 'debit'; entryDate: string; description: string };
 export type RefundAlert = {
   refundTxn: Transaction;
@@ -294,6 +295,8 @@ export type RefundAlert = {
 // ledger_balances({ customerId }): BalanceCard[]
 // ledger_entries({ customerId, currency, period?: Period }): LedgerView
 // ledger_add_payout({ customerId, input: PayoutInput }): LedgerEntry   throws validation (code 'validation', field 'overdraw') إن تجاوزت الرصيد بلا confirmOverdraw
+// ledger_payout_preview({ customerId, currency, amountText?: string }): { balanceBeforeMinor: Minor; amountMinor: Minor; balanceAfterMinor: Minor; overdraw: boolean }
+//   SPEC §4.9: الرصيد قبل/بعد في نافذة "تسجيل دفعة"؛ amountText فارغ ⇒ amountMinor 0؛ نص غير صالح ⇒ invalid_amount (field 'amountText')
 
 // ===== الدفعات المرتبطة وكشف الحساب (SPEC §4.8، §6.5) =====
 export type PayoutStatus = 'draft' | 'sent' | 'cancelled';
@@ -321,7 +324,7 @@ export type StatementRow =
   | { kind: 'txn'; txn: Transaction; runningBalanceMinor: Minor }
   | { kind: 'payout'; payout: Payout; runningBalanceMinor: Minor }
   | { kind: 'entry'; entry: LedgerEntry; runningBalanceMinor: Minor };   // تسوية / عكس / دفعة غير مرتبطة
-export type StatementFilter = { show?: 'all' | 'unpaid' | 'paid' | 'payouts' | 'not_exported'; period?: Period };   // not_exported = pending أو not_exported
+export type StatementFilter = { show?: 'all' | 'transfers' | 'unpaid' | 'paid' | 'payouts' | 'not_exported'; period?: Period };   // not_exported = pending أو not_exported؛ transfers = الحوالات فقط (SPEC §4.9)
 // customer_summary({ customerId, currency }): CustomerSummary
 // customer_statement({ customerId, currency, filter?: StatementFilter }): { openingBalanceMinor: Minor; rows: StatementRow[]; closingBalanceMinor: Minor }
 // payout_prepare({ customerId, currency, selection: PayoutSelection }): PayoutPreparation
@@ -332,6 +335,21 @@ export type StatementFilter = { show?: 'all' | 'unpaid' | 'paid' | 'payouts' | '
 // payout_update_details({ payoutId, details: PayoutDetails }): Payout
 // payout_cancel({ payoutId, reason: string }): Payout          // يعيد الحوالات غير مدفوعة ويعكس القيد إن كانت مرسلة
 // payouts_list({ customerId, currency }): Payout[]
+// ===== سجل الدفعات (SPEC §4.9): الدفعات المستقلة (ledger_add_payout) والمرتبطة القديمة في ترقيم واحد =====
+export type PayoutRegisterRow = {
+  seq: number;                        // "دفعة N" لكل عميل وعملة (ترقيم واحد للنوعين)
+  kind: 'standalone' | 'linked';
+  ledgerEntryId: number | null;       // قيد الدفتر (المستقلة دائماً؛ المرتبطة بعد الإرسال)
+  payoutId: number | null;            // للمرتبطة فقط (للإلغاء عبر payout_cancel)
+  date: string; amountMinor: Minor;   // موجب
+  method: PayoutMethod; platform: string | null; network: string | null; destination: string | null;
+  reference: string | null; note: string | null;   // المستقلة: الوصف إن كتبه المدير
+  status: PayoutStatus;               // المستقلة: 'sent'، أو 'cancelled' إن عُكس قيدها
+  cumulativePaidMinor: Minor;         // التراكمي المدفوع حتى هذا الصف (المرسلة غير الملغاة فقط)
+  rangeLabel: string | null;          // للمرتبطة القديمة فقط
+};
+// payout_register({ customerId, currency }): PayoutRegisterRow[]   // مرتّبة بالرقم
+//   إلغاء دفعة مستقلة: ledger_reverse_entry({ entryId: ledgerEntryId, reason })
 // payout_defaults({ customerId }): PayoutDetails | null        // آخر طريقة/منصة/شبكة/عنوان لهذا العميل
 // payout_platform_suggestions(): string[]                       // منصات/بنوك استُخدمت سابقاً
 // txn_set_matched({ ids: number[], matched: boolean }): BulkResult
