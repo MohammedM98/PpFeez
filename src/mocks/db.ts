@@ -321,7 +321,16 @@ export function seed(): Db {
 /** Same as ltr() in the backend: isolate numbers inside generated Arabic text (U+2066 … U+2069). */
 export const ltr = (s: string) => `\u2066${s}\u2069`;
 
-export function creditDescription(t: Pick<TxnRow, 'payerName' | 'grossMinor' | 'feeMinor' | 'currency' | 'commissionMode' | 'commissionBps' | 'commissionMinor'>): string {
+/**
+ * SPEC 6.8.5: a transfer's line reads "حوالة من {المرسل}" (+ the payer's note); the amounts have their own
+ * columns, never inside the text.
+ */
+export function creditDescription(t: Pick<TxnRow, 'payerName' | 'payerEmail' | 'payerNote'>): string {
+  return `حوالة من ${t.payerName || t.payerEmail || '—'}${t.payerNote ? ` — ${t.payerNote}` : ''}`;
+}
+
+/** How 0.5 and earlier stored it (kept for one seeded entry: old ledgers are never rewritten). */
+export function legacyCreditDescription(t: Pick<TxnRow, 'payerName' | 'grossMinor' | 'feeMinor' | 'currency' | 'commissionMode' | 'commissionBps' | 'commissionMinor'>): string {
   const f = (m: number) => fmt(m, t.currency);
   const c = t.commissionMode === 'percent' ? `${(t.commissionBps! / 100).toFixed(2)}%` : f(t.commissionMinor ?? 0);
   return `دفعة من ${t.payerName ?? '—'} — أصلي ${ltr(f(t.grossMinor))}، رسوم ${ltr(f(t.feeMinor ?? 0))}، عمولة ${ltr(c)}`;

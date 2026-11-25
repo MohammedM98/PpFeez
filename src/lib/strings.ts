@@ -20,7 +20,8 @@ export const txnStatus: Record<TxnStatus, string> = {
 
 export const txnType: Record<TxnType, string> = { payment: 'دفعة', refund: 'استرداد', reversal: 'عكس' };
 
-export const ledgerType: Record<LedgerType, string> = { credit: 'اعتماد', payout: 'دفعة', adjustment: 'تسوية', reversal: 'عكس' };
+/** SPEC 6.8.5: what the owner calls each ledger line (never "اعتماد دفعة") */
+export const ledgerType: Record<LedgerType, string> = { credit: 'حوالة', payout: 'دفعة للعميل', adjustment: 'تسوية', reversal: 'عكس' };
 
 export const payoutMethod: Record<PayoutMethod, string> = {
   usdt: 'USDT', bank: 'تحويل بنكي', cash: 'نقداً', paypal: 'PayPal', wise: 'Wise', western_union: 'ويسترن يونيون', other: 'أخرى',

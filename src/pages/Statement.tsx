@@ -46,17 +46,18 @@ export function StatementPage() {
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b-2 border-[#18181b] text-[12px] [&>th]:py-2 [&>th]:font-semibold">
-                <th className="text-start">التاريخ</th><th className="text-start">البيان</th><th className="text-end">له</th><th className="text-end">عليه</th><th className="text-end">الرصيد</th>
+                <th className="text-start">التاريخ</th><th className="text-start">النوع</th><th className="text-start">البيان</th><th className="text-end">له</th><th className="text-end">عليه</th><th className="text-end">الرصيد</th>
               </tr>
             </thead>
             <tbody className="[&>tr]:border-b [&>tr]:border-[#e4e4e7] [&>tr>td]:py-2 [&>tr>td]:align-top">
               {period.from && (
-                <tr className="text-[#52525b]"><td colSpan={4}>رصيد سابق</td><td className="text-end">{m(data.view.openingBalanceMinor)}</td></tr>
+                <tr className="text-[#52525b]"><td colSpan={5}>رصيد سابق</td><td className="text-end">{m(data.view.openingBalanceMinor)}</td></tr>
               )}
               {data.view.entries.map((e) => (
                 <tr key={e.id} className={e.reversedByEntryId !== null ? 'text-[#a1a1aa] line-through' : ''}>
                   <td className="num whitespace-nowrap"><bdi dir="ltr">{e.entryDate}</bdi></td>
-                  <td>{ledgerType[e.type]}: {e.description}{e.payoutMethod && ` (${payoutMethod[e.payoutMethod]})`}</td>
+                  <td className="whitespace-nowrap">{ledgerType[e.type]}</td>
+                  <td>{e.description}{e.payoutMethod && ` (${payoutMethod[e.payoutMethod]})`}</td>
                   <td className="text-end">{e.amountMinor > 0 ? m(e.amountMinor) : ''}</td>
                   <td className="text-end">{e.amountMinor < 0 ? m(-e.amountMinor) : ''}</td>
                   <td className="text-end">{m(e.runningBalanceMinor)}</td>
