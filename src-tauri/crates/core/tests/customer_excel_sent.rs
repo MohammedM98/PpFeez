@@ -100,7 +100,8 @@ fn a_new_file_has_no_sent_column() {
     assert_eq!(col_of(&path, stmt::SENT_HEADER), None);
     assert_eq!(col_of(&path, "مفتاح"), Some(stmt::C_KEY as usize));
     assert!(!formulas(&path).iter().any(|f| f.contains("تم الإرسال")));
-    assert_eq!((figure(&path, stmt::NOT_PAID), figure(&path, stmt::PAID)), (Data::Float(1.0), Data::Float(0.0)));
+    // SPEC §6.8.6 / §4.9: and no "غير مدفوع" / "عدد المدفوع" in the header.
+    assert!(!rows(&path).iter().flatten().any(|c| s(c) == stmt::NOT_PAID || s(c) == stmt::PAID));
 }
 
 #[test]

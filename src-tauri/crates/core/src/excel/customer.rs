@@ -1918,9 +1918,8 @@ impl Core {
 
     /// A new, empty statement (one sheet per currency) saved at `path`.
     fn save_new_workbook(&self, customer_id: i64, name: &str, currencies: &[String], path: &Path) -> AppResult<()> {
-        let counts = self.paid_counts(customer_id)?;
         self.save_workbook_with(customer_id, name, currencies, path, |cur, today| {
-            stmt::sheet_model(name, cur, today, &[], counts.get(cur).copied().unwrap_or((0, 0)))
+            stmt::sheet_model(name, cur, today, &[])
         })
     }
 
@@ -1933,7 +1932,7 @@ impl Core {
             (crate::customers::get(&conn, customer_id)?, customer_currencies(&conn, customer_id)?)
         };
         self.save_workbook_with(customer_id, &customer.name, &currencies, Path::new(path), |cur, today| {
-            stmt::model_with(&customer.name, cur, today, &[], None, with_sent)
+            stmt::model_with(&customer.name, cur, today, &[], true, with_sent)
         })?;
         self.customer_excel_link(customer_id, path)?;
         Ok(())
