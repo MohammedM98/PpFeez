@@ -13,7 +13,7 @@ export type TxnRow = Omit<Transaction, 'customer' | 'mailbox' | 'refundedBy' | '
 };
 export type CustomerRow = Omit<Customer, 'balances' | 'pendingCount' | 'excel'>;
 /** Stored entry; deletable/notDeletableReasonAr are computed when read (SPEC 4.7). */
-export type LedgerRow = Omit<LedgerEntry, 'deletable' | 'notDeletableReasonAr' | 'inCustomerExcel' | 'excelStatus'>;
+export type LedgerRow = Omit<LedgerEntry, 'deletable' | 'notDeletableReasonAr' | 'inCustomerExcel' | 'excelStatus' | 'payoutSeq'>;
 /** SPEC 6.8.2: the customer's linked statement file and what was added to it. */
 /** SPEC 4.8: a payout covering numbered transfers. */
 export type PayoutRow = {
@@ -49,6 +49,9 @@ export type Db = {
   customerExcel: Record<number, CustomerExcelRow>;
   /** the customer's other (previous) files, newest first (SPEC 6.8.4) */
   customerFiles: Record<number, CustomerExcelRow[]>;
+  /** SPEC 4.9: a standalone payout's details beyond the ledger line, and each customer's last ones */
+  payoutExtras: Record<number, { platform: string | null; network: string | null; destination: string | null }>;
+  payoutDefaults: Record<number, { method: PayoutMethod; platform: string | null; network: string | null; destination: string | null }>;
   payouts: PayoutRow[];
   /** last transfer number given per `${customerId}:${currency}` (a number is never reused) */
   txnSeq: Record<string, number>;
@@ -307,6 +310,8 @@ export function seed(): Db {
       },
     },
     customerFiles: {},
+    payoutExtras: {},
+    payoutDefaults: {},
     seq: 5000,
   };
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { Customer, PayoutDetails } from '@/lib/contract';
 import { formatMinor } from '@/lib/money';
@@ -34,8 +34,17 @@ export function StandalonePayoutDialog({ customer, currencies, defaultCurrency, 
 
   const defaults = useQuery({ queryKey: ['payout_defaults', customer.id], queryFn: () => api.payoutDefaults(customer.id) });
   useEffect(() => { if (defaults.data) setDetails((d) => ({ ...d, ...defaults.data, reference: null, note: null })); }, [defaults.data]);
-  const cards = useQuery({ queryKey: ['ledger_balances', customer.id], queryFn: () => api.ledgerBalances(customer.id) });
-  const balance = cards.data?.find((c) => c.currency === currency)?.balanceMinor ?? 0;
+  // the balance before / after, from the core as the amount is typed (SPEC 4.9)
+  const [typed, setTyped] = useState('');
+  useEffect(() => { const t = setTimeout(() => setTyped(amountText.trim()), 220); return () => clearTimeout(t); }, [amountText]);
+  const valid = !typed || /^[\d,]+(\.\d+)?$/.test(typed);
+  const preview = useQuery({
+    queryKey: ['ledger_payout_preview', customer.id, currency, valid ? typed : ''],
+    queryFn: () => api.ledgerPayoutPreview(customer.id, currency, valid ? typed : undefined),
+    placeholderData: keepPreviousData,
+  });
+  const p = preview.data;
+  const balance = p?.balanceBeforeMinor ?? 0;
 
   const next = () => {
     if (!/^\s*[\d,]+(\.\d+)?\s*$/.test(amountText)) { setError('أدخل مبلغاً مثل 150.00'); return; }
@@ -54,9 +63,18 @@ export function StandalonePayoutDialog({ customer, currencies, defaultCurrency, 
   };
 
   const before = (
-    <div className="flex items-center justify-between rounded-card bg-raised/60 px-4 py-2.5 text-sm">
-      <span className="text-fg-2">المتبقي للعميل الآن</span>
-      <Amount minor={balance} currency={currency} className={balance < 0 ? 'font-medium text-neg' : 'font-medium text-fg'} />
+    <div className="grid grid-cols-2 divide-x divide-x-reverse divide-line rounded-card bg-raised/60 text-sm" aria-live="polite">
+      <div className="flex flex-col gap-0.5 px-4 py-2.5">
+        <span className="text-[12.5px] text-fg-2">المتبقي للعميل الآن</span>
+        <Amount minor={p?.balanceBeforeMinor ?? null} currency={currency} className={balance < 0 ? 'font-medium text-neg' : 'font-medium text-fg'} />
+      </div>
+      <div className="flex flex-col gap-0.5 px-4 py-2.5">
+        <span className="text-[12.5px] text-fg-2">بعد الدفعة</span>
+        {p && p.amountMinor > 0
+          ? <Amount minor={p.balanceAfterMinor} currency={currency} className={p.balanceAfterMinor < 0 ? 'font-medium text-neg' : 'font-medium text-fg'} />
+          : <span className="text-fg-3">—</span>}
+      </div>
+      {p?.overdraw && <p className="col-span-2 border-t border-line px-4 py-2 text-[12.5px] text-neg">الدفعة أكبر من المتبقي: يصبح الرصيد سالباً («عليه»)، وتُطلب موافقتك صراحةً.</p>}
     </div>
   );
 

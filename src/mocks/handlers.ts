@@ -5,7 +5,7 @@ import type {
   FeeInput, LedgerEntry, LedgerView, ManualTxnInput, Money, Page, Period, PullRun, RawEmailSummary,
   RefundAlert, Transaction, TxnAction, TxnCounts, TxnFilter, TxnListResult, TxnPreview, TxnSort, AdjustmentInput, PayoutInput,
   MailboxInput, ParseStatus, PullRange, TxnLocation, TxnSearchHit, CustomerExcel, CustomerExcelItemRef, CustomerExcelPreview, ExcelStatus,
-  Payout, PayoutPreparation, PayoutSelection, CustomerSummary, StatementFilter, StatementRow, CustomerExcelFile, ExcelStart,
+  Payout, PayoutPreparation, PayoutSelection, CustomerSummary, StatementFilter, StatementRow, PayoutRegisterRow, CustomerExcelFile, ExcelStart,
 } from '@/lib/contract';
 import { amountTextToMinor2, decimalsOf, formatMinor } from '@/lib/money';
 import { creditDescription, halfUp, ltr, seed, type CustomerExcelRow, type Db, type LedgerRow, type PayoutRow, type TxnRow } from './db';
@@ -293,7 +293,39 @@ function deletability(e: LedgerRow): Pick<LedgerEntry, 'deletable' | 'notDeletab
   }
   return { deletable: true, notDeletableReasonAr: null };
 }
-const asEntry = (e: LedgerRow, running = e.runningBalanceMinor): LedgerEntry => ({ ...e, runningBalanceMinor: running, ...deletability(e), inCustomerExcel: inExcel(e.customerId, 'ledger', e.id), excelStatus: excelStatusOf(e.customerId, 'ledger', e.id) });
+const asEntry = (e: LedgerRow, running = e.runningBalanceMinor): LedgerEntry => ({ ...e, runningBalanceMinor: running, ...deletability(e), inCustomerExcel: inExcel(e.customerId, 'ledger', e.id), excelStatus: excelStatusOf(e.customerId, 'ledger', e.id), payoutSeq: payoutSeqOf(e) });
+
+// ---- SPEC 4.9: one numbering for old linked payouts and standalone ones ("دفعة N"), per customer and currency
+function payoutRegister(customerId: number, currency: string): PayoutRegisterRow[] {
+  const linked = db.payouts.filter((p) => p.customerId === customerId && p.currency === currency).sort((x, y) => x.seq - y.seq);
+  const linkedEntries = new Set(linked.map((p) => p.ledgerEntryId).filter((x) => x !== null));
+  const standalone = db.ledger
+    .filter((e) => e.customerId === customerId && e.currency === currency && e.type === 'payout' && e.reversesEntryId === null && !linkedEntries.has(e.id))
+    .sort((x, y) => (x.entryDate === y.entryDate ? x.id - y.id : x.entryDate < y.entryDate ? -1 : 1));
+  const top = linked.reduce((m, p) => Math.max(m, p.seq), 0);
+  const rows: Omit<PayoutRegisterRow, 'cumulativePaidMinor'>[] = [
+    ...linked.map((p) => ({
+      seq: p.seq, kind: 'linked' as const, ledgerEntryId: p.ledgerEntryId, payoutId: p.id, date: p.date, amountMinor: p.amountMinor,
+      method: p.details.method, platform: p.details.platform ?? null, network: p.details.network ?? null, destination: p.details.destination ?? null,
+      reference: p.details.reference ?? null, note: p.details.note ?? null, status: p.status, rangeLabel: p.rangeLabel,
+    })),
+    ...standalone.map((e, i) => {
+      const x = db.payoutExtras[e.id];
+      return {
+        seq: top + i + 1, kind: 'standalone' as const, ledgerEntryId: e.id, payoutId: null, date: e.entryDate, amountMinor: -e.amountMinor,
+        method: e.payoutMethod ?? 'other', platform: x?.platform ?? null, network: x?.network ?? null, destination: x?.destination ?? null,
+        reference: e.reference, note: /^دفعة للعميل|^دفعة( —|$)/.test(e.description) ? null : e.description,
+        status: e.reversedByEntryId !== null ? 'cancelled' as const : 'sent' as const, rangeLabel: null,
+      };
+    }),
+  ].sort((x, y) => x.seq - y.seq);
+  let paid = 0;
+  return rows.map((r) => { if (r.status === 'sent') paid += r.amountMinor; return { ...r, cumulativePaidMinor: paid }; });
+}
+function payoutSeqOf(e: LedgerRow): number | null {
+  if (e.type !== 'payout') return null;
+  return payoutRegister(e.customerId, e.currency).find((r) => r.ledgerEntryId === e.id)?.seq ?? null;
+}
 
 function addLedger(e: Partial<LedgerRow> & Pick<LedgerRow, 'customerId' | 'currency' | 'type' | 'amountMinor' | 'description' | 'entryDate'>): LedgerEntry {
   const entry: LedgerRow = {
@@ -513,6 +545,7 @@ function customerStatement(customerId: number, currency: string, filter: Stateme
     show === 'all' ? true
       : show === 'not_exported' ? (r.kind === 'txn' ? r.txn.excelStatus : r.kind === 'payout' ? (r.payout.status === 'sent' ? r.payout.excelStatus : 'exported') : r.entry.type === 'credit' || db.payouts.some((p) => p.ledgerEntryId === r.entry.id) ? 'exported' : r.entry.excelStatus) !== 'exported'
       : show === 'payouts' ? r.kind === 'payout' || (r.kind === 'entry' && r.entry.type === 'payout')
+      : show === 'transfers' ? r.kind === 'txn'
         : r.kind === 'txn' && (show === 'paid' ? !!r.txn.payout : !r.txn.payout));
   return {
     openingBalanceMinor: opening,
@@ -529,7 +562,7 @@ function excelView(customerId: number): CustomerExcel | null {
   const pending = x.items.filter((i) => i.status === 'pending').length;
   const notExported = excelAllItems(customerId).filter((r) => !x.items.some((i) => i.kind === r.kind && i.id === r.id)).length;
   return {
-    path: x.path, updatedAt: x.updatedAt, exists: true, addToExcelByDefault: x.addToExcelByDefault,
+    path: x.path, fileName: x.path.split(/[\\/]/).pop() ?? x.path, updatedAt: x.updatedAt, exists: true, addToExcelByDefault: x.addToExcelByDefault,
     autoSync: x.autoSync, exportedCount: exported, pendingCount: pending, notExportedCount: notExported, lastError: excelLastError[customerId] ?? null,
     currentFileId: x.id, filesCount: 1 + (db.customerFiles[customerId]?.length ?? 0),
   };
@@ -936,8 +969,16 @@ export function handle(cmd: string, a: Args = {}): unknown {
     }
     case 'payouts_list': return db.payouts.filter((p) => p.customerId === a.customerId && p.currency === a.currency).sort((x, y) => x.seq - y.seq).map(payoutView);
     case 'payout_defaults': {
+      const saved = db.payoutDefaults[a.customerId];
+      if (saved) return { ...saved, reference: null, note: null };
       const last = [...db.payouts].filter((p) => p.customerId === a.customerId).sort((x, y) => y.id - x.id)[0];
       return last ? { ...last.details, reference: null, note: null } : null;
+    }
+    case 'payout_register': return payoutRegister(a.customerId, a.currency);
+    case 'ledger_payout_preview': {
+      const before = balanceOf(a.customerId, a.currency);
+      const amt = (a.amountText ?? '').trim() ? parseAmount(a.amountText, a.currency, 'amountText') : 0;
+      return { balanceBeforeMinor: before, amountMinor: amt, balanceAfterMinor: before - amt, overdraw: amt > before };
     }
     case 'payout_platform_suggestions': return [...new Set(['Binance', 'OKX', 'Bybit', ...db.payouts.map((p) => p.details.platform).filter(Boolean) as string[]])];
     case 'txn_set_matched': {
@@ -1197,7 +1238,11 @@ export function handle(cmd: string, a: Args = {}): unknown {
       const amt = parseAmount(i.amountText, i.currency);
       if (amt <= 0) fail('validation', 'المبلغ يجب أن يكون أكبر من صفر', 'amount');
       if (amt > balanceOf(a.customerId, i.currency) && !i.confirmOverdraw) fail('validation', 'الدفعة أكبر من الرصيد المتاح', 'overdraw');
-      const paid = addLedger({ customerId: a.customerId, currency: i.currency, type: 'payout', amountMinor: -amt, payoutMethod: i.method, reference: i.reference || null, description: i.description || ['دفعة', i.platform].filter(Boolean).join(' — '), entryDate: i.entryDate });
+      const paid = addLedger({ customerId: a.customerId, currency: i.currency, type: 'payout', amountMinor: -amt, payoutMethod: i.method, reference: i.reference || null, description: i.description || ['دفعة للعميل', i.platform].filter(Boolean).join(' — '), entryDate: i.entryDate });
+      // SPEC 4.9: the details stay with the payout, and become the customer's defaults
+      const extras = { platform: i.platform || null, network: i.method === 'usdt' ? i.network || null : null, destination: i.destination || null };
+      db.payoutExtras[paid.id] = extras;
+      db.payoutDefaults[a.customerId] = { method: i.method, ...extras };
       syncEvent(a.customerId, { kind: 'ledger', id: paid.id });
       return paid;
     }

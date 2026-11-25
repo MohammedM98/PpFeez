@@ -11,7 +11,7 @@ import type {
   RawEmail, RawEmailSummary, ParseStatus, RefundAlert, Settings, Transaction, TxnCounts,
   TxnFilter, TxnListResult, TxnPreview, TxnSort, Currency, ExcelExportResult, PullRange,
   DeleteEffect, ResetScope, ResetPreview, Money, TxnSearchHit, CustomerExcel, CustomerExcelItemRef, CustomerExcelPreview,
-  CustomerSummary, StatementFilter, StatementRow, PayoutSelection, PayoutPreparation, PayoutDetails, Payout, Minor, CustomerExcelFile, ExcelStart } from './contract';
+  CustomerSummary, StatementFilter, StatementRow, PayoutSelection, PayoutPreparation, PayoutDetails, Payout, Minor, CustomerExcelFile, ExcelStart, PayoutRegisterRow } from './contract';
 
 const KNOWN_CODES = new Set<ErrorCode>([
   'locked', 'wrong_password', 'too_many_attempts', 'not_found', 'validation', 'invalid_amount',
@@ -172,6 +172,10 @@ export const api = {
   payoutCancel: (payoutId: number, reason: string) => call<Payout>('payout_cancel', { payoutId, reason }),
   payoutsList: (customerId: number, currency: Currency) => call<Payout[]>('payouts_list', { customerId, currency }),
   payoutDefaults: (customerId: number) => call<PayoutDetails | null>('payout_defaults', { customerId }),
+  // ---- SPEC 4.9: the standalone payout
+  ledgerPayoutPreview: (customerId: number, currency: Currency, amountText?: string) =>
+    call<{ balanceBeforeMinor: Minor; amountMinor: Minor; balanceAfterMinor: Minor; overdraw: boolean }>('ledger_payout_preview', { customerId, currency, amountText }),
+  payoutRegister: (customerId: number, currency: Currency) => call<PayoutRegisterRow[]>('payout_register', { customerId, currency }),
   payoutPlatformSuggestions: () => call<string[]>('payout_platform_suggestions'),
   txnSetMatched: (ids: number[], matched: boolean) => call<BulkResult>('txn_set_matched', { ids, matched }),
 

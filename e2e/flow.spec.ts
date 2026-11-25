@@ -574,9 +574,13 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.getByRole('row').filter({ hasText: 'Liam Turner' }).first()).toContainText('نعم — دفعة 1');
     await shot('37-statement');
 
-    // filters: الكل · الدفعات
+    // filters: الكل · الحوالات · الدفعات
     await page.locator('main').getByRole('button', { name: /عرض/ }).click();
     await expect(page.getByRole('option', { name: 'غير المدفوع' })).toHaveCount(0);
+    await page.getByRole('option', { name: 'الحوالات' }).click();
+    await expect(page.locator('main table[aria-label="كشف USD"] tbody tr[data-kind=payout]')).toHaveCount(0);
+    await expect(page.locator('main table[aria-label="كشف USD"] tbody tr[data-kind=txn]')).toHaveCount(8);
+    await page.locator('main').getByRole('button', { name: /عرض/ }).click();
     await page.getByRole('option', { name: 'الدفعات' }).click();
     await expect(page.locator('main table[aria-label="كشف USD"] tbody tr[data-kind=txn]')).toHaveCount(0);
     await page.locator('main').getByRole('button', { name: /عرض/ }).click();
@@ -587,6 +591,10 @@ for (const theme of ['dark', 'light'] as const) {
     const pay = page.getByRole('dialog', { name: 'تسجيل دفعة لـ هشام الزعبي' });
     await expect(pay).toContainText('المتبقي للعميل الآن');
     await expect(pay).toContainText('1,055.03');
+    // the balance after comes from the core as the amount is typed
+    await pay.getByRole('textbox', { name: 'المبلغ' }).fill('55.03');
+    await expect(pay).toContainText('بعد الدفعة');
+    await expect(pay).toContainText('1,000.00');
     await expect(pay.getByRole('button', { name: /الطريقة/ })).toContainText('تحويل بنكي');
     await pay.getByRole('button', { name: 'كامل المتبقي' }).click();
     await expect(pay.getByRole('textbox', { name: 'المبلغ' })).toHaveValue('1055.03');
@@ -607,7 +615,9 @@ for (const theme of ['dark', 'light'] as const) {
     await confirm.getByRole('button', { name: 'تسجيل الدفعة' }).click();
     await expect(page.locator('[role=alertdialog]').filter({ hasText: 'سُجّلت الدفعة' })).toBeVisible();
     await expect(summary).toContainText('955.03');
-    await expect(page.locator('tr[data-kind=entry]').filter({ hasText: 'TRX-881' })).toContainText('100.00');
+    const standalone = page.locator('tr[data-kind=entry]').filter({ hasText: 'TRX-881' });
+    await expect(standalone).toContainText('100.00');
+    await expect(standalone).toContainText('دفعة 3'); // one numbering with the payouts linked before
 
     // an earlier linked payout can still be cancelled; there is no "تأكيد الإرسال" any more
     await page.locator('tr[data-kind=payout]').filter({ hasText: 'دفعة 2' }).getByRole('button', { name: 'إجراءات الدفعة' }).click();
@@ -633,6 +643,10 @@ for (const theme of ['dark', 'light'] as const) {
     await page.getByRole('tab', { name: 'الدفعات' }).click();
     const reg = page.getByRole('table', { name: 'سجل الدفعات USD' });
     await expect(reg).toContainText('ملغاة');
+    const r3 = reg.locator('tbody tr[data-kind=standalone]');
+    await expect(r3).toContainText('100.00');
+    await expect(r3).toContainText('TRX-881');
+    await expect(reg.locator('tbody tr[data-kind=linked]')).toHaveCount(2);
     await shot('39-payouts-register');
 
     // search: an approved transfer opens its currency tab on the row

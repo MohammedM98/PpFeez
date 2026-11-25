@@ -35,8 +35,8 @@ import { CancelPayoutDialog, PayoutDetailsDialog, PayoutItemsDialog } from './Pa
 
 type Show = NonNullable<StatementFilter['show']>;
 const SHOWS: { id: Show; label: string }[] = [
-  // SPEC 4.9: payouts stand on their own, so "unpaid / paid" no longer mean anything; الحوالات comes with the contract's 'transfers'
-  { id: 'all', label: 'الكل' }, { id: 'payouts', label: 'الدفعات' },
+  // SPEC 4.9: payouts stand on their own, so "unpaid / paid" no longer mean anything
+  { id: 'all', label: 'الكل' }, { id: 'transfers', label: 'الحوالات' }, { id: 'payouts', label: 'الدفعات' },
   { id: 'not_exported', label: 'غير المُصدَّر إلى Excel' },
 ];
 
@@ -526,7 +526,7 @@ export function StatementTab({ customer, currency }: { customer: Customer; curre
               return (
                 <tr key={k} id={`row-${k}`} data-kind="entry" className={cx('t-row hover:[--row-tint:color-mix(in_oklab,var(--raised)_55%,transparent)]', tint)}>
                   {sel}
-                  {seqCell(<span className="text-fg-3">—</span>)}
+                  {seqCell(e.payoutSeq !== null ? <span className="font-medium text-fg">دفعة {e.payoutSeq}</span> : <span className="text-fg-3">—</span>)}
                   {dateCell}
                   {place([
                     <td>
