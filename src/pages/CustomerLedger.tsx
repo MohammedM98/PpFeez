@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Tabs, TabList, Tab, TabPanel, MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
-import { ArrowRight, HandCoins, MoreHorizontal, Pencil, Scale, Send, Trash2 } from 'lucide-react';
+import { ArrowRight, HandCoins, MoreHorizontal, Pencil, Scale, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { Customer, PayoutMethod, PayoutSelection } from '@/lib/contract';
+import type { Customer, PayoutMethod } from '@/lib/contract';
 import { USDT_NETWORKS, payoutMethod } from '@/lib/strings';
 import { formatBps } from '@/lib/money';
 import { todayLocal } from '@/lib/dates';
@@ -27,7 +27,7 @@ import { CURRENCIES } from '@/components/transactions/TxnActions';
 import { CustomerDialog, DeleteCustomerDialog } from './Customers';
 import { CustomerExcelChip, StatementCheckbox, addToStatementAfter, useStatementChoice } from '@/components/customers/CustomerExcel';
 import { StatementTab } from '@/components/customers/StatementTab';
-import { PreparePayoutDialog } from '@/components/customers/PreparePayoutDialog';
+import { StandalonePayoutDialog } from '@/components/customers/StandalonePayoutDialog';
 import { PayoutsRegister } from '@/components/customers/PayoutsRegister';
 
 const moreItem = 'flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised [&_svg]:size-4 [&_svg]:text-fg-3';
@@ -155,16 +155,16 @@ function CustomerPage({ customerId }: { customerId: number }) {
     if (!valid) setTab(cards.data[0]?.currency ?? 'pending');
   }, [cards.data, tab]);
   const [dialog, setDialog] = useState<'payout' | 'adjustment' | 'edit' | 'delete' | null>(null);
-  const [prepare, setPrepare] = useState<{ currency: string; initial?: PayoutSelection } | null>(null);
+
   const [toolbar, setToolbar] = useState<HTMLDivElement | null>(null);
-  // "تجهيز دفعة لـ…" from Ctrl+K lands here with ?prepare=1
+  // "تسجيل دفعة لـ…" from Ctrl+K lands here with ?payout=1
   const [, setParams] = useSearchParams();
-  const wantsPrepare = params.get('prepare') === '1';
+  const wantsPayout = params.get('payout') === '1';
   useEffect(() => {
-    if (!wantsPrepare || !cards.data) return;
-    if (cards.data.length) setPrepare({ currency: tab && cards.data.some((c) => c.currency === tab) ? tab : cards.data[0].currency });
-    setParams((p) => { const n = new URLSearchParams(p); n.delete('prepare'); return n; }, { replace: true });
-  }, [wantsPrepare, cards.data]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!wantsPayout || !cards.data) return;
+    setDialog('payout');
+    setParams((p) => { const n = new URLSearchParams(p); n.delete('payout'); return n; }, { replace: true });
+  }, [wantsPayout, cards.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const navigate = useNavigate();
 
   const c = customer.data;
@@ -184,12 +184,11 @@ function CustomerPage({ customerId }: { customerId: number }) {
         </>}
         actions={<>
           <CustomerExcelChip customer={c} />
-          <Button variant="primary" size="sm" isDisabled={!currencies.length} onPress={() => setPrepare({ currency: activeCurrency })}><Send />تجهيز دفعة</Button>
+          <Button variant="primary" size="sm" onPress={() => setDialog('payout')}><HandCoins />تسجيل دفعة</Button>
           <MenuTrigger>
             <Button variant="secondary" size="sm" aria-label="المزيد"><MoreHorizontal />المزيد</Button>
             <Popover placement="bottom end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
               <Menu className="outline-none" onAction={(k) => setDialog(k as 'payout' | 'adjustment' | 'edit' | 'delete')}>
-                <MenuItem id="payout" className={moreItem}><HandCoins />تسجيل دفعة</MenuItem>
                 <MenuItem id="adjustment" className={moreItem}><Scale />قيد تسوية</MenuItem>
                 <MenuItem id="edit" className={moreItem}><Pencil />تعديل العميل</MenuItem>
                 <MenuItem id="delete" className={cx(moreItem, 'text-neg')}><Trash2 />حذف العميل</MenuItem>
@@ -214,7 +213,7 @@ function CustomerPage({ customerId }: { customerId: number }) {
           <ToolbarSlotContext.Provider value={toolbar}>
             {currencies.map((cur) => (
               <TabPanel key={cur} id={cur} className="flex min-h-0 flex-1 flex-col outline-none">
-                <StatementTab customer={c} currency={cur} onPrepare={(initial) => setPrepare({ currency: cur, initial })} />
+                <StatementTab customer={c} currency={cur} />
               </TabPanel>
             ))}
             <TabPanel id="pending" className="flex min-h-0 flex-1 flex-col outline-none"><TransactionsView scope={{ kind: 'customer', customerId: c.id }} /></TabPanel>
@@ -223,10 +222,10 @@ function CustomerPage({ customerId }: { customerId: number }) {
         </Tabs>
       )}
 
-      {(dialog === 'payout' || dialog === 'adjustment') && (
-        <MoneyEntryDialog kind={dialog} customer={c} currencies={allCurrencies} defaultCurrency={activeCurrency} onClose={() => setDialog(null)} />
+      {dialog === 'adjustment' && (
+        <MoneyEntryDialog kind="adjustment" customer={c} currencies={allCurrencies} defaultCurrency={activeCurrency} onClose={() => setDialog(null)} />
       )}
-      {prepare && <PreparePayoutDialog customer={c} currency={prepare.currency} initial={prepare.initial} onClose={() => setPrepare(null)} />}
+      {dialog === 'payout' && <StandalonePayoutDialog customer={c} currencies={allCurrencies} defaultCurrency={activeCurrency} onClose={() => setDialog(null)} />}
       {dialog === 'edit' && <CustomerDialog customer={c} onClose={() => setDialog(null)} />}
       {dialog === 'delete' && <DeleteCustomerDialog customer={c} onClose={() => setDialog(null)} onDeleted={() => navigate('/customers')} />}
     </div>

@@ -2,13 +2,12 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { Payout, PayoutDetails, PayoutMethod } from '@/lib/contract';
-import { formatDateTime, todayLocal } from '@/lib/dates';
+import { formatDateTime } from '@/lib/dates';
 import { USDT_NETWORKS, payoutMethod, transferCountLabel } from '@/lib/strings';
 import { useAction } from '@/lib/useAction';
 import { Amount } from '@/components/ui/Amount';
 import { Button } from '@/components/ui/Button';
 import { ConfirmMoney } from '@/components/ui/ConfirmMoney';
-import { DatePicker } from '@/components/ui/DateFields';
 import { Dialog } from '@/components/ui/Dialog';
 import { Select } from '@/components/ui/Field';
 import { TextField } from '@/components/ui/TextField';
@@ -16,7 +15,7 @@ import { Trunc } from '@/components/ui/Trunc';
 
 /*
  * Payment details of a payout (SPEC 4.8): method, platform/bank (suggested from earlier ones),
- * USDT network, destination, reference, note. Shared by prepare-payout and "edit details".
+ * USDT network, destination, reference, note. Shared by the standalone payout (SPEC 4.9) and "edit details".
  */
 export function PayoutDetailsFields({ value, onChange }: { value: PayoutDetails; onChange: (v: PayoutDetails) => void }) {
   const suggestions = useQuery({ queryKey: ['payout_platform_suggestions'], queryFn: api.payoutPlatformSuggestions });
@@ -52,21 +51,6 @@ export function PayoutDetailsFields({ value, onChange }: { value: PayoutDetails;
 }
 
 const txt = (p: Payout) => `دفعة ${p.seq} ${p.rangeLabel}`;
-
-export function MarkSentDialog({ payout, onClose }: { payout: Payout; onClose: () => void }) {
-  const [date, setDate] = useState(todayLocal());
-  const { run, pending } = useAction();
-  return (
-    <ConfirmMoney isOpen onOpenChange={(o) => !o && onClose()} title={`تأكيد إرسال ${txt(payout)}`} amount={-payout.amountMinor} currency={payout.currency}
-      confirmLabel="تم الإرسال" pending={pending}
-      onConfirm={async () => { const r = await run(() => api.payoutMarkSent(payout.id, date), `أُرسلت الدفعة ${payout.seq}`); if (r.ok) onClose(); }}>
-      <div className="flex flex-col gap-3 text-sm text-fg-2">
-        <p>يُخصم المبلغ من رصيد العميل كقيد دفعة، وتصبح {transferCountLabel(payout.txnCount)} «تم الإرسال — دفعة {payout.seq}».</p>
-        <DatePicker label="تاريخ الإرسال" value={date} onChange={(v) => setDate(v ?? todayLocal())} />
-      </div>
-    </ConfirmMoney>
-  );
-}
 
 export function CancelPayoutDialog({ payout, onClose }: { payout: Payout; onClose: () => void }) {
   const [reason, setReason] = useState('');

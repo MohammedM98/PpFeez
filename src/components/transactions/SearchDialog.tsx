@@ -95,7 +95,7 @@ export function SearchDialog() {
     { id: 'excel', label: 'تحديث ملف Excel', words: 'تحديث ملف excel اكسل', icon: <FileSpreadsheet />, run: () => void excel.update() },
     ...(customers.data ?? []).flatMap((c) => [
       { id: `open-${c.id}`, label: `فتح العميل ${c.name}`, words: `فتح عميل ${c.name} ${c.phone ?? ''}`, icon: <User />, run: () => navigate(`/customers/${c.id}`) },
-      { id: `prep-${c.id}`, label: `تجهيز دفعة لـ ${c.name}`, words: `تجهيز دفعة ${c.name}`, icon: <Send />, run: () => navigate(`/customers/${c.id}?prepare=1`) },
+      { id: `pay-${c.id}`, label: `تسجيل دفعة لـ ${c.name}`, words: `تسجيل دفعة ${c.name}`, icon: <Send />, run: () => navigate(`/customers/${c.id}?payout=1`) },
     ]),
     ...(unexported.data ?? []).map((c) => ({
       id: `send-${c.customerId}`, label: `إرسال غير المُصدَّر لـ ${c.customerName}`, words: `إرسال غير المُصدَّر ${c.customerName} excel اكسل إكسل تصدير`,
@@ -135,7 +135,7 @@ export function SearchDialog() {
               className="max-h-[56vh] overflow-auto p-1.5 outline-none"
               renderEmptyState={() => (
                 <p className="px-3 py-8 text-center text-sm text-fg-3">
-                  {text.trim().length < 2 ? 'ابحث في كل المعاملات (الوارد والمستبعدة وصفحات العملاء)، أو اكتب أمراً: سحب، فتح العميل…، تجهيز دفعة لـ…، تحديث Excel' : results.isFetching ? 'جارٍ البحث…' : 'لا معاملة بهذا البحث'}
+                  {text.trim().length < 2 ? 'ابحث في كل المعاملات (الوارد والمستبعدة وصفحات العملاء)، أو اكتب أمراً: سحب، فتح العميل…، تسجيل دفعة لـ…، تحديث Excel' : results.isFetching ? 'جارٍ البحث…' : 'لا معاملة بهذا البحث'}
                 </p>
               )}>
               {(it) => 'cmd' in it ? (

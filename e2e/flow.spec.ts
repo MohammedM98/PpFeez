@@ -100,8 +100,8 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.getByRole('row').filter({ hasText: 'Samer Ali' })).toContainText('388.00');
     await expect(page.getByRole('row').filter({ hasText: 'Samer Ali' })).toContainText('#1');
 
-    // 6. payout from the same page
-    await more(page, 'تسجيل دفعة');
+    // 6. payout from the same page (SPEC 4.9: a standalone payout, the header's main button)
+    await page.getByRole('button', { name: 'تسجيل دفعة' }).click();
     const payout = page.getByRole('dialog');
     await payout.getByRole('textbox', { name: 'المبلغ' }).fill('100.00');
     await payout.getByRole('button', { name: 'متابعة' }).click();
@@ -549,82 +549,89 @@ for (const theme of ['dark', 'light'] as const) {
 }
 
 for (const theme of ['dark', 'light'] as const) {
-  test(`0.5.0 statement and linked payouts (${theme})`, async ({ page }) => {
+  test(`0.6.2 standalone payout; earlier linked payouts still shown (${theme})`, async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(e.message));
     const shot = (n: string) => page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-${n}.png` });
 
-    // one statement per currency: transfers (له) and payouts (عليه) together, with the eight figures
+    // one statement per currency: transfers (له) and payouts (عليه) together; payouts are not tied to transfers (SPEC 4.9)
     await page.goto(`/?theme=${theme}#/customers/8`);
     const summary = page.getByRole('region', { name: 'ملخص USD' });
-    await expect(summary).toContainText('غير مدفوع');
-    // a recorded (draft) payout only reserves its transfers: #4-8 are still not paid
-    await expect(summary).toContainText('5 حوالات');
+    await expect(summary).toContainText('المتبقي');
+    await expect(summary).toContainText('1,055.03');
+    await expect(summary).not.toContainText('غير مدفوع');
+    await expect(summary).not.toContainText('عدد المدفوع');
+    await expect(page.getByRole('button', { name: /تجهيز دفعة/ })).toHaveCount(0);
+    // payouts recorded before 0.6.2 stay as they were
     const p1 = page.locator('tr[data-kind=payout]').filter({ hasText: 'دفعة 1' });
     await expect(p1).toContainText('695.09');
     await expect(p1).toContainText('تم الإرسال');
+    // «تم الإرسال؟» is hidden until shown from "الأعمدة"
+    await expect(page.locator('table[aria-label="كشف USD"] th[data-col="sent"]')).toHaveCount(0);
+    await page.getByRole('button', { name: 'الأعمدة' }).click();
+    await page.getByRole('dialog', { name: 'الأعمدة' }).getByRole('checkbox', { name: 'إظهار تم الإرسال؟' }).click({ force: true });
+    await page.keyboard.press('Escape');
     await expect(page.getByRole('row').filter({ hasText: 'Liam Turner' }).first()).toContainText('نعم — دفعة 1');
-    await expect(page.getByRole('row').filter({ hasText: 'Chloe Price' })).toContainText('مسجلة — دفعة 2');
     await shot('37-statement');
 
-    // a range that overlaps an earlier payout: the paid ones are flagged and left out
-    await page.getByRole('button', { name: 'تجهيز دفعة' }).first().click();
-    const prep = page.getByRole('dialog');
-    await prep.getByRole('radio', { name: 'نطاق من # إلى #' }).click({ force: true });
-    await prep.getByRole('textbox', { name: 'من #' }).fill('3');
-    await prep.getByRole('textbox', { name: 'إلى #' }).fill('7');
-    await expect(prep.getByLabel('تنبيهات')).toContainText('مدفوعة سابقاً في الدفعة 1: #3');
-    await expect(prep.getByLabel('تنبيهات')).toContainText('مدفوعة سابقاً في الدفعة 2: #4، #5');
-    await expect(prep).toContainText('(6-7)');
-    // an unsettled return (negative line) is deducted from the payout
-    await expect(prep.getByLabel('مرتجعات تُخصم')).toContainText('مرتجع: استرداد جزئي لـ Ava Collins');
+    // filters: الكل · الدفعات
+    await page.locator('main').getByRole('button', { name: /عرض/ }).click();
+    await expect(page.getByRole('option', { name: 'غير المدفوع' })).toHaveCount(0);
+    await page.getByRole('option', { name: 'الدفعات' }).click();
+    await expect(page.locator('main table[aria-label="كشف USD"] tbody tr[data-kind=txn]')).toHaveCount(0);
+    await page.locator('main').getByRole('button', { name: /عرض/ }).click();
+    await page.getByRole('option', { name: 'الكل' }).click();
 
-    // all unpaid (the default): #6-8; the "matched" box is required; a different amount needs a reason
-    await prep.getByRole('radio', { name: 'كل غير المدفوع' }).click({ force: true });
-    await expect(prep).toContainText('(6-8)');
-    await expect(prep).toContainText('755.70');
-    await prep.getByRole('button', { name: 'متابعة' }).click();
-    await expect(prep).toContainText('راجع الحوالات وأكّد أنها مطابقة');
-    await prep.getByRole('checkbox', { name: 'راجعتُ الحوالات وهي مطابقة' }).check({ force: true });
-    await prep.getByRole('textbox', { name: 'المبلغ المدفوع' }).fill('700.00');
-    await prep.getByRole('button', { name: 'متابعة' }).click();
-    await expect(prep).toContainText('المبلغ يختلف عن المستحق؛ اكتب السبب');
-    await prep.getByRole('textbox', { name: 'المبلغ المدفوع' }).fill('');
-    await shot('38-prepare-payout');
-    await prep.getByRole('button', { name: 'متابعة' }).click();
-    const confirm = page.getByRole('dialog');
-    await expect(confirm).toContainText('-755.70');
-    await confirm.getByRole('button', { name: 'تم الإرسال' }).click();
-    await expect(page.getByText('أُرسلت الدفعة 3 (6-8)')).toBeVisible();
-    await expect(page.getByRole('row').filter({ hasText: 'Noah Bennett' })).toContainText('نعم — دفعة 3');
-    await expect(summary).toContainText('حوالتان');
+    // the standalone payout: the balance now, "كامل المتبقي", the customer's last method filled in
+    await page.getByRole('button', { name: 'تسجيل دفعة' }).click();
+    const pay = page.getByRole('dialog', { name: 'تسجيل دفعة لـ هشام الزعبي' });
+    await expect(pay).toContainText('المتبقي للعميل الآن');
+    await expect(pay).toContainText('1,055.03');
+    await expect(pay.getByRole('button', { name: /الطريقة/ })).toContainText('تحويل بنكي');
+    await pay.getByRole('button', { name: 'كامل المتبقي' }).click();
+    await expect(pay.getByRole('textbox', { name: 'المبلغ' })).toHaveValue('1055.03');
+    await pay.getByRole('textbox', { name: 'المبلغ' }).fill('5000.00');
+    await pay.getByRole('textbox', { name: /المرجع/ }).fill('TRX-881');
+    await shot('38-standalone-payout');
+    await pay.getByRole('button', { name: 'متابعة' }).click();
+    // more than the balance: said plainly, then confirmed on purpose — or corrected
+    let confirm = page.getByRole('dialog', { name: 'دفعة لـ هشام الزعبي' });
+    await expect(confirm).toContainText('-5000.00');
+    await confirm.getByRole('button', { name: 'تسجيل الدفعة' }).click();
+    await expect(confirm.getByRole('alert')).toContainText('يصبح الرصيد سالباً');
+    await confirm.getByText('تعديل البيانات').click();
+    await page.getByRole('dialog', { name: 'تسجيل دفعة لـ هشام الزعبي' }).getByRole('textbox', { name: 'المبلغ' }).fill('100.00');
+    await page.getByRole('dialog', { name: 'تسجيل دفعة لـ هشام الزعبي' }).getByRole('button', { name: 'متابعة' }).click();
+    confirm = page.getByRole('dialog', { name: 'دفعة لـ هشام الزعبي' });
+    await expect(confirm).toContainText('-100.00');
+    await confirm.getByRole('button', { name: 'تسجيل الدفعة' }).click();
+    await expect(page.locator('[role=alertdialog]').filter({ hasText: 'سُجّلت الدفعة' })).toBeVisible();
+    await expect(summary).toContainText('955.03');
+    await expect(page.locator('tr[data-kind=entry]').filter({ hasText: 'TRX-881' })).toContainText('100.00');
 
-    // the recorded payout 2 is confirmed as sent; then payout 1 is cancelled: its transfers are unpaid again
-    const p2 = page.locator('tr[data-kind=payout]').filter({ hasText: 'دفعة 2' });
-    await p2.getByRole('button', { name: 'إجراءات الدفعة' }).click();
-    await page.getByRole('menuitem', { name: 'تأكيد الإرسال' }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'تم الإرسال' }).click();
-    await expect(page.getByRole('row').filter({ hasText: 'Chloe Price' })).toContainText('نعم — دفعة 2');
+    // an earlier linked payout can still be cancelled; there is no "تأكيد الإرسال" any more
+    await page.locator('tr[data-kind=payout]').filter({ hasText: 'دفعة 2' }).getByRole('button', { name: 'إجراءات الدفعة' }).click();
+    await expect(page.getByRole('menuitem', { name: 'تأكيد الإرسال' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
     await p1.getByRole('button', { name: 'إجراءات الدفعة' }).click();
     await page.getByRole('menuitem', { name: 'إلغاء الدفعة' }).click();
     await page.getByRole('dialog').getByRole('textbox', { name: 'السبب' }).fill('أُعيدت من المنصة');
     await page.getByRole('dialog').getByRole('button', { name: 'إلغاء الدفعة' }).click();
-    await expect(page.getByRole('row').filter({ hasText: 'Mason Reed' })).toContainText('لا');
-    await expect(summary).toContainText('3 حوالات');
     await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(p1).toContainText('ملغاة');
 
-    // matched, from the selection bar
+    // matched, from the selection bar (no "تجهيز دفعة من المحدد")
     const mason = page.getByRole('row').filter({ hasText: 'Mason Reed' });
-    // bring it out from under the sticky header before clicking its (visually hidden) checkbox
     await mason.evaluate((el) => el.scrollIntoView({ block: 'center' }));
     await mason.getByRole('checkbox').check({ force: true });
-    await page.getByRole('toolbar', { name: 'إجراءات على المحدد' }).getByRole('button', { name: 'مطابق', exact: true }).click();
+    const bar = page.getByRole('toolbar', { name: 'إجراءات على المحدد' });
+    await expect(bar.getByRole('button', { name: /تجهيز دفعة/ })).toHaveCount(0);
+    await bar.getByRole('button', { name: 'مطابق', exact: true }).click();
     await expect(page.getByRole('row').filter({ hasText: 'Mason Reed' })).toContainText('مطابق');
 
-    // the payouts register with the cumulative paid
+    // the payouts register
     await page.getByRole('tab', { name: 'الدفعات' }).click();
     const reg = page.getByRole('table', { name: 'سجل الدفعات USD' });
-    await expect(reg.getByRole('row')).toHaveCount(4);
     await expect(reg).toContainText('ملغاة');
     await shot('39-payouts-register');
 

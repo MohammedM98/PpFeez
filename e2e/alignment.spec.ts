@@ -123,14 +123,15 @@ for (const theme of ['dark', 'light'] as const) {
       await open('customers/8');
       await expect(page.getByRole('tab', { name: 'كشف USD' })).toBeVisible();
       problems.push(...await checkTables(page, 'statement with payouts'));
-      // له / عليه / الرصيد / تم الإرسال؟ are in view without scrolling (left of them only the pinned ⋯ column)
+      // له / عليه / الرصيد are in view without scrolling (left of them only the pinned ⋯ column); «تم الإرسال؟» is hidden by default (SPEC 4.9)
       problems.push(...await page.evaluate(() => {
         const out: string[] = [];
         const table = document.querySelector('table[aria-label="كشف USD"]')!;
         const frame = table.parentElement!.getBoundingClientRect();
         const ths = Array.from(table.querySelectorAll<HTMLElement>('thead th'));
         const menu = ths[ths.length - 1].getBoundingClientRect();
-        for (const name of ['له', 'عليه', 'الرصيد', 'تم الإرسال؟']) {
+        if (ths.some((x) => x.textContent?.trim() === 'تم الإرسال؟')) out.push('statement: «تم الإرسال؟» shows by default');
+        for (const name of ['له', 'عليه', 'الرصيد']) {
           const th = ths.find((x) => x.textContent?.trim() === name);
           const r = th?.getBoundingClientRect();
           if (!r || r.left < menu.right - 1 || r.right > frame.right + 1) out.push(`statement: column ${name} is not in view without scrolling`);

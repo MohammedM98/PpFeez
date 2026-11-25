@@ -4,7 +4,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { MenuTrigger, Menu, MenuItem, Popover, Tooltip, TooltipTrigger, Button as RacButton } from 'react-aria-components';
 import { Check, ChevronDown, ChevronUp, Download, FileSpreadsheet, MoreHorizontal, Printer, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
-import type { Customer, CustomerExcelItemRef, ExcelStatus, LedgerEntry, Payout, PayoutSelection, Period, StatementFilter, StatementRow, Transaction, TxnAction } from '@/lib/contract';
+import type { Customer, CustomerExcelItemRef, ExcelStatus, LedgerEntry, Payout, Period, StatementFilter, StatementRow, Transaction, TxnAction } from '@/lib/contract';
 import { formatBps } from '@/lib/money';
 import { formatDateTime } from '@/lib/dates';
 import { payoutMethod, payoutStatus, transferCountLabel } from '@/lib/strings';
@@ -26,7 +26,7 @@ import { ColumnResizer, ColumnsMenu, colAttrs, colStyle, useColumns, type ColDef
 import { actionLabel, useTxnActions } from '@/components/transactions/TxnActions';
 import { AddRangeDialog, AddToStatementDialog, excelWhy, sendUnexported } from './CustomerExcel';
 import { DeleteEntryDialog, ReverseDialog } from './EntryDialogs';
-import { CancelPayoutDialog, MarkSentDialog, PayoutDetailsDialog, PayoutItemsDialog } from './PayoutDialogs';
+import { CancelPayoutDialog, PayoutDetailsDialog, PayoutItemsDialog } from './PayoutDialogs';
 
 /*
  * SPEC 6.5: one statement per currency. Transfers (له), payouts (عليه), adjustments and reversals in
@@ -35,7 +35,8 @@ import { CancelPayoutDialog, MarkSentDialog, PayoutDetailsDialog, PayoutItemsDia
 
 type Show = NonNullable<StatementFilter['show']>;
 const SHOWS: { id: Show; label: string }[] = [
-  { id: 'all', label: 'الكل' }, { id: 'unpaid', label: 'غير المدفوع' }, { id: 'paid', label: 'المدفوع' }, { id: 'payouts', label: 'الدفعات فقط' },
+  // SPEC 4.9: payouts stand on their own, so "unpaid / paid" no longer mean anything; الحوالات comes with the contract's 'transfers'
+  { id: 'all', label: 'الكل' }, { id: 'payouts', label: 'الدفعات' },
   { id: 'not_exported', label: 'غير المُصدَّر إلى Excel' },
 ];
 
@@ -66,7 +67,7 @@ const readCollapsed = () => { try { return localStorage.getItem(STRIP_KEY) === '
 
 /**
  * The eight figures (SPEC 4.8), as the owner's own workbook shows them, in one thin strip above the table
- * (SPEC 6.5). It folds to "المتبقي · غير مدفوع"; the choice is remembered.
+ * (SPEC 6.5). It folds to "المتبقي"; the choice is remembered. SPEC 4.9 dropped "غير مدفوع" and "عدد المدفوع".
  */
 export function SummaryBar({ customerId, currency }: { customerId: number; currency: string }) {
   const s = useQuery({ queryKey: ['customer_summary', customerId, currency], queryFn: () => api.customerSummary(customerId, currency) }).data;
@@ -84,20 +85,15 @@ export function SummaryBar({ customerId, currency }: { customerId: number; curre
         <div className="flex h-8 min-w-0 flex-1 items-center gap-2 px-3 text-[13px]">
           <span className="text-fg-3">المتبقي</span>
           <span className={cx('font-medium', owes ? 'text-neg' : 'text-accent-ink')}>{remaining}</span>
-          <span className="text-fg-3">·</span>
-          <span className="text-fg-3">غير مدفوع</span>
-          <span className="font-medium text-fg">{s ? transferCountLabel(s.notPaidCount) : '—'}</span>
         </div>
       ) : (
         <div className="flex min-w-0 flex-1 divide-x divide-x-reverse divide-line">
           <Fig label="الصافي المكتمل">{money(s?.netCompletedMinor)}</Fig>
           <Fig label="المُرسل">{money(s?.sentMinor)}</Fig>
           <Fig label="المتبقي" tone={owes ? 'neg' : 'accent'}>{remaining}</Fig>
-          <Fig label="غير مدفوع">{s ? transferCountLabel(s.notPaidCount) : '—'}</Fig>
           <Fig label="المبلغ قبل العمولة">{money(s?.grossBeforeCommissionMinor)}</Fig>
           <Fig label="إجمالي العمولة">{money(s?.commissionMinor)}</Fig>
           <Fig label="عدد المعاملات"><span className="num">{s?.txnCount ?? '—'}</span></Fig>
-          <Fig label="عدد المدفوع"><span className="num">{s?.paidCount ?? '—'}</span></Fig>
         </div>
       )}
       <button type="button" onClick={toggle} aria-expanded={!collapsed} aria-label={collapsed ? 'إظهار الأرقام الثمانية' : 'طيّ الأرقام'} title={collapsed ? 'إظهار الأرقام الثمانية' : 'طيّ الأرقام'}
@@ -163,7 +159,7 @@ function SentCell({ t, onPayout }: { t: Transaction; onPayout: (id: number) => v
 
 const payoutTone = { sent: 'pos', draft: 'accent', cancelled: 'outline' } as const;
 
-export function StatementTab({ customer, currency, onPrepare }: { customer: Customer; currency: string; onPrepare: (selection: PayoutSelection) => void }) {
+export function StatementTab({ customer, currency }: { customer: Customer; currency: string }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [show, setShow] = useState<Show>('all');
@@ -173,7 +169,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
   const [flash, setFlash] = useState<string | null>(null);
   const [dialog, setDialog] = useState<
     | { kind: 'reverse' | 'delete-entry'; entry: LedgerEntry }
-    | { kind: 'send' | 'cancel' | 'details' | 'items'; payout: Payout }
+    | { kind: 'cancel' | 'details' | 'items'; payout: Payout }
     | { kind: 'statement'; items: CustomerExcelItemRef[] }
     | { kind: 'range' }
     | null>(null);
@@ -236,7 +232,8 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
     { id: 'credit', label: 'له', width: W.credit, min: W.credit, hideable: false },
     { id: 'debit', label: 'عليه', width: W.debit, min: W.debit, hideable: false },
     { id: 'balance', label: 'الرصيد', width: W.balance, min: W.balance, hideable: false },
-    { id: 'sent', label: 'تم الإرسال؟', width: W.sent },
+    // SPEC 4.9: payouts are no longer tied to transfers; shown on demand for payouts linked before
+    { id: 'sent', label: 'تم الإرسال؟', width: W.sent, defaultHidden: true },
     { id: 'gross', label: 'المبلغ الكامل من PayPal', width: W.gross, min: amountWidth(fit.gross, false) },
     { id: 'fee', label: 'خصم PayPal', width: W.fee, min: amountWidth(fit.fee, false) },
     { id: 'net', label: 'الصافي من PayPal', width: W.net, min: amountWidth(fit.net, false) },
@@ -322,7 +319,6 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
   const menuItem = 'flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised data-[disabled]:text-fg-3';
   const onTxnMenu = (t: Transaction, k: string) => {
     if (k === 'detail') openDetail(t.id);
-    else if (k === 'prepare') onPrepare({ kind: 'ids', txnIds: [t.id] });
     else if (k === 'excel') toExcel({ kind: 'txn', id: t.id });
     else if (k === 'match') void run(() => api.txnSetMatched([t.id], !t.matched), t.matched ? 'أُزيلت المطابقة' : 'وُضعت علامة مطابق');
     else actions.act(k as TxnAction, t);
@@ -361,9 +357,6 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
       {pickedRows.length > 0 ? (
         <div className="mb-2 flex h-[46px] shrink-0 items-center gap-1 rounded-card bg-accent-soft pe-2 ps-4 text-sm" role="toolbar" aria-label="إجراءات على المحدد">
           <span className="me-3 text-fg">محدّد <span className="num">{pickedRows.length}</span></span>
-          {pickedTxns.length > 0 && pickedTxns.every((t) => !t.payout) && (
-            <Button size="sm" variant="quiet" onPress={() => onPrepare({ kind: 'ids', txnIds: pickedTxns.map((t) => t.id) })}>تجهيز دفعة من المحدد</Button>
-          )}
           {pickedTxns.length > 0 && <>
             <Button size="sm" variant="quiet" onPress={() => void run(() => api.txnSetMatched(pickedTxns.map((t) => t.id), true), 'وُضعت علامة مطابق')}>مطابق</Button>
             <Button size="sm" variant="quiet" onPress={() => void run(() => api.txnSetMatched(pickedTxns.map((t) => t.id), false), 'أُزيلت المطابقة')}>إزالة المطابقة</Button>
@@ -466,7 +459,6 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                         <Popover placement="bottom end" className="min-w-52 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
                           <Menu className="outline-none" onAction={(key) => onTxnMenu(t, String(key))}>
                             <MenuItem id="detail" className={menuItem}>عرض التفاصيل</MenuItem>
-                            {!t.payout && <MenuItem id="prepare" className={menuItem}>تجهيز دفعة لهذه الحوالة</MenuItem>}
                             {customer.excel && t.excelStatus !== 'exported' && <MenuItem id="excel" className={cx(menuItem, 'justify-between gap-4')}>إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></MenuItem>}
                             <MenuItem id="match" className={menuItem}>{t.matched ? 'إزالة المطابقة' : 'مطابق'}</MenuItem>
                             {t.allowedActions.filter((a) => a !== 'set_matched').map((a) => (
@@ -490,7 +482,11 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                     {dateCell}
                     {place([
                       <td>
-                        <Trunc className={cx(cancelled && 'line-through')}>دفعة {payoutMethod[p.details.method]}{p.details.platform ? ` — ${p.details.platform}` : ''}</Trunc>
+                        <div className="flex items-center gap-2">
+                          <Trunc className={cx('min-w-0 flex-1', cancelled && 'line-through')}>دفعة {payoutMethod[p.details.method]}{p.details.platform ? ` — ${p.details.platform}` : ''}</Trunc>
+                          {/* its state stays in view now that «تم الإرسال؟» is hidden by default (SPEC 4.9) */}
+                          <Badge tone={payoutTone[p.status]} className="shrink-0">{payoutStatus[p.status]}</Badge>
+                        </div>
                         <div className="num text-[12px] text-fg-3">{p.rangeLabel} · {transferCountLabel(p.txnCount)}</div>
                       </td>,
                       <td />,
@@ -512,10 +508,9 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
                       <MenuTrigger>
                         <Button variant="quiet" size="icon" aria-label="إجراءات الدفعة"><MoreHorizontal /></Button>
                         <Popover placement="bottom end" className="min-w-52 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                          <Menu className="outline-none" onAction={(key) => (key === 'excel' ? toExcel({ kind: 'payout', id: p.id }) : setDialog({ kind: key as 'send' | 'cancel' | 'details' | 'items', payout: p }))}>
+                          <Menu className="outline-none" onAction={(key) => (key === 'excel' ? toExcel({ kind: 'payout', id: p.id }) : setDialog({ kind: key as 'cancel' | 'details' | 'items', payout: p }))}>
                             <MenuItem id="items" className={menuItem}>الحوالات المشمولة</MenuItem>
                             {customer.excel && p.status === 'sent' && p.excelStatus !== 'exported' && <MenuItem id="excel" className={cx(menuItem, 'justify-between gap-4')}>إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></MenuItem>}
-                            {p.status === 'draft' && <MenuItem id="send" className={menuItem}>تأكيد الإرسال</MenuItem>}
                             {!cancelled && <MenuItem id="details" className={menuItem}>تعديل التفاصيل</MenuItem>}
                             {!cancelled && <MenuItem id="cancel" className={cx(menuItem, 'text-neg')}>إلغاء الدفعة</MenuItem>}
                           </Menu>
@@ -574,7 +569,7 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
               );
             })}
             {st.data && rows.length === 0 && (
-              <tr><td colSpan={columns.length + 4} className="py-10 text-center text-fg-3">{show === 'unpaid' ? 'لا حوالات غير مدفوعة' : show === 'payouts' ? 'لا دفعات بعد' : 'لا أسطر في هذه الفترة'}</td></tr>
+              <tr><td colSpan={columns.length + 4} className="py-10 text-center text-fg-3">{show === 'payouts' ? 'لا دفعات بعد. «تسجيل دفعة» أعلى الصفحة' : 'لا أسطر في هذه الفترة'}</td></tr>
             )}
           </tbody>
         </table>
@@ -594,7 +589,6 @@ export function StatementTab({ customer, currency, onPrepare }: { customer: Cust
       {detail !== null && <DetailPanel id={detail} onClose={() => openDetail(null)} />}
       {dialog?.kind === 'reverse' && <ReverseDialog entry={dialog.entry} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'delete-entry' && <DeleteEntryDialog entry={dialog.entry} onClose={() => setDialog(null)} />}
-      {dialog?.kind === 'send' && <MarkSentDialog payout={dialog.payout} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'cancel' && <CancelPayoutDialog payout={dialog.payout} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'details' && <PayoutDetailsDialog payout={dialog.payout} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'items' && <PayoutItemsDialog payout={dialog.payout} onClose={() => setDialog(null)} />}

@@ -21,6 +21,8 @@ export type ColDef = {
   min?: string;
   /** false = always shown (e.g. له / عليه / الرصيد) */
   hideable?: boolean;
+  /** hidden until the owner shows it from "الأعمدة" */
+  defaultHidden?: boolean;
 };
 
 export type ColView = ColDef & { w: string | undefined; pinned: boolean; offset?: string; last?: boolean };
@@ -44,7 +46,9 @@ export function useColumns(table: string, defs: ColDef[], stickyStart: string) {
   const { cols, set, reset } = useColumnPrefs(table);
   const byId = useMemo(() => new Map(defs.map((d) => [d.id, d])), [defs]);
   const order = mergeOrder(cols.order, defs.map((d) => d.id));
-  const hidden = new Set((cols.hidden ?? []).filter((id) => byId.get(id)?.hideable !== false));
+  // never customised: the columns hidden by default; once customised, the owner's own list
+  const hiddenList = cols.hidden ?? defs.filter((d) => d.defaultHidden).map((d) => d.id);
+  const hidden = new Set(hiddenList.filter((id) => byId.get(id)?.hideable !== false));
   const pinnedIds = (cols.pinned ?? []).filter((id) => byId.get(id)?.width && !hidden.has(id));
 
   const widthOf = (d: ColDef) => {
@@ -72,7 +76,10 @@ export function useColumns(table: string, defs: ColDef[], stickyStart: string) {
     replace: (next: ColumnPrefs) => set(() => next),
     reset,
     setWidth: (id: string, px: number) => set((c) => ({ ...c, widths: { ...c.widths, [id]: Math.round(px) } })),
-    toggle: (id: string, show: boolean) => set((c) => ({ ...c, hidden: show ? (c.hidden ?? []).filter((x) => x !== id) : [...new Set([...(c.hidden ?? []), id])] })),
+    toggle: (id: string, show: boolean) => set((c) => {
+      const base = c.hidden ?? hiddenList;
+      return { ...c, hidden: show ? base.filter((x) => x !== id) : [...new Set([...base, id])] };
+    }),
     pin: (id: string, on: boolean) => set((c) => ({ ...c, pinned: on ? [...new Set([...(c.pinned ?? []), id])] : (c.pinned ?? []).filter((x) => x !== id) })),
     reorder: (next: string[]) => set((c) => ({ ...c, order: next })),
   };

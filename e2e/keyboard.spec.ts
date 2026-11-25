@@ -19,7 +19,7 @@ async function tabTo(page: Page, match: (el: { role: string | null; name: string
   throw new Error('never reached by Tab');
 }
 
-test('0.6.0 pull → assign → approve → prepare payout with the keyboard only', async ({ page }) => {
+test('0.6.0 pull → assign → approve → record a payout with the keyboard only', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -63,14 +63,21 @@ test('0.6.0 pull → assign → approve → prepare payout with the keyboard onl
   await expect(page.locator('[role=alertdialog]').filter({ hasText: /اعتُمدت ونُقلت إلى هشام الزعبي/ })).toBeVisible();
   await expect(page.locator('table[aria-label="الوارد"] tbody tr').filter({ hasText: name })).toHaveCount(0);
 
-  // to the customer: G C, then the palette's "تجهيز دفعة لـ…", confirm by keys
+  // the palette's "تسجيل دفعة لـ…" opens the standalone payout on the customer's page (SPEC 4.9)
   await page.keyboard.press('Control+k');
-  await page.keyboard.type('تجهيز دفعة هشام');
+  await page.keyboard.type('تسجيل دفعة هشام');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
-  const prep = page.getByRole('dialog', { name: /تجهيز دفعة لـ هشام الزعبي/ });
+  const prep = page.getByRole('dialog', { name: /تسجيل دفعة لـ هشام الزعبي/ });
   await expect(prep).toBeVisible();
-  await expect(prep).toContainText(name);
-  await page.screenshot({ animations: 'disabled', path: 'e2e/screenshots/dark-56-keyboard-prepare.png' });
+  await expect(prep.getByRole('textbox', { name: 'المبلغ' })).toBeFocused();
+  await page.keyboard.type('10.00');
+  await tabTo(page, (el) => el.name === 'متابعة');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: /دفعة لـ هشام الزعبي/ })).toContainText('-10.00');
+  await page.screenshot({ animations: 'disabled', path: 'e2e/screenshots/dark-56-keyboard-payout.png' });
+  await tabTo(page, (el) => el.name === 'تسجيل الدفعة');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[role=alertdialog]').filter({ hasText: 'سُجّلت الدفعة' })).toBeVisible();
   expect(errors).toEqual([]);
 });

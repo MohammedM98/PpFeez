@@ -36,14 +36,14 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.getByRole('dialog', { name: 'البحث في كل المعاملات' })).toBeVisible();
     await page.keyboard.press('Escape');
 
-    // palette commands: a customer's page, "تجهيز دفعة لـ…" (opens the dialog there), pull
+    // palette commands: a customer's page, "تسجيل دفعة لـ…" (opens the dialog there), pull
     let d = await palette(page, 'فتح هشام');
     await d.getByRole('option', { name: /فتح العميل هشام الزعبي/ }).click();
     await expect(page.getByRole('heading', { name: 'هشام الزعبي' })).toBeVisible();
-    d = await palette(page, 'تجهيز دفعة هشام');
+    d = await palette(page, 'تسجيل دفعة هشام');
     await page.screenshot({ animations: 'disabled', path: `e2e/screenshots/${theme}-54-palette-commands.png` });
-    await d.getByRole('option', { name: /تجهيز دفعة لـ هشام الزعبي/ }).click();
-    await expect(page.getByRole('dialog', { name: /تجهيز دفعة لـ هشام الزعبي/ })).toBeVisible();
+    await d.getByRole('option', { name: /تسجيل دفعة لـ هشام الزعبي/ }).click();
+    await expect(page.getByRole('dialog', { name: /تسجيل دفعة لـ هشام الزعبي/ })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     d = await palette(page, 'سحب');

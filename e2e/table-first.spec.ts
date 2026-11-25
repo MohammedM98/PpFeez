@@ -51,19 +51,20 @@ for (const theme of ['dark', 'light'] as const) {
     const after = await headers(page, 'كشف USD');
     expect(after).not.toContain('gross');
     expect(after[0]).toBe('ref');                                     // pinned columns come first
-    expect(after.indexOf('notes')).toBeLessThan(after.indexOf('sent'));
+    expect(after.indexOf('notes')).toBeLessThan(after.indexOf('method'));
+    expect(after).not.toContain('sent'); // hidden by default (SPEC 4.9)
     await expect(page.locator('table[aria-label="كشف USD"] th[data-col="ref"]')).toHaveCSS('position', 'sticky');
 
     // width: drag the header edge, then two steps narrower with the keyboard
-    const th = page.locator('table[aria-label="كشف USD"] th[data-col="sent"]');
+    const th = page.locator('table[aria-label="كشف USD"] th[data-col="balance"]');
     const w0 = (await th.boundingBox())!.width;
-    const edge = (await page.getByRole('separator', { name: 'عرض عمود تم الإرسال؟' }).boundingBox())!;
+    const edge = (await page.getByRole('separator', { name: 'عرض عمود الرصيد' }).boundingBox())!;
     await page.mouse.move(edge.x + edge.width / 2, edge.y + 10);
     await page.mouse.down();
     await page.mouse.move(edge.x + edge.width / 2 - 60, edge.y + 10, { steps: 6 });
     await page.mouse.up();
     await expect.poll(async () => Math.round((await th.boundingBox())!.width)).toBe(Math.round(w0 + 60));
-    await page.getByRole('separator', { name: 'عرض عمود تم الإرسال؟' }).focus();
+    await page.getByRole('separator', { name: 'عرض عمود الرصيد' }).focus();
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('ArrowRight');
     await expect.poll(async () => Math.round((await th.boundingBox())!.width)).toBe(Math.round(w0 + 44));
@@ -78,14 +79,14 @@ for (const theme of ['dark', 'light'] as const) {
     await expect.poll(async () => {
       const saved = await page.evaluate(() => (window as unknown as { __ppfeezMock: { getDb: () => { settings: { uiPrefs: string } } } }).__ppfeezMock.getDb().settings.uiPrefs);
       return JSON.parse(saved).tables?.statement?.hidden;
-    }).toEqual(['gross']);
+    }).toEqual(['sent', 'gross']); // «تم الإرسال؟» was hidden by default, "المبلغ الكامل" by the owner
 
     // reset
     await page.getByRole('button', { name: 'الأعمدة' }).click();
     await page.getByRole('dialog', { name: 'الأعمدة' }).getByRole('button', { name: 'إعادة ضبط الأعمدة' }).click();
     await page.keyboard.press('Escape');
     await expect.poll(() => headers(page, 'كشف USD')).toEqual(before);
-    await expect(th).toHaveCSS('width', `${Math.round(w0)}px`);
+    await expect.poll(async () => Math.round((await th.boundingBox())!.width)).toBe(Math.round(w0));
     expect(errors).toEqual([]);
   });
 }
