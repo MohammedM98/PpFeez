@@ -295,6 +295,8 @@ export type RefundAlert = {
 // ledger_balances({ customerId }): BalanceCard[]
 // ledger_entries({ customerId, currency, period?: Period }): LedgerView
 // ledger_add_payout({ customerId, input: PayoutInput }): LedgerEntry   throws validation (code 'validation', field 'overdraw') إن تجاوزت الرصيد بلا confirmOverdraw
+// ledger_payout_preview({ customerId, currency, amountText?: string }): { balanceBeforeMinor: Minor; amountMinor: Minor; balanceAfterMinor: Minor; overdraw: boolean }
+//   SPEC §4.9: الرصيد قبل/بعد في نافذة "تسجيل دفعة"؛ amountText فارغ ⇒ amountMinor 0؛ نص غير صالح ⇒ invalid_amount (field 'amountText')
 
 // ===== الدفعات المرتبطة وكشف الحساب (SPEC §4.8، §6.5) =====
 export type PayoutStatus = 'draft' | 'sent' | 'cancelled';
