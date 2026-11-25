@@ -99,6 +99,7 @@ pub fn run() {
             commands::payouts::payout_update_details,
             commands::payouts::payout_cancel,
             commands::payouts::payouts_list,
+            commands::payouts::payout_register,
             commands::payouts::payout_defaults,
             commands::payouts::payout_platform_suggestions,
             commands::payouts::txn_set_matched,

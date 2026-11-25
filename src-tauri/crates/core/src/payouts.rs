@@ -216,6 +216,36 @@ pub enum StatementShow {
     Payouts,
     /// SPEC 6.8.3: lines not (yet) in the customer's linked Excel statement.
     NotExported,
+    /// SPEC 4.9: approved transfers only.
+    Transfers,
+}
+
+/// SPEC §4.9: one row of the payout register (standalone and linked payouts, one numbering).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayoutRegisterRow {
+    pub seq: i64,
+    pub kind: PayoutKind,
+    pub ledger_entry_id: Option<i64>,
+    pub payout_id: Option<i64>,
+    pub date: String,
+    pub amount_minor: i64,
+    pub method: PayoutMethod,
+    pub platform: Option<String>,
+    pub network: Option<String>,
+    pub destination: Option<String>,
+    pub reference: Option<String>,
+    pub note: Option<String>,
+    pub status: PayoutStatus,
+    pub cumulative_paid_minor: i64,
+    pub range_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PayoutKind {
+    Standalone,
+    Linked,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -362,7 +392,19 @@ fn ensure_customer(conn: &Connection, id: i64) -> AppResult<()> {
     crate::customers::customer_ref(conn, id).map(|_| ())
 }
 
-fn save_defaults(conn: &Connection, customer_id: i64, d: &PayoutDetails) -> AppResult<()> {
+/// SPEC §4.9: the next payout number of a customer in a currency, shared by linked payouts and
+/// standalone ones (ledger payouts recorded with `ledger_add_payout`).
+pub(crate) fn next_payout_seq(conn: &Connection, customer_id: i64, currency: &str) -> AppResult<i64> {
+    Ok(conn.query_row(
+        "SELECT COALESCE(MAX(s), 0) + 1 FROM (
+           SELECT payout_seq AS s FROM payouts WHERE customer_id = ?1 AND currency = ?2
+           UNION ALL SELECT payout_seq FROM standalone_payouts WHERE customer_id = ?1 AND currency = ?2)",
+        params![customer_id, currency],
+        |r| r.get(0),
+    )?)
+}
+
+pub(crate) fn save_defaults(conn: &Connection, customer_id: i64, d: &PayoutDetails) -> AppResult<()> {
     conn.execute(
         "INSERT INTO customer_payout_defaults (customer_id, method, platform, network, destination)
          VALUES (?1, ?2, ?3, ?4, ?5)
@@ -583,11 +625,7 @@ impl Core {
         let seqs: Vec<i64> = txns.iter().filter_map(|t| t.customer_seq).collect();
         let label = range_label(&seqs);
         let tx = conn.unchecked_transaction()?;
-        let seq: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(payout_seq),0) + 1 FROM payouts WHERE customer_id = ?1 AND currency = ?2",
-            params![customer_id, currency],
-            |r| r.get(0),
-        )?;
+        let seq = next_payout_seq(&tx, customer_id, &currency)?;
         tx.execute(
             "INSERT INTO payouts (customer_id, currency, payout_seq, status, amount_minor, due_minor, method, platform,
              network, destination, reference, note, difference_reason, range_label, payout_date, created_at, updated_at)
@@ -756,6 +794,80 @@ impl Core {
         )?;
         tx.commit()?;
         get_payout(&conn, payout_id)
+    }
+
+    /// SPEC §4.9: the payout register: standalone payouts and earlier linked ones, by number, with
+    /// the cumulative amount paid (sent, not cancelled) up to each row.
+    pub fn payout_register(&self, customer_id: i64, currency: &str) -> AppResult<Vec<PayoutRegisterRow>> {
+        let currency = normalize_currency(currency)?;
+        let conn = self.conn();
+        ensure_customer(&conn, customer_id)?;
+        let mut rows = vec![];
+        let linked: Vec<i64> = {
+            let mut stmt = conn.prepare("SELECT id FROM payouts WHERE customer_id = ?1 AND currency = ?2")?;
+            let v = stmt.query_map(params![customer_id, currency], |r| r.get(0))?.collect::<Result<_, _>>()?;
+            v
+        };
+        for id in linked {
+            let p = get_payout(&conn, id)?;
+            rows.push(PayoutRegisterRow {
+                seq: p.seq,
+                kind: PayoutKind::Linked,
+                ledger_entry_id: p.ledger_entry_id,
+                payout_id: Some(p.id),
+                date: p.date.clone(),
+                amount_minor: p.amount_minor,
+                method: p.details.method,
+                platform: p.details.platform.clone(),
+                network: p.details.network.clone(),
+                destination: p.details.destination.clone(),
+                reference: p.details.reference.clone(),
+                note: p.details.note.clone(),
+                status: p.status,
+                cumulative_paid_minor: 0,
+                range_label: Some(p.range_label.clone()).filter(|l| !l.is_empty()),
+            });
+        }
+        let standalone: Vec<(i64, i64)> = {
+            let mut stmt = conn.prepare(
+                "SELECT payout_seq, entry_id FROM standalone_payouts WHERE customer_id = ?1 AND currency = ?2",
+            )?;
+            let v = stmt
+                .query_map(params![customer_id, currency], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<_, _>>()?;
+            v
+        };
+        for (seq, entry_id) in standalone {
+            let e = get_entry(&conn, entry_id)?;
+            let method = e.payout_method.unwrap_or(PayoutMethod::Other);
+            let note = Some(e.description.clone()).filter(|d| *d != ledger::default_payout_description(method));
+            rows.push(PayoutRegisterRow {
+                seq,
+                kind: PayoutKind::Standalone,
+                ledger_entry_id: Some(e.id),
+                payout_id: None,
+                date: e.entry_date.clone(),
+                amount_minor: -e.amount_minor,
+                method,
+                platform: e.payout_platform.clone(),
+                network: e.payout_network.clone(),
+                destination: e.payout_destination.clone(),
+                reference: e.reference.clone(),
+                note,
+                status: if e.reversed_by_entry_id.is_some() { PayoutStatus::Cancelled } else { PayoutStatus::Sent },
+                cumulative_paid_minor: 0,
+                range_label: None,
+            });
+        }
+        rows.sort_by_key(|r| r.seq);
+        let mut paid = 0;
+        for r in &mut rows {
+            if r.status == PayoutStatus::Sent {
+                paid += r.amount_minor;
+            }
+            r.cumulative_paid_minor = paid;
+        }
+        Ok(rows)
     }
 
     pub fn payouts_list(&self, customer_id: i64, currency: &str) -> AppResult<Vec<Payout>> {
@@ -959,6 +1071,7 @@ impl Core {
                     txn.payout.as_ref().is_some_and(|p| p.status == PayoutStatus::Sent.as_str())
                 }
                 (StatementRow::Payout { .. }, StatementShow::Payouts) => true,
+                (StatementRow::Txn { .. }, StatementShow::Transfers) => true,
                 (StatementRow::Entry { entry, .. }, StatementShow::Payouts) => entry.kind == LedgerType::Payout,
                 (StatementRow::Txn { txn, .. }, StatementShow::NotExported) => {
                     missing.contains(&(ItemKind::Txn, txn.id))

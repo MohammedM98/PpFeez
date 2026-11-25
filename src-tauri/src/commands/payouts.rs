@@ -4,7 +4,7 @@ use crate::error::AppResult;
 use crate::state::AppState;
 use ppfeez_core::payouts::{
     CreateStatus, CustomerStatement, CustomerSummary, Payout, PayoutCreateInput, PayoutDetails, PayoutPreparation,
-    PayoutSelection, StatementFilter,
+    PayoutRegisterRow, PayoutSelection, StatementFilter,
 };
 use ppfeez_core::transactions::BulkResult;
 use tauri::State;
@@ -93,6 +93,17 @@ pub async fn payout_update_details(
 pub async fn payout_cancel(state: State<'_, AppState>, payout_id: i64, reason: String) -> AppResult<Payout> {
     state.core.guard()?;
     state.core.payout_cancel(payout_id, &reason)
+}
+
+/// SPEC §4.9: standalone and linked payouts in one numbering, with the cumulative paid amount.
+#[tauri::command]
+pub async fn payout_register(
+    state: State<'_, AppState>,
+    customer_id: i64,
+    currency: String,
+) -> AppResult<Vec<PayoutRegisterRow>> {
+    state.core.guard()?;
+    state.core.payout_register(customer_id, &currency)
 }
 
 #[tauri::command]

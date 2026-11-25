@@ -460,7 +460,7 @@ fn upgrade_from_0_5_0_tracking() {
     let h = open_in(dir);
     let conn = Connection::open(h.core.db_path()).unwrap();
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     let lines: Vec<(String, String, Option<i64>)> = conn
         .prepare("SELECT line_key, status, source_id FROM customer_excel_items ORDER BY line_key")
         .unwrap()
@@ -516,6 +516,6 @@ fn a_manual_add_is_written_in_statement_order_not_selection_order() {
     ];
     assert_eq!(h.core.customer_excel_add(c.id, &items, None).unwrap().added, 4);
     let written: Vec<String> = rows(&path).iter().map(|r| s(&r[stmt::C_SEQ as usize])).collect();
-    assert_eq!(written, vec!["Float(1.0)", "Float(2.0)", "", "Float(3.0)"]);
+    assert_eq!(written, vec!["Float(1.0)", "Float(2.0)", "دفعة 1", "Float(3.0)"]);
     assert_eq!(keys(&path)[2], format!("U:{}", u.id));
 }

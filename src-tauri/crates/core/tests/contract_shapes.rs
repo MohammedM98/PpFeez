@@ -99,6 +99,7 @@ const LEDGER_ENTRY: &[&str] = &[
     "notDeletableReasonAr",
     "inCustomerExcel",
     "excelStatus",
+    "payoutSeq",
 ];
 const PULL_RUN: &[&str] = &[
     "range",
@@ -653,6 +654,31 @@ fn payouts_group() {
         .iter()
         .any(|a| serde_json::to_value(a).unwrap() == "set_matched"));
     assert_eq!(serde_json::to_value(h.core.payout_defaults(c.id).unwrap()).unwrap()["method"], json!("western_union"));
+    // SPEC §4.9: the payout register.
+    let reg = serde_json::to_value(h.core.payout_register(c.id, "USD").unwrap()).unwrap();
+    let row = reg[0].as_object().unwrap();
+    let mut k: Vec<&str> = row.keys().map(String::as_str).collect();
+    k.sort_unstable();
+    let mut want = vec![
+        "seq",
+        "kind",
+        "ledgerEntryId",
+        "payoutId",
+        "date",
+        "amountMinor",
+        "method",
+        "platform",
+        "network",
+        "destination",
+        "reference",
+        "note",
+        "status",
+        "cumulativePaidMinor",
+        "rangeLabel",
+    ];
+    want.sort_unstable();
+    assert_eq!(k, want);
+    assert_eq!((reg[0]["kind"].clone(), reg[0]["status"].clone()), (json!("linked"), json!("sent")));
 }
 
 #[test]

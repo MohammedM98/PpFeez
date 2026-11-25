@@ -773,6 +773,10 @@ impl Core {
         } else {
             cells.push((stmt::C_DEBIT, money(Some(-e.amount_minor), cur), m));
         }
+        // SPEC §4.9: a standalone payout carries its number like a linked one ("دفعة N").
+        if let (LedgerType::Payout, Some(n), None) = (e.kind, e.payout_seq, e.payout_id) {
+            cells.push((stmt::C_SEQ, Some(V::Str(format!("دفعة {n}"))), St::Bold));
+        }
         if let Some(method) = e.payout_method {
             cells.push((stmt::C_METHOD, Some(V::Str(method.label_ar().into())), St::Text));
             cells.push((stmt::C_PLATFORM, opt_str(e.payout_platform.as_deref()), St::Text));

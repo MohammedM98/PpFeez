@@ -108,6 +108,8 @@ pub struct LedgerEntry {
     pub reverses_entry_id: Option<i64>,
     pub reversed_by_entry_id: Option<i64>,
     pub payout_method: Option<PayoutMethod>,
+    /// SPEC §4.9: "دفعة N" of a payout entry (standalone or linked).
+    pub payout_seq: Option<i64>,
     pub reference: Option<String>,
     pub description: String,
     pub entry_date: String,
@@ -126,6 +128,8 @@ pub struct LedgerEntry {
     pub payout_platform: Option<String>,
     #[serde(skip)]
     pub payout_network: Option<String>,
+    #[serde(skip)]
+    pub payout_destination: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -191,9 +195,16 @@ pub struct AdjustmentInput {
     pub description: String,
 }
 
+/// The description of a standalone payout recorded without one.
+pub fn default_payout_description(method: PayoutMethod) -> String {
+    format!("دفعة للعميل — {}", method.label_ar())
+}
+
 const SELECT: &str = "SELECT e.*, (SELECT r.id FROM ledger_entries r WHERE r.reverses_entry_id = e.id) AS reversed_by,
        (SELECT t.type FROM paypal_transactions t WHERE t.id = e.paypal_transaction_id) AS txn_type,
        (SELECT o.payout_id FROM ledger_entries o WHERE o.id = e.reverses_entry_id) AS reversed_payout_id,
+       COALESCE((SELECT sp.payout_seq FROM standalone_payouts sp WHERE sp.entry_id = e.id),
+                (SELECT p.payout_seq FROM payouts p WHERE p.id = e.payout_id)) AS payout_seq_n,
        (SELECT p.payout_seq FROM payout_items i JOIN payouts p ON p.id = i.payout_id
          WHERE i.item_kind = 'ledger' AND i.item_id = e.id AND p.status <> 'cancelled' LIMIT 1) AS in_payout_seq,
        (SELECT x.status FROM customer_excel_items x JOIN customer_excel c
@@ -249,6 +260,8 @@ fn entry_from_row(r: &Row<'_>) -> rusqlite::Result<LedgerEntry> {
         payout_id,
         payout_platform: r.get("payout_platform")?,
         payout_network: r.get("payout_network")?,
+        payout_destination: r.get("payout_destination")?,
+        payout_seq: r.get("payout_seq_n")?,
         id: r.get("id")?,
         customer_id: r.get("customer_id")?,
         currency: r.get("currency")?,
@@ -421,8 +434,7 @@ impl Core {
                 ),
             ));
         }
-        let description =
-            clean(input.description.clone()).unwrap_or_else(|| format!("دفعة للعميل — {}", input.method.label_ar()));
+        let description = clean(input.description.clone()).unwrap_or_else(|| default_payout_description(input.method));
         let tx = conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO ledger_entries (customer_id, currency, type, amount_minor, payout_method, reference,
@@ -443,6 +455,24 @@ impl Core {
             ],
         )?;
         let id = tx.last_insert_rowid();
+        // SPEC §4.9: "دفعة N" in the customer's payout numbering, and the last details as defaults.
+        let seq = crate::payouts::next_payout_seq(&tx, customer_id, &currency)?;
+        tx.execute(
+            "INSERT INTO standalone_payouts (entry_id, customer_id, currency, payout_seq) VALUES (?1, ?2, ?3, ?4)",
+            params![id, customer_id, currency, seq],
+        )?;
+        crate::payouts::save_defaults(
+            &tx,
+            customer_id,
+            &crate::payouts::PayoutDetails {
+                method: input.method,
+                platform: clean(input.platform.clone()),
+                network: clean(input.network.clone()),
+                destination: clean(input.destination.clone()),
+                reference: None,
+                note: None,
+            },
+        )?;
         crate::excel::customer::enqueue(
             &tx,
             &now,
