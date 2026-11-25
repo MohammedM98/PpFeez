@@ -208,3 +208,24 @@ fn upgrade_numbers_existing_standalone_payouts() {
     assert_eq!(usd, vec![(2, None), (3, Some(11)), (4, Some(10))], "after the linked #2, in date order");
     assert_eq!(h.core.payout_register(1, "EUR").unwrap()[0].seq, 1);
 }
+
+#[test]
+fn the_payout_dialog_shows_the_balance_before_and_after() {
+    let h = harness();
+    let c = h.customer("Ali", 2500).id;
+    approve(&h, c, "100"); // 75.00
+    let p = h.core.ledger_payout_preview(c, "usd", None).unwrap();
+    assert_eq!((p.balance_before_minor, p.amount_minor, p.balance_after_minor, p.overdraw), (7500, 0, 7500, false));
+    let p = h.core.ledger_payout_preview(c, "USD", Some("50")).unwrap();
+    assert_eq!((p.balance_after_minor, p.overdraw), (2500, false));
+    let p = h.core.ledger_payout_preview(c, "USD", Some("80.5")).unwrap();
+    assert_eq!((p.amount_minor, p.balance_after_minor, p.overdraw), (8050, -550, true));
+    assert_eq!(
+        common::code(h.core.ledger_payout_preview(c, "USD", Some("abc"))),
+        ppfeez_core::error::ErrorCode::InvalidAmount
+    );
+    let v = serde_json::to_value(h.core.ledger_payout_preview(c, "USD", Some("1")).unwrap()).unwrap();
+    let mut k: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+    k.sort_unstable();
+    assert_eq!(k, vec!["amountMinor", "balanceAfterMinor", "balanceBeforeMinor", "overdraw"]);
+}

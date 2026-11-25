@@ -195,6 +195,16 @@ pub struct AdjustmentInput {
     pub description: String,
 }
 
+/// SPEC §4.9: the balance before and after a payout being entered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayoutPreview {
+    pub balance_before_minor: i64,
+    pub amount_minor: i64,
+    pub balance_after_minor: i64,
+    pub overdraw: bool,
+}
+
 /// The description of a standalone payout recorded without one.
 pub fn default_payout_description(method: PayoutMethod) -> String {
     format!("دفعة للعميل — {}", method.label_ar())
@@ -414,6 +424,29 @@ impl Core {
         let conn = self.conn();
         ensure_customer(&conn, customer_id)?;
         view(&conn, customer_id, &normalize_currency(currency)?, period)
+    }
+
+    /// SPEC §4.9: the balance before and after a payout, for the "تسجيل دفعة" dialog.
+    pub fn ledger_payout_preview(
+        &self,
+        customer_id: i64,
+        currency: &str,
+        amount_text: Option<&str>,
+    ) -> AppResult<PayoutPreview> {
+        let currency = normalize_currency(currency)?;
+        let amount = match amount_text.map(str::trim).filter(|t| !t.is_empty()) {
+            Some(t) => parse_positive(t, &currency, "amountText")?,
+            None => 0,
+        };
+        let conn = self.conn();
+        ensure_customer(&conn, customer_id)?;
+        let before = balance_in(&conn, customer_id, &currency)?;
+        Ok(PayoutPreview {
+            balance_before_minor: before,
+            amount_minor: amount,
+            balance_after_minor: before - amount,
+            overdraw: amount > 0 && before - amount < 0,
+        })
     }
 
     pub fn ledger_add_payout(&self, customer_id: i64, input: PayoutInput) -> AppResult<LedgerEntry> {

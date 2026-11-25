@@ -1,6 +1,8 @@
 use crate::error::AppResult;
 use crate::state::AppState;
-use ppfeez_core::ledger::{AdjustmentInput, BalanceCard, LedgerEntry, LedgerView, PayoutInput, Statement};
+use ppfeez_core::ledger::{
+    AdjustmentInput, BalanceCard, LedgerEntry, LedgerView, PayoutInput, PayoutPreview, Statement,
+};
 use ppfeez_core::refunds::RefundAlert;
 use ppfeez_core::transactions::Period;
 use std::path::PathBuf;
@@ -21,6 +23,18 @@ pub async fn ledger_entries(
 ) -> AppResult<LedgerView> {
     state.core.guard()?;
     state.core.ledger_entries(customer_id, &currency, period.as_ref())
+}
+
+/// SPEC §4.9: balance before / after for the "تسجيل دفعة" dialog.
+#[tauri::command]
+pub async fn ledger_payout_preview(
+    state: State<'_, AppState>,
+    customer_id: i64,
+    currency: String,
+    amount_text: Option<String>,
+) -> AppResult<PayoutPreview> {
+    state.core.guard()?;
+    state.core.ledger_payout_preview(customer_id, &currency, amount_text.as_deref())
 }
 
 #[tauri::command]
