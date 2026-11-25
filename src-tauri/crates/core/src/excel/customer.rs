@@ -1061,7 +1061,7 @@ impl Core {
         if order == Order::Statement {
             idx.sort_by_key(|&i| lines[i].order);
         }
-        let result = self.write_lines(&link.path, &customer, idx.iter().map(|&i| &lines[i]).collect());
+        let result = self.write_lines(customer_id, &link.path, &customer, idx.iter().map(|&i| &lines[i]).collect());
         let conn = self.conn();
         match result {
             Ok((dups, sheets)) => {
@@ -1115,7 +1115,13 @@ impl Core {
 
     /// Append lines (skipping those already in the file) and apply their marks; returns the keys
     /// found already in the file and the sheets written.
-    fn write_lines(&self, path: &str, customer: &str, lines: Vec<&Line>) -> AppResult<(HashSet<String>, Vec<String>)> {
+    fn write_lines(
+        &self,
+        customer_id: i64,
+        path: &str,
+        customer: &str,
+        lines: Vec<&Line>,
+    ) -> AppResult<(HashSet<String>, Vec<String>)> {
         if let Some(e) = self.excel_fault.lock().unwrap_or_else(|e| e.into_inner()).clone() {
             return Err(e);
         }
@@ -1145,8 +1151,9 @@ impl Core {
         if groups.values().all(Vec::is_empty) && marks.values().all(Vec::is_empty) {
             return Ok((dups, vec![]));
         }
+        let counts = self.paid_counts(customer_id)?;
         let (out, sheets) =
-            stmt::append_lines(bytes, customer, self.clock.today(), &groups, &marks).map_err(layout_err)?;
+            stmt::append_lines(bytes, customer, self.clock.today(), &groups, &marks, &counts).map_err(layout_err)?;
         statement_self_check(&out, &groups).map_err(export_failed)?;
         keep_previous(&p)?;
         save_atomic(&out, &p)?;
@@ -1752,9 +1759,15 @@ fn statement_self_check(bytes: &[u8], groups: &BTreeMap<String, Vec<Line>>) -> R
             continue;
         }
         let range = wb.worksheet_range(&stmt::sheet_name(cur)).map_err(|e| e.to_string())?;
+        // The key column is found by its header: its position depends on the file's layout.
+        let key_header = stmt::HEADERS[stmt::C_KEY as usize];
+        let key_col = range
+            .rows()
+            .find_map(|r| r.iter().position(|c| matches!(c, Data::String(s) if s == key_header)))
+            .ok_or_else(|| format!("self-check: no key column in {}", stmt::sheet_name(cur)))?;
         let keys: HashSet<String> = range
             .rows()
-            .filter_map(|r| r.get(stmt::C_KEY as usize))
+            .filter_map(|r| r.get(key_col))
             .filter_map(|c| if let Data::String(s) = c { Some(s.clone()) } else { None })
             .collect();
         if let Some(l) = lines.iter().find(|l| !keys.contains(&l.key)) {
@@ -1891,13 +1904,54 @@ fn opening_line(currency: &str, balance_minor: i64, date: NaiveDate, label: Stri
 }
 
 impl Core {
+    /// SPEC §6.8.6: the unpaid / paid transfer counts per currency, written in the header of the
+    /// customer's statement as values (the program's own figures).
+    fn paid_counts(&self, customer_id: i64) -> AppResult<BTreeMap<String, stmt::Counts>> {
+        let currencies = customer_currencies(&self.conn(), customer_id)?;
+        let mut out = BTreeMap::new();
+        for cur in currencies {
+            let s = self.customer_summary(customer_id, &cur)?;
+            out.insert(cur, (s.not_paid_count, s.paid_count));
+        }
+        Ok(out)
+    }
+
     /// A new, empty statement (one sheet per currency) saved at `path`.
     fn save_new_workbook(&self, customer_id: i64, name: &str, currencies: &[String], path: &Path) -> AppResult<()> {
+        let counts = self.paid_counts(customer_id)?;
+        self.save_workbook_with(customer_id, name, currencies, path, |cur, today| {
+            stmt::sheet_model(name, cur, today, &[], counts.get(cur).copied().unwrap_or((0, 0)))
+        })
+    }
+
+    /// Tests only: create and link a statement in the 0.5.x/0.6.0 layout ("تم الإرسال؟" column and
+    /// COUNTIFS figures), or such a file whose "تم الإرسال؟" column the owner deleted.
+    #[doc(hidden)]
+    pub fn debug_customer_excel_create_legacy(&self, customer_id: i64, path: &str, with_sent: bool) -> AppResult<()> {
+        let (customer, currencies) = {
+            let conn = self.conn();
+            (crate::customers::get(&conn, customer_id)?, customer_currencies(&conn, customer_id)?)
+        };
+        self.save_workbook_with(customer_id, &customer.name, &currencies, Path::new(path), |cur, today| {
+            stmt::model_with(&customer.name, cur, today, &[], None, with_sent)
+        })?;
+        self.customer_excel_link(customer_id, path)?;
+        Ok(())
+    }
+
+    fn save_workbook_with(
+        &self,
+        customer_id: i64,
+        name: &str,
+        currencies: &[String],
+        path: &Path,
+        model: impl Fn(&str, NaiveDate) -> super::model::SheetModel,
+    ) -> AppResult<()> {
         let today = self.clock.today();
         let f = super::model::Formats::new();
         let mut wb = rust_xlsxwriter::Workbook::new();
         for cur in currencies {
-            super::model::render(&mut wb, &f, &stmt::sheet_model(name, cur, today, &[]))?;
+            super::model::render(&mut wb, &f, &model(cur, today))?;
         }
         let props = rust_xlsxwriter::DocProperties::new()
             .set_title(format!("كشف حساب — {name}"))
@@ -2089,7 +2143,7 @@ impl Core {
                 })
                 .collect();
             let _writer = self.excel_write.lock().unwrap_or_else(|e| e.into_inner());
-            self.write_lines(&path_s, &customer.name, lines.iter().collect())?;
+            self.write_lines(customer_id, &path_s, &customer.name, lines.iter().collect())?;
         }
         let sent = self.customer_excel_send_unexported(customer_id, Some(file_id))?;
         if make_current_file {

@@ -20,7 +20,9 @@ use super::xlsx::{
 use chrono::NaiveDate;
 use std::collections::{BTreeMap, HashSet};
 
-pub const HEADERS: [&str; 18] = [
+/// Columns of the statement table (SPEC §6.8.2). SPEC §6.8.6: no "تم الإرسال؟" column in new
+/// files; in files that still have it, it is found as an optional column and kept up to date.
+pub const HEADERS: [&str; 17] = [
     "#",
     "التاريخ",
     "البيان",
@@ -32,7 +34,6 @@ pub const HEADERS: [&str; 18] = [
     "له",
     "عليه",
     "الرصيد",
-    "تم الإرسال؟",
     "طريقة الدفع",
     "المنصة/البنك",
     "الشبكة",
@@ -51,15 +52,21 @@ pub const C_COMMISSION: u16 = 7;
 pub const C_CREDIT: u16 = 8;
 pub const C_DEBIT: u16 = 9;
 pub const C_BALANCE: u16 = 10;
-pub const C_SENT: u16 = 11;
-pub const C_METHOD: u16 = 12;
-pub const C_PLATFORM: u16 = 13;
-pub const C_NETWORK: u16 = 14;
-pub const C_REF: u16 = 15;
-pub const C_NOTES: u16 = 16;
-pub const C_KEY: u16 = 17;
-const WIDTHS: [f64; 18] =
-    [7.0, 12.0, 38.0, 14.0, 11.0, 14.0, 10.0, 12.0, 13.0, 13.0, 14.0, 16.0, 13.0, 14.0, 9.0, 22.0, 24.0, 12.0];
+pub const C_METHOD: u16 = 11;
+pub const C_PLATFORM: u16 = 12;
+pub const C_NETWORK: u16 = 13;
+pub const C_REF: u16 = 14;
+pub const C_NOTES: u16 = 15;
+pub const C_KEY: u16 = 16;
+/// Optional program column (SPEC §6.8.6): written only where a file still has it.
+pub const C_SENT: u16 = 17;
+pub const SENT_HEADER: &str = "تم الإرسال؟";
+/// Program columns: the table's columns, then the optional ones.
+const PROGRAM_COLS: usize = C_SENT as usize + 1;
+const WIDTHS: [f64; 17] =
+    [7.0, 12.0, 38.0, 14.0, 11.0, 14.0, 10.0, 12.0, 13.0, 13.0, 14.0, 13.0, 14.0, 9.0, 22.0, 24.0, 12.0];
+pub const NOT_PAID: &str = "غير مدفوع";
+pub const PAID: &str = "عدد المدفوع";
 /// 0-based row of the table header; data starts on the next row.
 pub const HEADER_ROW: u32 = 12;
 /// Calm fill of payout rows.
@@ -114,13 +121,23 @@ fn balance_formula(cols: &[u32], first: u32, r: u32) -> String {
     format!("SUM({c}${first}:{c}{r})-SUM({d}${first}:{d}{r})")
 }
 
-/// The eight figures of SPEC 4.8 as formulas over the statement table. Reversal rows (keys
-/// starting with "-") cancel the line they reverse; "X:" are payout reversals written by 0.5.0.
-pub fn figures(currency: &str) -> Vec<(&'static str, String, St)> {
+/// The eight figures of SPEC 4.8: formulas over the statement table, except "غير مدفوع" and
+/// "عدد المدفوع" (`None`), which the program writes as values on every write (SPEC §6.8.6: they
+/// no longer depend on a "تم الإرسال؟" column). Reversal rows (keys starting with "-") cancel the
+/// line they reverse; "X:" are payout reversals written by 0.5.0.
+pub fn figures(currency: &str) -> Vec<(&'static str, Option<String>, St)> {
+    figure_formulas(currency)
+        .into_iter()
+        .map(|(l, f, st)| (l, if l == NOT_PAID || l == PAID { None } else { Some(f) }, st))
+        .collect()
+}
+
+/// The formulas of 0.5.x/0.6.0 files (the two counts used the "تم الإرسال؟" column).
+fn figure_formulas(currency: &str) -> Vec<(&'static str, String, St)> {
     let t = table_name(currency);
     let col = |name: &str| format!("{t}[{name}]");
     let money = St::money(currency, true);
-    let (k, c, d, s) = (col("مفتاح"), col("له"), col("عليه"), col("تم الإرسال؟"));
+    let (k, c, d, s) = (col("مفتاح"), col("له"), col("عليه"), col(SENT_HEADER));
     let sumifs = |what: &str, prefix: &str| format!("SUMIFS({what},{k},\"{prefix}*\")");
     let count = |prefix: &str| format!("COUNTIFS({k},\"{prefix}*\")");
     let txn_count = format!("({}-{})", count("T:"), count("-T:"));
@@ -144,7 +161,7 @@ pub fn figures(currency: &str) -> Vec<(&'static str, String, St)> {
             money,
         ),
         ("المتبقي", format!("SUM({c})-SUM({d})"), money),
-        ("غير مدفوع", format!("{txn_count}-{paid}"), St::Int),
+        (NOT_PAID, format!("{txn_count}-{paid}"), St::Int),
         (
             "المبلغ قبل العمولة",
             format!("{}-{}", sumifs(&col("الصافي من PayPal"), "T:"), sumifs(&col("الصافي من PayPal"), "-T:")),
@@ -156,12 +173,14 @@ pub fn figures(currency: &str) -> Vec<(&'static str, String, St)> {
             money,
         ),
         ("عدد المعاملات", txn_count.clone(), St::Int),
-        ("عدد المدفوع", paid, St::Int),
+        (PAID, paid, St::Int),
     ]
 }
 
-fn header_block(customer: &str, currency: &str, today: NaiveDate) -> Vec<RowB> {
-    let figures = figures(currency);
+/// Unpaid and paid transfer counts written in the header (SPEC §6.8.6).
+pub type Counts = (i64, i64);
+
+fn header_block(customer: &str, currency: &str, today: NaiveDate, counts: Option<Counts>) -> Vec<RowB> {
     let mut rows = vec![];
     let mut title = RowB::default();
     title.str(0, &format!("كشف حساب — {customer}"), St::Bold);
@@ -169,9 +188,14 @@ fn header_block(customer: &str, currency: &str, today: NaiveDate) -> Vec<RowB> {
     let mut cur = RowB::default();
     cur.str(C_LABEL, "العملة", St::Bold).str(C_GROSS, currency, St::Bold);
     rows.push(cur);
-    for (label, formula, st) in figures {
+    for (label, formula, st) in figure_formulas(currency) {
         let mut r = RowB::default();
-        r.str(C_LABEL, label, St::Bold).formula(C_GROSS, &formula, st);
+        r.str(C_LABEL, label, St::Bold);
+        match (counts, label) {
+            (Some((not_paid, _)), NOT_PAID) => r.num(C_GROSS, not_paid as f64, st),
+            (Some((_, paid)), PAID) => r.num(C_GROSS, paid as f64, st),
+            _ => r.formula(C_GROSS, &formula, st),
+        };
         rows.push(r);
     }
     let mut upd = RowB::default();
@@ -182,38 +206,76 @@ fn header_block(customer: &str, currency: &str, today: NaiveDate) -> Vec<RowB> {
 }
 
 /// A statement sheet as a model: header block, table header and `lines` from the first data row.
-pub fn sheet_model(customer: &str, currency: &str, today: NaiveDate, lines: &[Line]) -> SheetModel {
+pub fn sheet_model(customer: &str, currency: &str, today: NaiveDate, lines: &[Line], counts: Counts) -> SheetModel {
+    model_with(customer, currency, today, lines, Some(counts), false)
+}
+
+/// Header texts of a sheet; `with_sent` is the 0.5.x/0.6.0 layout, "تم الإرسال؟" after "الرصيد".
+pub fn headers(with_sent: bool) -> Vec<&'static str> {
+    let mut h = HEADERS.to_vec();
+    if with_sent {
+        h.insert(C_METHOD as usize, SENT_HEADER);
+    }
+    h
+}
+
+/// Tests only: the layout of 0.5.x/0.6.0 files (`counts: None` keeps their COUNTIFS formulas;
+/// `with_sent: false` is such a file whose "تم الإرسال؟" column the owner deleted).
+#[doc(hidden)]
+pub fn model_with(
+    customer: &str,
+    currency: &str,
+    today: NaiveDate,
+    lines: &[Line],
+    counts: Option<Counts>,
+    with_sent: bool,
+) -> SheetModel {
+    let heads = headers(with_sent);
+    // Program column → sheet column (0-based).
+    let at = |c: u16| -> Option<u16> {
+        match (c, with_sent) {
+            (C_SENT, false) => None,
+            (C_SENT, true) => Some(C_METHOD),
+            (c, true) if c >= C_METHOD => Some(c + 1),
+            (c, _) => Some(c),
+        }
+    };
+    let key_at = at(C_KEY).unwrap_or(C_KEY);
+    let mut widths = WIDTHS.to_vec();
+    if with_sent {
+        widths.insert(C_METHOD as usize, 16.0);
+    }
     let mut m = SheetModel {
         name: sheet_name(currency),
         rows: vec![],
         header_row: HEADER_ROW,
         filter_last: HEADER_ROW,
-        cols: HEADERS.len() as u16,
-        widths: WIDTHS.to_vec(),
+        cols: heads.len() as u16,
+        widths,
         table: Some(table_name(currency)),
-        hidden: vec![C_KEY],
+        hidden: vec![key_at],
     };
-    for r in header_block(customer, currency, today) {
+    for r in header_block(customer, currency, today, counts) {
         m.push_extra(r);
     }
     let mut head = RowB::default();
-    for (i, h) in HEADERS.iter().enumerate() {
+    for (i, h) in heads.iter().enumerate() {
         head.str(i as u16, h, St::Header);
     }
     m.push_extra(head);
-    let cols: Vec<u32> = (1..=HEADERS.len() as u32).collect();
+    let cols: Vec<u32> = (0..PROGRAM_COLS as u16).map(|c| at(c).map_or(0, |x| x as u32 + 1)).collect();
     let first = HEADER_ROW + 2;
     for (k, line) in lines.iter().enumerate() {
         let r = first + k as u32;
         let mut row = RowB::default();
         for (c, v, st) in &line.cells {
-            if let Some(v) = v {
-                row.0.push(MCell { col: *c, v: v.clone(), st: *st, fill: None });
+            if let (Some(v), Some(col)) = (v, at(*c)) {
+                row.0.push(MCell { col, v: v.clone(), st: *st, fill: None });
             }
         }
         row.formula(C_BALANCE, &balance_formula(&cols, first, r), St::money(currency, false));
         if line.fill {
-            row.fill_all(PAYOUT_FILL, C_KEY);
+            row.fill_all(PAYOUT_FILL, key_at);
         }
         m.push(row);
     }
@@ -255,13 +317,17 @@ fn find_statement(pkg: &mut Package, sst: &[String], currency: &str) -> LResult<
     }
     let header_row = table.from.1;
     let header = doc.row(header_row).ok_or_else(|| layout("صف عناوين جدول الكشف مفقود."))?;
+    let find = |h: &str| header.cells.iter().find(|c| c.value(sst) == CellValue::Str(h.to_string())).map(|c| c.col);
     let mut cols = vec![];
     for h in HEADERS {
-        let c = header.cells.iter().find(|c| c.value(sst) == CellValue::Str(h.to_string())).map(|c| c.col).ok_or_else(
-            || layout(format!("لم أجد عمود «{h}» في جدول الكشف في ورقة «{}». أعد العنوان كما كان.", sheet.name)),
-        )?;
+        let c = find(h).ok_or_else(|| {
+            layout(format!("لم أجد عمود «{h}» في جدول الكشف في ورقة «{}». أعد العنوان كما كان.", sheet.name))
+        })?;
         cols.push(c);
     }
+    // Optional columns: 0 when the file does not have them (SPEC §6.8.6).
+    cols.push(find(SENT_HEADER).unwrap_or(0));
+    debug_assert_eq!(cols.len(), PROGRAM_COLS);
     let key_col = cols[C_KEY as usize];
     let last_key_row = doc
         .rows
@@ -312,6 +378,7 @@ pub fn append_lines(
     today: NaiveDate,
     lines: &BTreeMap<String, Vec<Line>>,
     marks: &BTreeMap<String, Vec<Mark>>,
+    counts: &BTreeMap<String, Counts>,
 ) -> LResult<(Vec<u8>, Vec<String>)> {
     let mut pkg = Package::open(bytes)?;
     let wb = workbook_info(&mut pkg)?;
@@ -354,7 +421,9 @@ pub fn append_lines(
                     .enumerate()
                     .map(|(k, l)| {
                         let r = first_new + k as u32;
-                        let mut cells: TxnCells = l.cells.clone();
+                        // Columns this file does not have (e.g. no "تم الإرسال؟") are skipped.
+                        let mut cells: TxnCells =
+                            l.cells.iter().filter(|c| f.cols[c.0 as usize] != 0).cloned().collect();
                         cells.push((
                             C_BALANCE,
                             Some(V::Formula(balance_formula(&f.cols, first_data, r))),
@@ -386,7 +455,7 @@ pub fn append_lines(
                 for row in f.doc.rows.iter().filter(|r| r.r > f.header_row) {
                     let Some(CellValue::Str(k)) = row.cell(key_col).map(|c| c.value(&sst)) else { continue };
                     let k = k.trim();
-                    for m in cur_marks.iter().filter(|m| m.matches(k)) {
+                    for m in cur_marks.iter().filter(|m| m.matches(k) && f.cols[m.col as usize] != 0) {
                         let col = f.cols[m.col as usize];
                         let cell = row.cell(col);
                         let current = cell.map(|c| c.value(&sst)).unwrap_or(CellValue::Empty);
@@ -404,16 +473,24 @@ pub fn append_lines(
                     }
                 }
                 // Header-block formulas, current definitions without a cached value, so every
-                // spreadsheet program (not only Excel, which recalculates on open) shows them.
+                // spreadsheet program (not only Excel, which recalculates on open) shows them; the
+                // two transfer counts are values (SPEC §6.8.6).
                 let defs = figures(currency);
+                let (not_paid, paid) = counts.get(currency).copied().unwrap_or((0, 0));
                 for row in f.doc.rows.iter().filter(|r| r.r < f.header_row) {
                     for c in &row.cells {
                         let CellValue::Str(label) = c.value(&sst) else { continue };
-                        if let Some((_, formula, _)) = defs.iter().find(|(l, _, _)| *l == label.trim()) {
-                            let col = c.col + 1;
-                            let s = row.cell(col).and_then(|x| x.s);
-                            row_edits.entry(row.r).or_default().insert(col, xlsx::cell_formula(col, row.r, s, formula));
-                        }
+                        let Some((l, formula, _)) = defs.iter().find(|(l, _, _)| *l == label.trim()) else { continue };
+                        let col = c.col + 1;
+                        let s = row.cell(col).and_then(|x| x.s);
+                        let cell = match formula {
+                            Some(f) => xlsx::cell_formula(col, row.r, s, f),
+                            None => {
+                                let n = if *l == NOT_PAID { not_paid } else { paid };
+                                program_cell(col, row.r, s, &Some(V::Num(n as f64)), wb.date1904)
+                            }
+                        };
+                        row_edits.entry(row.r).or_default().insert(col, cell);
                     }
                 }
                 // "آخر تحديث" in the header block.
@@ -442,7 +519,7 @@ pub fn append_lines(
                 if existing_tables.contains(&tname) {
                     return Err(layout(format!("يوجد في الملف جدول آخر اسمه «{tname}». غيّر اسمه ثم أعد المحاولة.")));
                 }
-                let m = sheet_model(customer, currency, today, batch);
+                let m = sheet_model(customer, currency, today, batch, counts.get(currency).copied().unwrap_or((0, 0)));
                 let keep = Keep { sheet_pr: None, tab_selected: false, tail: vec![] };
                 let xml = model::render_xml(&m, &mut styles, wb.date1904, &keep, Some("rId1"));
                 let last = (m.filter_last.max(m.header_row + 1)) + 1;

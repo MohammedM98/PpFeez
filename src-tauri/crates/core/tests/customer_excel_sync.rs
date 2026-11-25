@@ -24,6 +24,15 @@ fn rows(path: &Path) -> Vec<Vec<Data>> {
         .collect()
 }
 
+/// The value next to a header-block label of the USD sheet.
+fn figure(path: &Path, label: &str) -> Data {
+    let mut wb: Xlsx<_> = open_workbook(path).unwrap();
+    let r: Vec<Vec<Data>> = wb.worksheet_range("كشف USD").unwrap().rows().map(|r| r.to_vec()).collect();
+    let row = r.iter().find(|r| r.iter().any(|c| matches!(c, Data::String(x) if x == label))).unwrap();
+    let i = row.iter().position(|c| matches!(c, Data::String(x) if x == label)).unwrap();
+    row[i + 1].clone()
+}
+
 fn s(d: &Data) -> String {
     match d {
         Data::String(s) => s.clone(),
@@ -160,7 +169,8 @@ fn each_event_adds_its_row() {
     h.core.payout_mark_sent(p, None).unwrap();
     assert_eq!(sync(&h), (1, 0, None));
     assert_eq!(s(&col(&path, &format!("P:{p}"), stmt::C_DEBIT)), "Float(75.0)");
-    assert_eq!(s(&col(&path, "T:", stmt::C_SENT)), "نعم — دفعة 1", "its transfer is marked paid");
+    assert_eq!(figure(&path, stmt::PAID), Data::Float(1.0), "its transfer counts as paid");
+    assert_eq!(figure(&path, stmt::NOT_PAID), Data::Float(0.0));
 
     // Details edited after sending: the payout's row is updated, no new row.
     h.core.payout_update_details(p, details("0xbeef")).unwrap();
@@ -174,8 +184,7 @@ fn each_event_adds_its_row() {
     assert_eq!(sync(&h), (1, 0, None));
     assert!(keys(&path)[4].starts_with(&format!("-P:{p}:")));
     assert_eq!(col(&path, "-P:", stmt::C_CREDIT), Data::Float(75.0));
-    assert_eq!(s(&col(&path, &format!("P:{p}"), stmt::C_SENT)), "ملغاة");
-    assert_eq!(s(&col(&path, "T:", stmt::C_SENT)), "لا");
+    assert_eq!((figure(&path, stmt::PAID), figure(&path, stmt::NOT_PAID)), (Data::Float(0.0), Data::Float(1.0)));
 
     // Unapproved after export: a reversal row that keeps the transfer's number and figures.
     h.core.txn_unapprove(t, "حوالة خاطئة").unwrap();

@@ -37,6 +37,14 @@ fn formulas(path: &Path, sheet: &str) -> Vec<String> {
     f.rows().flat_map(|r| r.iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>()).collect()
 }
 
+/// The value next to a header-block label ("غير مدفوع", …).
+fn figure(path: &Path, sheet: &str, label: &str) -> Data {
+    let r = rows(path, sheet);
+    let row = r.iter().find(|r| r.iter().any(|c| matches!(c, Data::String(x) if x == label))).unwrap();
+    let i = row.iter().position(|c| matches!(c, Data::String(x) if x == label)).unwrap();
+    row[i + 1].clone()
+}
+
 fn s(d: &Data) -> String {
     match d {
         Data::String(s) => s.clone(),
@@ -88,9 +96,11 @@ fn create_add_and_the_spec_example() {
     assert_eq!(head_row.iter().map(s).collect::<Vec<_>>(), HEADERS.map(str::to_string).to_vec(), "column order");
     let f = formulas(&path, "كشف USD");
     assert!(f.iter().any(|x| x.contains("SUMIFS(Statement_USD[له],Statement_USD[مفتاح],\"T:*\")")), "{f:?}");
-    assert!(f.iter().any(|x| x.contains(
-        "(COUNTIFS(Statement_USD[مفتاح],\"T:*\")-COUNTIFS(Statement_USD[مفتاح],\"-T:*\"))-COUNTIFS(Statement_USD[مفتاح],\"T:*\",Statement_USD[تم الإرسال؟],\"نعم*\")"
-    )));
+    // SPEC §6.8.6: no "تم الإرسال؟" column; the two transfer counts are values, not formulas.
+    assert!(!head_row.iter().any(|c| s(c) == stmt::SENT_HEADER));
+    assert!(!f.iter().any(|x| x.contains("تم الإرسال")), "{f:?}");
+    assert_eq!(figure(&path, "كشف USD", stmt::NOT_PAID), Data::Float(1.0), "the approved transfer is unpaid");
+    assert_eq!(figure(&path, "كشف USD", stmt::PAID), Data::Float(0.0));
     assert!(String::from_utf8_lossy(&parts(&path)["docProps/custom.xml"]).contains("PpFeezCustomerId"));
 
     // The transfer, then a payout of 50.00: running balance 71.25 → 21.25.
@@ -111,7 +121,6 @@ fn create_add_and_the_spec_example() {
         [Data::Float(100.0), Data::Float(5.0), Data::Float(95.0), Data::Float(23.75), Data::Float(71.25)]
     );
     assert_eq!(tr[stmt::C_PCT as usize], Data::Float(0.25));
-    assert_eq!(s(&tr[stmt::C_SENT as usize]), "لا");
     assert_eq!(s(&tr[stmt::C_REF as usize]), t.paypal_txn_id);
     assert!(
         s(&tr[stmt::C_KEY as usize]).starts_with(&format!("T:{}:", t.paypal_txn_id)),
@@ -126,7 +135,7 @@ fn create_add_and_the_spec_example() {
     assert!(f.contains(&"SUM(I$14:I14)-SUM(J$14:J14)".to_string()), "{f:?}");
     assert!(f.contains(&"SUM(I$14:I15)-SUM(J$14:J15)".to_string()), "{f:?}");
     let table = String::from_utf8(parts(&path)["xl/tables/table1.xml"].clone()).unwrap();
-    assert!(table.contains("ref=\"A13:R15\""), "{table}");
+    assert!(table.contains("ref=\"A13:Q15\""), "{table}");
     assert!(String::from_utf8_lossy(&parts(&path)["xl/workbook.xml"]).contains("fullCalcOnLoad=\"1\""));
     if let Ok(dir) = std::env::var("DUMP_DIR") {
         std::fs::copy(&path, Path::new(&dir).join("statement.xlsx")).unwrap();
@@ -265,8 +274,11 @@ fn payouts_mark_their_transfers_and_new_currencies_get_a_sheet() {
     h.core.customer_excel_add(c.id, &[item(ItemKind::Payout, p.id)], None).unwrap();
     let d = data_rows(&path, "كشف USD");
     assert_eq!(d.len(), 3);
-    assert_eq!(s(&d[0][stmt::C_SENT as usize]), "نعم — دفعة 1", "transfer row updated");
-    assert_eq!(s(&d[1][stmt::C_SENT as usize]), "نعم — دفعة 1");
+    // The header counts follow the program (SPEC §6.8.6).
+    let sum = h.core.customer_summary(c.id, "USD").unwrap();
+    assert_eq!((sum.not_paid_count, sum.paid_count), (0, 2));
+    assert_eq!(figure(&path, "كشف USD", stmt::NOT_PAID), Data::Float(0.0));
+    assert_eq!(figure(&path, "كشف USD", stmt::PAID), Data::Float(2.0));
     assert_eq!(s(&d[2][stmt::C_SEQ as usize]), "دفعة 1");
     assert_eq!(d[2][stmt::C_DEBIT as usize], Data::Float(86.25));
     assert_eq!(s(&d[2][stmt::C_KEY as usize]), format!("P:{}", p.id));
