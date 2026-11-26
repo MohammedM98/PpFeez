@@ -12,7 +12,7 @@ export function Tabs({ className, ...props }: TabsProps) {
 
 export function TabList({ className, ...props }: TabListProps) {
   return (
-    <HeroTabs.ListContainer className="-mb-px border-b-0!">
+    <HeroTabs.ListContainer className="tabs-underline -mb-px border-b-0!">
       <HeroTabs.List {...props} className={cx('gap-1', className as string)} />
     </HeroTabs.ListContainer>
   );

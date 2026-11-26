@@ -42,7 +42,7 @@ export function LockPage({ status }: { status: AppStatus }) {
   };
 
   return (
-    <div className="grid min-h-screen place-items-center bg-sunken p-6">
+    <div className="grid min-h-screen place-items-center p-6">
       <div className="w-[380px]">
         <div className="mb-8 flex justify-center"><Logo /></div>
         <Form onSubmit={(e) => { e.preventDefault(); void submit(); }} className="rounded-panel border border-line bg-surface p-6 shadow-(--shadow-float)">

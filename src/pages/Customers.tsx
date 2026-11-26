@@ -41,7 +41,7 @@ export function BalanceChips({ c, oneLine }: { c: Pick<Customer, 'balances'>; on
       title={oneLine ? nonZero.map((b) => formatAmount(b.minor, b.currency)).join('\n') : undefined}>
       {rest > 0 && <span className="num inline-flex h-7 items-center rounded-[6px] bg-raised px-2 text-[13px] text-fg-2">+{rest}</span>}
       {shown.map((b) => (
-        <span key={b.currency} className={cx('inline-flex h-7 items-center rounded-[6px] px-2 text-[13.5px]', b.minor < 0 ? 'bg-neg-soft text-neg' : 'bg-raised text-fg')}>
+        <span key={b.currency} className={cx('inline-flex h-7 items-center rounded-full px-2.5 text-[13.5px] [&_.text-fg-3]:text-fg-2', b.minor < 0 ? 'bg-neg-soft text-neg' : 'bg-raised text-fg')}>
           <Amount minor={b.minor} currency={b.currency} className={b.minor < 0 ? '[&_span]:text-neg/80' : ''} />
           {b.minor < 0 && <span className="ms-1.5 text-[12px]">عليه</span>}
         </span>

@@ -29,9 +29,9 @@ function NavItem({ to, icon, label, count, tone = 'muted', narrow }: { to: strin
       to={to}
       className={({ isActive }) =>
         cx(
-          'group flex h-9 items-center gap-2.5 rounded-ctl px-2.5 text-[14.5px] outline-none transition-colors duration-150',
+          'nav-item group relative flex h-9 items-center gap-2.5 rounded-xl px-2.5 text-[14.5px] outline-none transition-colors duration-150',
           'focus-visible:outline-2 focus-visible:outline-focus',
-          isActive ? 'bg-raised text-fg shadow-[inset_0_1px_0_rgb(255_255_255/0.06)]' : 'text-fg-2 hover:bg-raised/60 hover:text-fg',
+          isActive ? 'font-medium text-fg' : 'text-fg-2 hover:bg-raised/60 hover:text-fg',
         )
       }
     >
@@ -40,7 +40,7 @@ function NavItem({ to, icon, label, count, tone = 'muted', narrow }: { to: strin
           <span className={cx('grid size-5 place-items-center [&_svg]:size-[18px] [&_svg]:stroke-[1.6]', isActive ? 'text-accent-ink' : 'text-fg-3')}>{icon}</span>
           <span className="flex-1">{label}</span>
           {!!count && (
-            <span className={cx('num text-[12.5px]', tone === 'warn' ? 'text-warn' : 'text-fg-3')}>{count}</span>
+            <span className={cx('num min-w-5 rounded-full px-1.5 text-center text-[12px] leading-5', tone === 'warn' ? 'bg-warn-soft text-warn' : 'bg-raised text-fg-2')}>{count}</span>
           )}
         </>
       )}
@@ -125,7 +125,7 @@ export function Shell() {
         target?.focus();
       }} className="sr-only z-50 rounded-ctl bg-accent px-3 py-2 text-sm text-accent-fg focus:not-sr-only focus:fixed focus:start-3 focus:top-3">تخطَّ إلى الجدول</a>
       {!full && (
-        <aside data-sidebar={narrow ? 'narrow' : 'wide'} className={cx('flex shrink-0 flex-col border-e border-line bg-sunken pb-3 pt-4 transition-[width] duration-200', narrow ? 'w-[64px] items-center px-2' : 'w-[232px] px-3')}>
+        <aside data-sidebar={narrow ? 'narrow' : 'wide'} className={cx('app-sidebar flex shrink-0 flex-col border-e border-line pb-3 pt-4 transition-[width] duration-200', narrow ? 'w-[64px] items-center px-2' : 'w-[232px] px-3')}>
           <div className={cx('pb-6', narrow ? '' : 'px-2.5')}>{narrow ? <LogoMark /> : <Logo />}</div>
           <nav className={cx('flex flex-col gap-0.5', narrow && 'items-center gap-1')} aria-label="التنقل الرئيسي">
             <NavItem narrow={narrow} to="/dashboard" icon={<LayoutGrid />} label={nav.dashboard} count={alerts.data?.length} tone="warn" />

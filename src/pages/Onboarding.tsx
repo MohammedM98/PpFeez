@@ -80,7 +80,7 @@ export function OnboardingPage() {
   };
 
   return (
-    <div className="grid min-h-screen place-items-center bg-sunken p-6">
+    <div className="grid min-h-screen place-items-center p-6">
       <div className="w-[640px]">
         <div className="mb-6 flex items-center justify-between">
           <Logo />

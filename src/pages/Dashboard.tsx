@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CircleCheck, FileSpreadsheet, RefreshCw, ShieldQuestion, TriangleAlert } from 'lucide-react';
+import { BellRing, CircleCheck, FileSpreadsheet, Hourglass, Inbox, Receipt, RefreshCw, ScanSearch, ShieldQuestion, TriangleAlert } from 'lucide-react';
 import { useExcelUpdate } from '@/components/settings/useExcelUpdate';
 import { api, toAppError } from '@/lib/api';
 import type { Period, RefundAlert } from '@/lib/contract';
@@ -27,13 +27,22 @@ import { excelWhy, movesLabel } from '@/components/customers/CustomerExcel';
 
 const DASH_COLS = ['grossMinor', 'feeMinor', 'commissionMinor', 'paidOutMinor', 'owedToCustomersMinor'] as const;
 type DashCol = (typeof DASH_COLS)[number];
-function CountCard({ label, value, to, hint, tone, scrollTo }: { label: string; value: number | undefined; to: string; hint: string; tone?: 'warn'; scrollTo?: string }) {
+type Tone = 'accent' | 'warn' | 'neg';
+const toneVar: Record<Tone, string> = { accent: 'var(--accent-ink)', warn: 'var(--warn)', neg: 'var(--neg)' };
+const toneChip: Record<Tone, string> = { accent: 'bg-accent-soft text-accent-ink', warn: 'bg-warn-soft text-warn', neg: 'bg-neg-soft text-neg' };
+
+function CountCard({ label, value, to, hint, tone = 'accent', icon, scrollTo }: { label: string; value: number | undefined; to: string; hint: string; tone?: Tone; icon: ReactNode; scrollTo?: string }) {
   const hot = (value ?? 0) > 0;
   return (
-    <Link to={to} onClick={scrollTo ? (e) => { e.preventDefault(); document.getElementById(scrollTo)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } : undefined} className="group flex flex-col rounded-card border border-line bg-surface px-4 py-3.5 outline-none transition-colors duration-150 hover:border-line-strong focus-visible:outline-2 focus-visible:outline-focus">
-      <span className="text-[13px] text-fg-3">{label}</span>
-      <span className={cx('num mt-1 text-[30px] font-medium leading-none', hot ? (tone === 'warn' ? 'text-warn' : 'text-fg') : 'text-fg-3')}>{value ?? '—'}</span>
-      <span className="mt-2 text-[12.5px] text-fg-3 group-hover:text-fg-2">{hint}</span>
+    <Link to={to} onClick={scrollTo ? (e) => { e.preventDefault(); document.getElementById(scrollTo)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } : undefined}
+      style={{ '--tile': toneVar[tone] } as CSSProperties} data-quiet={hot ? undefined : ''}
+      className="tile group flex flex-col rounded-card border border-line bg-surface px-4 py-3.5 outline-none transition-[transform,box-shadow,border-color] duration-200 hover:border-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus">
+      <span className="flex items-center justify-between gap-2">
+        <span className="text-[13px] text-fg-2">{label}</span>
+        <span aria-hidden className={cx('grid size-8 place-items-center rounded-xl [&_svg]:size-4 [&_svg]:stroke-[1.8]', hot ? toneChip[tone] : 'bg-raised text-fg-3')}>{icon}</span>
+      </span>
+      <span className={cx('num mt-1 text-[32px] font-semibold leading-none tracking-tight', hot ? (tone === 'accent' ? 'text-fg' : tone === 'warn' ? 'text-warn' : 'text-neg') : 'text-fg-3')}>{value ?? '—'}</span>
+      <span className="mt-2.5 text-[12.5px] text-fg-3 group-hover:text-fg-2">{hint}</span>
     </Link>
   );
 }
@@ -221,11 +230,11 @@ export function DashboardPage() {
 
       <PullProgress />
       <div className="mb-6 grid grid-cols-5 gap-3">
-        <CountCard label="غير مخصّصة" value={s?.counts.unassigned} to="/transactions?tab=unassigned" hint="خصّصها لعملائها" />
-        <CountCard label="تحتاج رسوم" value={s?.counts.needsFee} to="/transactions?tab=unassigned&needsFee=1" hint="أدخل رسوم PayPal أو الصافي" tone="warn" />
-        <CountCard label="بانتظار الموافقة" value={s?.counts.pendingApproval} to="/customers?pending=1" hint="في صفحات العملاء، اعتمدها بعد موافقتهم" />
-        <CountCard label="تحتاج مراجعة" value={s?.counts.needsReview} to="/transactions?tab=unassigned&needsReview=1" hint="أكّد بياناتها قبل الاعتماد" tone="warn" />
-        <CountCard label="تنبيهات" value={s ? s.counts.refundAlerts + (unknownDomains.data?.length ?? 0) : undefined} to="/dashboard" scrollTo="refund-alerts" hint="استردادات ونطاقات غير معروفة" tone="warn" />
+        <CountCard label="غير مخصّصة" value={s?.counts.unassigned} to="/transactions?tab=unassigned" hint="خصّصها لعملائها" icon={<Inbox />} />
+        <CountCard label="تحتاج رسوم" value={s?.counts.needsFee} to="/transactions?tab=unassigned&needsFee=1" hint="أدخل رسوم PayPal أو الصافي" tone="warn" icon={<Receipt />} />
+        <CountCard label="بانتظار الموافقة" value={s?.counts.pendingApproval} to="/customers?pending=1" hint="في صفحات العملاء، اعتمدها بعد موافقتهم" icon={<Hourglass />} />
+        <CountCard label="تحتاج مراجعة" value={s?.counts.needsReview} to="/transactions?tab=unassigned&needsReview=1" hint="أكّد بياناتها قبل الاعتماد" tone="warn" icon={<ScanSearch />} />
+        <CountCard label="تنبيهات" value={s ? s.counts.refundAlerts + (unknownDomains.data?.length ?? 0) : undefined} to="/dashboard" scrollTo="refund-alerts" hint="استردادات ونطاقات غير معروفة" tone="neg" icon={<BellRing />} />
       </div>
 
       <RefundAlerts alerts={alerts.data ?? []} domains={unknownDomains.data ?? []} />
