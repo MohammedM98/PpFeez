@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
+import { MenuTrigger, Menu, MenuItem, MenuPopover } from '@/components/ui/Menu';
 import { FileText, MoreHorizontal, Pencil, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Transaction, TxnAction } from '@/lib/contract';
@@ -150,13 +150,13 @@ export function DetailPanel({ id, onClose }: { id: number; onClose: () => void }
         {rest.length > 0 && (
           <MenuTrigger>
             <Button variant="secondary" size="icon" aria-label="إجراءات أخرى" className="size-9"><MoreHorizontal /></Button>
-            <Popover placement="top end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-              <Menu className="outline-none" onAction={(k) => (k === 'move' ? actions.open({ kind: 'move', txn: t }) : actions.act(k as TxnAction, t))}>
+            <MenuPopover placement="top end" className="min-w-48">
+              <Menu onAction={(k) => (k === 'move' ? actions.open({ kind: 'move', txn: t }) : actions.act(k as TxnAction, t))}>
                 {rest.map((a) => (
-                  <MenuItem key={a} id={a} className={`flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised ${a === 'unapprove' || a === 'delete' ? 'text-neg' : ''}`}>{a === 'move' ? 'نقل لعميل آخر' : actionLabel[a]}</MenuItem>
+                  <MenuItem key={a} id={a} variant={a === 'unapprove' || a === 'delete' ? 'danger' : 'default'}>{a === 'move' ? 'نقل لعميل آخر' : actionLabel[a]}</MenuItem>
                 ))}
               </Menu>
-            </Popover>
+            </MenuPopover>
           </MenuTrigger>
         )}
       </footer>

@@ -1,23 +1,19 @@
-import {
-  SearchField as RacSearchField, Input, Button as RacButton, Select as RacSelect, SelectValue, Popover, ListBox, ListBoxItem,
-  Label, Checkbox as RacCheckbox, type CheckboxProps, type Key,
-} from 'react-aria-components';
-import { Check, ChevronDown, Search, X } from 'lucide-react';
+import { Checkbox as HeroCheckbox, type CheckboxProps, ListBox, SearchField as HeroSearchField, Select as HeroSelect, Label } from '@heroui/react';
+import type { Key } from 'react-aria-components';
 import { useRef, type ReactNode } from 'react';
 import { cx } from './cx';
 
-export const fieldShell =
-  'h-9 rounded-ctl border border-line bg-surface text-sm text-fg transition-[border-color] duration-150 ease-out hover:border-line-strong focus-within:border-focus focus-within:outline-2 focus-within:outline-offset-0 focus-within:outline-[color-mix(in_oklab,var(--focus)_35%,transparent)]';
+/* Filters and form controls: HeroUI SearchField, Select and Checkbox. */
 
 export function SearchField({ label, value, onChange, className }: { label: string; value: string; onChange: (v: string) => void; className?: string }) {
   return (
-    <RacSearchField aria-label={label} value={value} onChange={onChange} className={cx('group relative flex items-center', fieldShell, className)}>
-      <Search className="pointer-events-none absolute start-3 size-4 text-fg-3" aria-hidden />
-      <Input placeholder={label} className="h-full w-full bg-transparent ps-9 pe-8 outline-none placeholder:text-fg-3 [&::-webkit-search-cancel-button]:hidden" />
-      <RacButton className="absolute end-2 grid size-6 place-items-center rounded-[6px] text-fg-3 hover:bg-raised group-data-[empty]:hidden">
-        <X className="size-3.5" />
-      </RacButton>
-    </RacSearchField>
+    <HeroSearchField aria-label={label} value={value} onChange={onChange} className={className}>
+      <HeroSearchField.Group className="h-9 w-full">
+        <HeroSearchField.SearchIcon />
+        <HeroSearchField.Input placeholder={label} className="min-w-0" />
+        <HeroSearchField.ClearButton aria-label="مسح البحث" />
+      </HeroSearchField.Group>
+    </HeroSearchField>
   );
 }
 
@@ -31,38 +27,37 @@ export function Select({ label, options, value, onChange, className, placeholder
   const open = useRef(false);
   const focused = useRef(false);
   return (
-    <RacSelect aria-label={label} selectedKey={value} placeholder={placeholder ?? label} className={cx('group', className)}
+    <HeroSelect aria-label={label} value={value} placeholder={placeholder ?? label} className={className}
       autoComplete="off"
       onOpenChange={(o) => { open.current = o; }}
       onFocusChange={(f) => { focused.current = f; }}
-      onSelectionChange={(k) => { if (k !== null && (open.current || focused.current)) onChange(k); }}>
-      <RacButton className={cx('flex w-full items-center justify-between gap-2 px-3 outline-none data-[focus-visible]:border-focus', fieldShell)}>
-        <SelectValue className="truncate data-[placeholder]:text-fg-3" />
-        <ChevronDown className="size-4 text-fg-3" aria-hidden />
-      </RacButton>
-      <Popover className="min-w-(--trigger-width) rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-        <ListBox className="max-h-72 overflow-auto outline-none">
+      onChange={(k) => { if (k !== null && (open.current || focused.current)) onChange(k as Key); }}>
+      <HeroSelect.Trigger className="h-9 min-h-9">
+        <HeroSelect.Value className="truncate" />
+        <HeroSelect.Indicator />
+      </HeroSelect.Trigger>
+      <HeroSelect.Popover className="min-w-(--trigger-width)">
+        <ListBox className="max-h-72 overflow-auto">
           {options.map((o) => (
-            <ListBoxItem key={o.id} id={o.id} textValue={typeof o.label === 'string' ? o.label : String(o.id)}
-              className="flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm text-fg outline-none data-[focused]:bg-raised data-[selected]:text-accent-ink">
-              {({ isSelected }) => (<><span className="flex-1">{o.label}</span>{isSelected && <Check className="size-4" />}</>)}
-            </ListBoxItem>
+            <ListBox.Item key={o.id} id={o.id} textValue={typeof o.label === 'string' ? o.label : String(o.id)}>
+              {o.label}
+              <ListBox.ItemIndicator />
+            </ListBox.Item>
           ))}
         </ListBox>
-      </Popover>
-    </RacSelect>
+      </HeroSelect.Popover>
+    </HeroSelect>
   );
 }
 
-export function Checkbox({ children, className, ...props }: CheckboxProps & { children?: ReactNode }) {
+export function Checkbox({ children, className, ...props }: Omit<CheckboxProps, 'children'> & { children?: ReactNode }) {
   return (
-    <RacCheckbox {...props} className={cx('group inline-flex items-center gap-2 text-sm text-fg-2 outline-none', className as string)}>
-      <span className="grid size-4 place-items-center rounded-[4px] border border-line-strong bg-surface transition-colors duration-150 group-data-[selected]:border-accent group-data-[selected]:bg-accent group-data-[indeterminate]:border-accent group-data-[indeterminate]:bg-accent group-data-[focus-visible]:outline-2 group-data-[focus-visible]:outline-offset-2 group-data-[focus-visible]:outline-focus">
-        <Check className="hidden size-3 stroke-3 text-accent-fg group-data-[selected]:block" />
-        <span className="hidden h-0.5 w-2 bg-accent-fg group-data-[indeterminate]:block" />
-      </span>
-      {children}
-    </RacCheckbox>
+    <HeroCheckbox {...props} className={cx('text-sm text-fg-2', className as string)}>
+      <HeroCheckbox.Content>
+        <HeroCheckbox.Control><HeroCheckbox.Indicator /></HeroCheckbox.Control>
+        {children}
+      </HeroCheckbox.Content>
+    </HeroCheckbox>
   );
 }
 

@@ -1,7 +1,9 @@
 import { cloneElement, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement, type ReactNode, type TdHTMLAttributes } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MenuTrigger, Menu, MenuItem, Popover, Tooltip, TooltipTrigger, Button as RacButton } from 'react-aria-components';
+import { Button as RacButton } from 'react-aria-components';
+import { Tooltip } from '@heroui/react';
+import { MenuTrigger, Menu, MenuItem, MenuPopover } from '@/components/ui/Menu';
 import { Check, ChevronDown, ChevronUp, Download, FileSpreadsheet, MoreHorizontal, Printer, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
 import type { Customer, CustomerExcelItemRef, ExcelStatus, LedgerEntry, Payout, Period, StatementFilter, StatementRow, Transaction, TxnAction } from '@/lib/contract';
@@ -134,15 +136,15 @@ function ExcelCell({ status, excel, customerId, item, ...td }: { status: ExcelSt
   }[status];
   return (
     <td {...td} data-excel={status}>
-      <TooltipTrigger delay={300}>
+      <Tooltip delay={300}>
         <RacButton aria-label={`${v.text}: ${v.title}`} className={cx('inline-flex items-center gap-1 rounded-[4px] text-[12.5px] outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus', v.cls)}>
           <span aria-hidden>{v.icon}</span>{v.text}
         </RacButton>
-        <Tooltip placement="top" className="max-w-72 rounded-card border border-line bg-surface px-3 py-2 text-[12.5px] text-fg shadow-(--shadow-float)">
+        <Tooltip.Content placement="top" className="max-w-72 text-[12.5px]">
           <div>{v.title}</div>
           {excel.filesCount > 1 && <><div className="mt-1 text-fg-3">الملفات التي صُدّرت إليها:</div><ItemFiles customerId={customerId} item={item} /></>}
-        </Tooltip>
-      </TooltipTrigger>
+        </Tooltip.Content>
+      </Tooltip>
     </td>
   );
 }
@@ -316,7 +318,6 @@ export function StatementTab({ customer, currency }: { customer: Customer; curre
   }, [customer.excel, customer.id, customer.name, qc]);
   const toExcel = (item: CustomerExcelItemRef) => setDialog({ kind: 'statement', items: [item] });
 
-  const menuItem = 'flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised data-[disabled]:text-fg-3';
   const onTxnMenu = (t: Transaction, k: string) => {
     if (k === 'detail') openDetail(t.id);
     else if (k === 'excel') toExcel({ kind: 'txn', id: t.id });
@@ -336,21 +337,21 @@ export function StatementTab({ customer, currency }: { customer: Customer; curre
         <ColumnsMenu cols={cols} />
         <MenuTrigger>
           <Button variant="secondary" size="sm"><Download />تصدير وطباعة</Button>
-          <Popover placement="bottom end" className="min-w-56 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-            <Menu className="outline-none" onAction={(k) => {
+          <MenuPopover className="min-w-56">
+            <Menu onAction={(k) => {
               if (k === 'xlsx') void exportExcel();
               if (k === 'csv') void exportCsv();
               if (k === 'print') print();
               if (k === 'range') setDialog({ kind: 'range' });
               if (k === 'unexported') void sendUnexported(customer.id, qc, customer.name);
             }}>
-              <MenuItem id="xlsx" className={cx(menuItem, 'gap-2')}><FileSpreadsheet className="size-4 text-fg-3" />تصدير Excel…</MenuItem>
-              <MenuItem id="csv" className={cx(menuItem, 'gap-2')}><Download className="size-4 text-fg-3" />تصدير CSV…</MenuItem>
-              <MenuItem id="print" className={cx(menuItem, 'gap-2')}><Printer className="size-4 text-fg-3" />طباعة كشف</MenuItem>
-              {customer.excel && <MenuItem id="range" className={cx(menuItem, 'gap-2')}><FileSpreadsheet className="size-4 text-fg-3" />إضافة نطاق إلى ملف العميل…</MenuItem>}
-              {customer.excel && <MenuItem id="unexported" className={cx(menuItem, 'justify-between gap-4')}>إرسال غير المُصدَّر<kbd className="num text-[12px] text-fg-3">Shift+E</kbd></MenuItem>}
+              <MenuItem id="xlsx"><FileSpreadsheet className="size-4 text-fg-3" />تصدير Excel…</MenuItem>
+              <MenuItem id="csv"><Download className="size-4 text-fg-3" />تصدير CSV…</MenuItem>
+              <MenuItem id="print"><Printer className="size-4 text-fg-3" />طباعة كشف</MenuItem>
+              {customer.excel && <MenuItem id="range"><FileSpreadsheet className="size-4 text-fg-3" />إضافة نطاق إلى ملف العميل…</MenuItem>}
+              {customer.excel && <MenuItem id="unexported" className="justify-between gap-4">إرسال غير المُصدَّر<kbd className="num text-[12px] text-fg-3">Shift+E</kbd></MenuItem>}
             </Menu>
-          </Popover>
+          </MenuPopover>
         </MenuTrigger>
       </InToolbar>
 
@@ -456,16 +457,16 @@ export function StatementTab({ customer, currency }: { customer: Customer; curre
                     <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                       <MenuTrigger>
                         <Button variant="quiet" size="icon" aria-label="إجراءات الحوالة"><MoreHorizontal /></Button>
-                        <Popover placement="bottom end" className="min-w-52 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                          <Menu className="outline-none" onAction={(key) => onTxnMenu(t, String(key))}>
-                            <MenuItem id="detail" className={menuItem}>عرض التفاصيل</MenuItem>
-                            {customer.excel && t.excelStatus !== 'exported' && <MenuItem id="excel" className={cx(menuItem, 'justify-between gap-4')}>إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></MenuItem>}
-                            <MenuItem id="match" className={menuItem}>{t.matched ? 'إزالة المطابقة' : 'مطابق'}</MenuItem>
+                        <MenuPopover className="min-w-52">
+                          <Menu onAction={(key) => onTxnMenu(t, String(key))}>
+                            <MenuItem id="detail">عرض التفاصيل</MenuItem>
+                            {customer.excel && t.excelStatus !== 'exported' && <MenuItem id="excel" className="justify-between gap-4">إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></MenuItem>}
+                            <MenuItem id="match">{t.matched ? 'إزالة المطابقة' : 'مطابق'}</MenuItem>
                             {t.allowedActions.filter((a) => a !== 'set_matched').map((a) => (
-                              <MenuItem key={a} id={a} className={cx(menuItem, (a === 'unapprove' || a === 'delete') && 'text-neg')}>{actionLabel[a]}</MenuItem>
+                              <MenuItem key={a} id={a} variant={a === 'unapprove' || a === 'delete' ? 'danger' : 'default'}>{actionLabel[a]}</MenuItem>
                             ))}
                           </Menu>
-                        </Popover>
+                        </MenuPopover>
                       </MenuTrigger>
                     </td>
                   </tr>
@@ -507,14 +508,14 @@ export function StatementTab({ customer, currency }: { customer: Customer; curre
                     <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                       <MenuTrigger>
                         <Button variant="quiet" size="icon" aria-label="إجراءات الدفعة"><MoreHorizontal /></Button>
-                        <Popover placement="bottom end" className="min-w-52 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                          <Menu className="outline-none" onAction={(key) => (key === 'excel' ? toExcel({ kind: 'payout', id: p.id }) : setDialog({ kind: key as 'cancel' | 'details' | 'items', payout: p }))}>
-                            <MenuItem id="items" className={menuItem}>الحوالات المشمولة</MenuItem>
-                            {customer.excel && p.status === 'sent' && p.excelStatus !== 'exported' && <MenuItem id="excel" className={cx(menuItem, 'justify-between gap-4')}>إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></MenuItem>}
-                            {!cancelled && <MenuItem id="details" className={menuItem}>تعديل التفاصيل</MenuItem>}
-                            {!cancelled && <MenuItem id="cancel" className={cx(menuItem, 'text-neg')}>إلغاء الدفعة</MenuItem>}
+                        <MenuPopover className="min-w-52">
+                          <Menu onAction={(key) => (key === 'excel' ? toExcel({ kind: 'payout', id: p.id }) : setDialog({ kind: key as 'cancel' | 'details' | 'items', payout: p }))}>
+                            <MenuItem id="items">الحوالات المشمولة</MenuItem>
+                            {customer.excel && p.status === 'sent' && p.excelStatus !== 'exported' && <MenuItem id="excel" className="justify-between gap-4">إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></MenuItem>}
+                            {!cancelled && <MenuItem id="details">تعديل التفاصيل</MenuItem>}
+                            {!cancelled && <MenuItem id="cancel" variant="danger">إلغاء الدفعة</MenuItem>}
                           </Menu>
-                        </Popover>
+                        </MenuPopover>
                       </MenuTrigger>
                     </td>
                   </tr>
@@ -552,17 +553,17 @@ export function StatementTab({ customer, currency }: { customer: Customer; curre
                   <td className="sticky z-[1] pe-2" data-sticky="end" style={{ insetInlineEnd: 0 }}>
                     <MenuTrigger>
                       <Button variant="quiet" size="icon" aria-label="إجراءات القيد"><MoreHorizontal /></Button>
-                      <Popover placement="bottom end" className="w-60 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                        <Menu className="outline-none" disabledKeys={['no-delete']} onAction={(key) => (key === 'excel' ? toExcel({ kind: 'ledger', id: e.id }) : setDialog({ kind: key === 'delete' ? 'delete-entry' : 'reverse', entry: e }))}>
-                          {customer.excel && e.excelStatus !== 'exported' && <MenuItem id="excel" className={cx(menuItem, 'justify-between gap-4')}>إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></MenuItem>}
-                          {!reversed && e.reversesEntryId === null && <MenuItem id="reverse" className={menuItem}>عكس القيد</MenuItem>}
+                      <MenuPopover className="w-60">
+                        <Menu disabledKeys={['no-delete']} onAction={(key) => (key === 'excel' ? toExcel({ kind: 'ledger', id: e.id }) : setDialog({ kind: key === 'delete' ? 'delete-entry' : 'reverse', entry: e }))}>
+                          {customer.excel && e.excelStatus !== 'exported' && <MenuItem id="excel" className="justify-between gap-4">إضافة إلى ملف العميل<kbd className="text-[12px] text-fg-3">E</kbd></MenuItem>}
+                          {!reversed && e.reversesEntryId === null && <MenuItem id="reverse">عكس القيد</MenuItem>}
                           {e.deletable
-                            ? <MenuItem id="delete" className={cx(menuItem, 'text-neg')}>حذف القيد</MenuItem>
-                            : <MenuItem id="no-delete" textValue="لا يمكن حذفه" className="flex cursor-default flex-col rounded-[6px] px-2.5 py-1.5 text-[12.5px] leading-snug text-fg-3 outline-none">
+                            ? <MenuItem id="delete" variant="danger">حذف القيد</MenuItem>
+                            : <MenuItem id="no-delete" textValue="لا يمكن حذفه" className="flex-col items-start gap-0 text-[12.5px] leading-snug text-fg-3 opacity-100!">
                                 <span className="text-fg-2">لا يمكن حذفه</span>{e.notDeletableReasonAr}
                               </MenuItem>}
                         </Menu>
-                      </Popover>
+                      </MenuPopover>
                     </MenuTrigger>
                   </td>
                 </tr>

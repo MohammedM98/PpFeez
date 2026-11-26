@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { MenuTrigger, Menu, MenuItem, Popover, Button as RacButton } from 'react-aria-components';
+import { Button as RacButton } from 'react-aria-components';
+import { MenuTrigger, Menu, MenuItem, MenuPopover } from '@/components/ui/Menu';
 import { FileSpreadsheet, TriangleAlert } from 'lucide-react';
 import { api, events, native, toAppError } from '@/lib/api';
 import type { AppError, Customer, CustomerExcelFile, CustomerExcelItemRef, CustomerExcelPreview, ExcelStart } from '@/lib/contract';
@@ -107,7 +108,6 @@ export async function sendUnexported(customerId: number, qc: QueryClient, custom
   }
 }
 
-const menuItem = 'flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised';
 const chipClass = 'inline-flex h-8 shrink-0 cursor-default items-center gap-1.5 rounded-full border px-3 text-[12.5px] outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus data-[hovered]:bg-raised data-[pressed]:bg-raised';
 
 // ---------------------------------------------------------------- header chip
@@ -165,7 +165,7 @@ export function CustomerExcelChip({ customer }: { customer: Customer }) {
           <span className={cx('num', state.tone)} title={state.title}>{state.text}</span>
           {x && !x.autoSync && <span className="text-fg-3">· يدوي</span>}
         </RacButton>
-        <Popover placement="bottom end" data-testid="customer-excel-menu" className="w-72 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
+        <MenuPopover data-testid="customer-excel-menu" className="w-72">
           {x && (
             <div className="border-b border-line px-2.5 pb-2 pt-1.5 text-[12.5px] text-fg-3">
               <PathText path={x.path} className={x.exists ? 'text-fg-2' : 'text-warn'} />
@@ -178,7 +178,7 @@ export function CustomerExcelChip({ customer }: { customer: Customer }) {
               {x.lastError && <div className="text-warn">{excelWhy(x.lastError)}</div>}
             </div>
           )}
-          <Menu className="pt-1 outline-none" onAction={(k) => {
+          <Menu onAction={(k) => {
             if (k === 'open' && x) openFileAction(x.path).onPress();
             if (k === 'folder' && x) void run(() => api.openPath(folderOf(x.path)));
             if (k === 'change' || k === 'link') void link();
@@ -190,23 +190,23 @@ export function CustomerExcelChip({ customer }: { customer: Customer }) {
           }}>
             {x ? (
               <>
-                <MenuItem id="open" isDisabled={!x.exists} className={cx(menuItem, 'data-[disabled]:text-fg-3')}>فتح الملف</MenuItem>
-                <MenuItem id="folder" className={menuItem}>فتح المجلد</MenuItem>
-                <MenuItem id="auto" className={menuItem}>{x.autoSync ? 'إيقاف المزامنة التلقائية' : 'تفعيل المزامنة التلقائية'}</MenuItem>
-                <MenuItem id="new-file" className={menuItem}>بدء ملف جديد…</MenuItem>
-                <MenuItem id="files" className={menuItem}>ملفات العميل <span className="num text-fg-3">({x.filesCount})</span>…</MenuItem>
-                <MenuItem id="change" className={menuItem}>تغيير الملف…</MenuItem>
-                <MenuItem id="unlink" className={cx(menuItem, 'text-neg')}>إلغاء الربط</MenuItem>
+                <MenuItem id="open" isDisabled={!x.exists}>فتح الملف</MenuItem>
+                <MenuItem id="folder">فتح المجلد</MenuItem>
+                <MenuItem id="auto">{x.autoSync ? 'إيقاف المزامنة التلقائية' : 'تفعيل المزامنة التلقائية'}</MenuItem>
+                <MenuItem id="new-file">بدء ملف جديد…</MenuItem>
+                <MenuItem id="files">ملفات العميل <span className="num text-fg-3">({x.filesCount})</span>…</MenuItem>
+                <MenuItem id="change">تغيير الملف…</MenuItem>
+                <MenuItem id="unlink" variant="danger">إلغاء الربط</MenuItem>
               </>
             ) : (
               <>
-                <MenuItem id="create" className={menuItem}>إنشاء ملف للعميل…</MenuItem>
-                <MenuItem id="link" className={menuItem}>ربط ملف موجود…</MenuItem>
-                {(files.data?.length ?? 0) > 0 && <MenuItem id="files" className={menuItem}>ملفات العميل السابقة <span className="num text-fg-3">({files.data!.length})</span>…</MenuItem>}
+                <MenuItem id="create">إنشاء ملف للعميل…</MenuItem>
+                <MenuItem id="link">ربط ملف موجود…</MenuItem>
+                {(files.data?.length ?? 0) > 0 && <MenuItem id="files">ملفات العميل السابقة <span className="num text-fg-3">({files.data!.length})</span>…</MenuItem>}
               </>
             )}
           </Menu>
-        </Popover>
+        </MenuPopover>
       </MenuTrigger>
       {x && x.exists && unsent > 0 && (
         <Button size="sm" variant="secondary" isPending={sending} onPress={() => void send()}>

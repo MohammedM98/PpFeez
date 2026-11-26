@@ -184,23 +184,47 @@
   --surface-tertiary-foreground: var(--fg);
   --overlay: var(--surface);
   --overlay-foreground: var(--fg);
+  --overlay-shadow: var(--shadow-float);
   --muted: var(--fg-3);
   --default: var(--raised);
   --default-foreground: var(--fg);
   --accent-foreground: var(--accent-fg);
+  --accent-soft-foreground: var(--accent-ink);
+  /* fields keep a visible edge on every surface (a desktop ledger, not a floating card) */
   --field-background: var(--surface);
   --field-foreground: var(--fg);
   --field-placeholder: var(--fg-3);
+  --field-border: var(--line-strong);
+  --field-border-width: 1px;
+  --field-shadow: none;
+  --surface-shadow: none;
   --success: var(--pos);
+  --success-foreground: var(--bg);
+  --success-soft: var(--pos-soft);
+  --success-soft-foreground: var(--pos);
   --warning: var(--warn);
-  --danger: var(--neg);
+  --warning-foreground: var(--bg);
+  --warning-soft: var(--warn-soft);
+  --warning-soft-foreground: var(--warn);
+  /* --neg is an ink (text) colour; the danger fill is darker so white text on it passes 4.5:1 */
+  --danger: var(--neg-fill);
+  --danger-foreground: var(--neg-fill-fg);
+  --danger-soft: var(--neg-soft);
+  --danger-soft-foreground: var(--neg);
   --border: var(--line);
   --separator: var(--line);
   --link: var(--accent-ink);
-  --segment: var(--raised);
+  --segment: var(--surface);
   --segment-foreground: var(--fg);
   --radius: var(--r-ctl);
+  /* a desktop app: the arrow cursor on controls, and tooltips that answer quickly */
+  --cursor-interactive: default;
+  --tooltip-delay: 500ms;
+  --tooltip-close-delay: 100ms;
 }
+[data-theme='dark'] { --neg-fill: #d5353b; --neg-fill-fg: #ffffff; --backdrop: rgb(0 0 0 / 0.6); }
+[data-theme='light'] { --neg-fill: #c62828; --neg-fill-fg: #ffffff; --backdrop: rgb(0 0 0 / 0.45); }
+[data-theme='high_contrast'] { --neg-fill: #ff8080; --neg-fill-fg: #000000; --backdrop: rgb(0 0 0 / 0.75); --field-border: #ffffff; }
 
 /* ---------- density (SPEC 6.10): row height of every table ---------- */
 :root, [data-density='regular'] { --row-h: 48px; }
@@ -246,3 +270,9 @@
 
 /* table full screen (SPEC 6.10): the header steps aside; a thin strip on top holds "خروج من ملء الشاشة" */
 :root[data-table-fullscreen] .table-page { padding-top: 3rem; max-width: none; }
+
+/* ---------- HeroUI components, tuned for this app ---------- */
+@layer components {
+  /* a menu is gone the moment something is chosen: the dialog it opens is then the only dialog on screen */
+  .dropdown__popover[data-exiting='true'] { display: none; }
+}

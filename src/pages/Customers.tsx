@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { MenuTrigger, Menu, MenuItem, Popover, type Key } from 'react-aria-components';
+import { type Key } from 'react-aria-components';
+import { MenuTrigger, Menu, MenuItem, MenuPopover } from '@/components/ui/Menu';
 import { MoreHorizontal, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Customer, CustomerInput } from '@/lib/contract';
@@ -125,14 +126,14 @@ export function CustomersPage() {
                 <Cell sticky="end" className="pe-2">
                   <MenuTrigger>
                     <Button variant="quiet" size="icon" aria-label="إجراءات"><MoreHorizontal /></Button>
-                    <Popover placement="bottom end" className="min-w-44 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                      <Menu className="outline-none" onAction={(k) => onMenu(c, k)}>
-                        <MenuItem id="ledger" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">فتح الدفتر</MenuItem>
-                        <MenuItem id="edit" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">تعديل</MenuItem>
-                        <MenuItem id="toggle" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">{c.isActive ? 'تعطيل' : 'تفعيل'}</MenuItem>
-                        <MenuItem id="delete" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm text-neg outline-none data-[focused]:bg-raised">حذف العميل</MenuItem>
+                    <MenuPopover className="min-w-44">
+                      <Menu onAction={(k) => onMenu(c, k)}>
+                        <MenuItem id="ledger">فتح الدفتر</MenuItem>
+                        <MenuItem id="edit">تعديل</MenuItem>
+                        <MenuItem id="toggle">{c.isActive ? 'تعطيل' : 'تفعيل'}</MenuItem>
+                        <MenuItem id="delete" variant="danger">حذف العميل</MenuItem>
                       </Menu>
-                    </Popover>
+                    </MenuPopover>
                   </MenuTrigger>
                 </Cell>
               </Row>

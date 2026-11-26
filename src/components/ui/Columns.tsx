@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { Button as RacButton, DialogTrigger, Dialog as RacDialog, GridList, GridListItem, Popover, useDragAndDrop } from 'react-aria-components';
+import { Button as RacButton, GridList, GridListItem, useDragAndDrop } from 'react-aria-components';
+import { Popover, Button as HeroButton } from '@heroui/react';
 import { Columns3, GripVertical, Pin, PinOff, RotateCcw } from 'lucide-react';
 import { useColumnPrefs, type ColumnPrefs } from '@/lib/uiPrefs';
 import { Button } from './Button';
@@ -169,15 +170,15 @@ export function ColumnsMenu({ cols, label = 'الأعمدة' }: { cols: Columns;
     ),
   });
   return (
-    <DialogTrigger>
-      <Button variant="secondary" size="icon" aria-label={label} className="size-8"><Columns3 /><span className="sr-only">{label}</span></Button>
-      <Popover placement="bottom end" className="w-72 rounded-card border border-line bg-surface shadow-(--shadow-float) outline-none">
-        <RacDialog aria-label={label} className="flex max-h-[70vh] flex-col outline-none">
+    <Popover>
+      <Button variant="secondary" size="icon" aria-label={label}><Columns3 /><span className="sr-only">{label}</span></Button>
+      <Popover.Content placement="bottom end" className="w-72">
+        <Popover.Dialog aria-label={label} className="flex max-h-[70vh] flex-col p-0">
           <div className="border-b border-line px-3 py-2 text-[12.5px] text-fg-3">اسحب لتغيير الترتيب، ودبّوس لتثبيت العمود عند الحافة</div>
           <GridList aria-label="ترتيب الأعمدة" items={items} dragAndDropHooks={dragAndDropHooks} className="min-h-0 overflow-auto p-1 outline-none">
             {(c) => (
               <GridListItem id={c.id} textValue={c.label}
-                className="flex h-9 cursor-default items-center gap-1.5 rounded-[6px] px-1.5 text-sm outline-none data-[focus-visible]:outline-2 data-[focus-visible]:-outline-offset-2 data-[focus-visible]:outline-focus data-[dragging]:opacity-50 data-[hovered]:bg-raised">
+                className="flex h-9 cursor-default items-center gap-1.5 rounded-xl px-1.5 text-sm outline-none data-[focus-visible]:outline-2 data-[focus-visible]:-outline-offset-2 data-[focus-visible]:outline-focus data-[dragging]:opacity-50 data-[hovered]:bg-raised">
                 <RacButton slot="drag" aria-label={`نقل ${c.label}`} className="grid size-6 cursor-grab place-items-center rounded text-fg-3 outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus">
                   <GripVertical className="size-4" />
                 </RacButton>
@@ -193,14 +194,13 @@ export function ColumnsMenu({ cols, label = 'الأعمدة' }: { cols: Columns;
               </GridListItem>
             )}
           </GridList>
-          <div className="border-t border-line p-1">
-            <RacButton onPress={cols.reset} isDisabled={!cols.customized}
-              className="flex h-8 w-full items-center gap-2 rounded-[6px] px-2.5 text-sm text-fg-2 outline-none data-[disabled]:text-fg-3 data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus data-[hovered]:bg-raised">
-              <RotateCcw className="size-3.5" />إعادة ضبط الأعمدة
-            </RacButton>
+          <div className="border-t border-line p-1.5">
+            <HeroButton variant="ghost" size="sm" fullWidth className="justify-start font-normal text-fg-2" onPress={cols.reset} isDisabled={!cols.customized}>
+              <RotateCcw />إعادة ضبط الأعمدة
+            </HeroButton>
           </div>
-        </RacDialog>
-      </Popover>
-    </DialogTrigger>
+        </Popover.Dialog>
+      </Popover.Content>
+    </Popover>
   );
 }

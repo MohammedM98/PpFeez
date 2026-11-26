@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Tabs, TabList, Tab, TabPanel, MenuTrigger, Menu, MenuItem, Popover, type Selection, type Key } from 'react-aria-components';
+import { type Selection, type Key } from 'react-aria-components';
+import { Tabs, TabList, Tab, TabPanel } from '@/components/ui/Tabs';
+import { MenuTrigger, Menu, MenuItem, MenuPopover } from '@/components/ui/Menu';
 import { ChevronLeft, ChevronRight, MoreHorizontal, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { BulkResult, ParseStatus, RawEmailSummary } from '@/lib/contract';
@@ -112,12 +114,9 @@ export function EmailsPage() {
 
       <div className="mb-3 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-line">
         <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as ParseStatus)}>
-          <TabList aria-label="حالة الرسالة" className="flex gap-1">
+          <TabList aria-label="حالة الرسالة">
             {TABS.map((k) => (
-              <Tab key={k} id={k} className={({ isSelected }) => cx(
-                'relative -mb-px flex h-10 cursor-default items-center gap-2 px-3 text-sm outline-none transition-colors duration-150',
-                'data-[focus-visible]:outline-2 data-[focus-visible]:-outline-offset-2 data-[focus-visible]:outline-focus',
-                isSelected ? 'text-fg after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent' : 'text-fg-3 hover:text-fg-2')}>
+              <Tab key={k} id={k}>
                 {parseStatus[k]}
                 <span className={cx('num text-[12.5px]', k === 'failed' && (counts.data?.failed ?? 0) > 0 ? 'text-warn' : 'text-fg-3')}>{counts.data?.[k] ?? ''}</span>
               </Tab>
@@ -170,16 +169,16 @@ export function EmailsPage() {
                 <Cell sticky="end" className="pe-2">
                   <MenuTrigger>
                     <Button variant="quiet" size="icon" aria-label="إجراءات"><MoreHorizontal /></Button>
-                    <Popover placement="bottom end" className="min-w-56 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                      <Menu className="outline-none" onAction={(k) => onMenu(e, k)}>
-                        <MenuItem id="view" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">عرض الرسالة</MenuItem>
-                        {e.transactionId !== null && <MenuItem id="txn" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">فتح المعاملة</MenuItem>}
-                        {e.parseStatus !== 'parsed' && <MenuItem id="reparse" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">إعادة التحليل</MenuItem>}
-                        {e.transactionId === null && <MenuItem id="create" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">إنشاء معاملة يدوياً منها</MenuItem>}
-                        {e.parseReason === 'unknown_paypal_domain' && <MenuItem id="trust" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">الوثوق بهذا النطاق</MenuItem>}
-                        {e.parseStatus === 'failed' && <MenuItem id="ignore" className="flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised">تجاهل</MenuItem>}
+                    <MenuPopover className="min-w-56">
+                      <Menu onAction={(k) => onMenu(e, k)}>
+                        <MenuItem id="view">عرض الرسالة</MenuItem>
+                        {e.transactionId !== null && <MenuItem id="txn">فتح المعاملة</MenuItem>}
+                        {e.parseStatus !== 'parsed' && <MenuItem id="reparse">إعادة التحليل</MenuItem>}
+                        {e.transactionId === null && <MenuItem id="create">إنشاء معاملة يدوياً منها</MenuItem>}
+                        {e.parseReason === 'unknown_paypal_domain' && <MenuItem id="trust">الوثوق بهذا النطاق</MenuItem>}
+                        {e.parseStatus === 'failed' && <MenuItem id="ignore">تجاهل</MenuItem>}
                       </Menu>
-                    </Popover>
+                    </MenuPopover>
                   </MenuTrigger>
                 </Cell>
               </Row>

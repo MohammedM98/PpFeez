@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ProgressBar } from 'react-aria-components';
+import { ProgressBar } from '@heroui/react';
 import { FolderOpen, TriangleAlert } from 'lucide-react';
 import { api, native, toAppError } from '@/lib/api';
 import { updater, updaterErrorAr, type AvailableUpdate } from '@/lib/updater';
@@ -148,10 +148,8 @@ function UpdateDialog({ update, onLater }: { update: AvailableUpdate; onLater: (
 
         {(step === 'downloading' || step === 'restarting') && (
           <div className="flex flex-col gap-2">
-            <ProgressBar aria-label="تنزيل التحديث" value={pct ?? undefined} isIndeterminate={pct === null} className="flex flex-col gap-2">
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-raised">
-                <div className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out" style={{ width: `${pct ?? 30}%` }} />
-              </div>
+            <ProgressBar aria-label="تنزيل التحديث" value={pct ?? undefined} isIndeterminate={pct === null} size="sm">
+              <ProgressBar.Track><ProgressBar.Fill /></ProgressBar.Track>
             </ProgressBar>
             <div className="flex justify-between text-[13px] text-fg-3">
               <span>{step === 'restarting' ? 'اكتمل التثبيت، يُعاد تشغيل البرنامج…' : 'جارٍ التنزيل والتثبيت…'}</span>

@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { MenuTrigger, Menu, MenuItem, Popover, Radio, RadioGroup, type Key } from 'react-aria-components';
+import { Radio, RadioGroup, type Key } from 'react-aria-components';
+import { MenuTrigger, Menu, MenuItem, MenuPopover } from '@/components/ui/Menu';
 import { FileSpreadsheet, FolderOpen, HardDriveDownload, MoreHorizontal, Plus, RefreshCw, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
 import type { BackupFile, Mailbox, ResetScope, Settings as SettingsT } from '@/lib/contract';
@@ -145,13 +146,13 @@ function MailSection({ s }: { s: SettingsT }) {
             </div>
             <MenuTrigger>
               <Button variant="quiet" size="icon" aria-label={`إجراءات ${m.label}`}><MoreHorizontal /></Button>
-              <Popover placement="bottom end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-                <Menu className="outline-none" onAction={(k) => void onMenu(m, k)}>
+              <MenuPopover className="min-w-48">
+                <Menu onAction={(k) => void onMenu(m, k)}>
                   {[['test', 'اختبار الاتصال'], ['edit', 'تعديل'], ['password', 'تغيير كلمة المرور'], ['toggle', m.isActive ? 'إيقاف' : 'تفعيل'], ['delete', 'حذف']].map(([id, label]) => (
-                    <MenuItem key={id} id={id} className={cx('flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised', id === 'delete' && 'text-neg')}>{label}</MenuItem>
+                    <MenuItem key={id} id={id} variant={id === 'delete' ? 'danger' : 'default'}>{label}</MenuItem>
                   ))}
                 </Menu>
-              </Popover>
+              </MenuPopover>
             </MenuTrigger>
           </li>
         ))}

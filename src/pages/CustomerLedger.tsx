@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Tabs, TabList, Tab, TabPanel, MenuTrigger, Menu, MenuItem, Popover } from 'react-aria-components';
+import { Tabs, TabList, Tab, TabPanel } from '@/components/ui/Tabs';
+import { MenuTrigger, Menu, MenuItem, MenuPopover } from '@/components/ui/Menu';
 import { ArrowRight, HandCoins, MoreHorizontal, Pencil, Scale, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Customer, PayoutMethod } from '@/lib/contract';
@@ -29,13 +30,6 @@ import { CustomerExcelChip, StatementCheckbox, addToStatementAfter, useStatement
 import { StatementTab } from '@/components/customers/StatementTab';
 import { StandalonePayoutDialog } from '@/components/customers/StandalonePayoutDialog';
 import { PayoutsRegister } from '@/components/customers/PayoutsRegister';
-
-const moreItem = 'flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised [&_svg]:size-4 [&_svg]:text-fg-3';
-
-const tabCls = ({ isSelected }: { isSelected: boolean }) => cx(
-  'relative -mb-px flex h-10 cursor-default items-center gap-2 px-3 text-sm outline-none transition-colors duration-150',
-  'data-[focus-visible]:outline-2 data-[focus-visible]:-outline-offset-2 data-[focus-visible]:outline-focus',
-  isSelected ? 'text-fg after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent' : 'text-fg-3 hover:text-fg-2');
 
 // ----------------------------------------------------------------- payout / adjustment
 function MoneyEntryDialog({ kind, customer, currencies, defaultCurrency, onClose }: {
@@ -187,26 +181,26 @@ function CustomerPage({ customerId }: { customerId: number }) {
           <Button variant="primary" size="sm" onPress={() => setDialog('payout')}><HandCoins />تسجيل دفعة</Button>
           <MenuTrigger>
             <Button variant="secondary" size="sm" aria-label="المزيد"><MoreHorizontal />المزيد</Button>
-            <Popover placement="bottom end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-              <Menu className="outline-none" onAction={(k) => setDialog(k as 'payout' | 'adjustment' | 'edit' | 'delete')}>
-                <MenuItem id="adjustment" className={moreItem}><Scale />قيد تسوية</MenuItem>
-                <MenuItem id="edit" className={moreItem}><Pencil />تعديل العميل</MenuItem>
-                <MenuItem id="delete" className={cx(moreItem, 'text-neg')}><Trash2 />حذف العميل</MenuItem>
+            <MenuPopover className="min-w-48">
+              <Menu onAction={(k) => setDialog(k as 'payout' | 'adjustment' | 'edit' | 'delete')}>
+                <MenuItem id="adjustment"><Scale />قيد تسوية</MenuItem>
+                <MenuItem id="edit"><Pencil />تعديل العميل</MenuItem>
+                <MenuItem id="delete" variant="danger"><Trash2 />حذف العميل</MenuItem>
               </Menu>
-            </Popover>
+            </MenuPopover>
           </MenuTrigger>
         </>}
       />
 
       {tab !== null && (
         <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(String(k))} className="flex min-h-0 flex-1 flex-col">
-          <div className="mb-2 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-line">
-            <TabList aria-label="كشف الحساب" className="flex gap-1">
-              {currencies.map((cur) => <Tab key={cur} id={cur} className={tabCls}>كشف {cur}</Tab>)}
-              <Tab id="pending" className={tabCls}>
+          <div className="mb-1 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-line">
+            <TabList aria-label="كشف الحساب">
+              {currencies.map((cur) => <Tab key={cur} id={cur}>كشف {cur}</Tab>)}
+              <Tab id="pending">
                 <span className="flex items-center gap-2">بانتظار الموافقة{c.pendingCount > 0 && <Badge tone="accent"><span className="num">{c.pendingCount}</span></Badge>}</span>
               </Tab>
-              <Tab id="payouts" className={tabCls}>الدفعات</Tab>
+              <Tab id="payouts">الدفعات</Tab>
             </TabList>
             <div ref={setToolbar} className="flex min-w-0 flex-1 items-center gap-2 py-1" />
           </div>

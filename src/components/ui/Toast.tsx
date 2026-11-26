@@ -1,9 +1,9 @@
-import { UNSTABLE_Toast as Toast, UNSTABLE_ToastContent as ToastContent, UNSTABLE_ToastQueue as ToastQueue, UNSTABLE_ToastRegion as ToastRegion, Button as RacButton, Text } from 'react-aria-components';
-import { CircleAlert, CircleCheck, TriangleAlert, X } from 'lucide-react';
-import { cx } from './cx';
+import { Toast, ToastQueue, Button as HeroButton } from '@heroui/react';
+import { CircleAlert, CircleCheck, TriangleAlert } from 'lucide-react';
 
 export type ToastAction = { label: string; onPress: () => void };
-type ToastData = { title: string; description?: string; tone: 'ok' | 'error' | 'warn'; actions?: ToastAction[] };
+type Tone = 'ok' | 'error' | 'warn';
+type ToastData = { title: string; description?: string; tone: Tone; actions?: ToastAction[] };
 export const toastQueue = new ToastQueue<ToastData>({ maxVisibleToasts: 4 });
 
 export const toast = {
@@ -15,32 +15,33 @@ export const toast = {
   warn: (title: string, description?: string, actions?: ToastAction[]) => toastQueue.add({ title, description, tone: 'warn', actions }, { timeout: 12000 }),
 };
 
-/** Toasts sit bottom-left (SPEC §6), i.e. the side away from the sidebar. */
+const variant = { ok: 'success', error: 'danger', warn: 'warning' } as const;
+const icon = { ok: <CircleCheck />, error: <CircleAlert />, warn: <TriangleAlert /> };
+
+/**
+ * HeroUI toasts, bottom-left (SPEC §6): the side away from the sidebar. All of them stay readable at
+ * once (`isExpanded`): a money app never hides "saved" behind a newer message.
+ */
 export function Toasts() {
   return (
-    <ToastRegion queue={toastQueue} className="toasts fixed bottom-5 left-5 z-[60] flex flex-col-reverse gap-2 outline-none transition-[left] duration-200">
+    <Toast.Provider queue={toastQueue} placement="bottom end" isExpanded maxVisibleToasts={4} width={380} gap={8} aria-label="الإشعارات" className="toasts">
       {({ toast: t }) => (
-        <Toast toast={t} data-tone={t.content.tone} className="flex w-[360px] items-start gap-3 rounded-card border border-line bg-surface p-3.5 shadow-(--shadow-float) outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus">
-          <span className={cx('mt-0.5 [&_svg]:size-[18px]', { ok: 'text-pos', error: 'text-neg', warn: 'text-warn' }[t.content.tone])}>
-            {{ ok: <CircleCheck />, error: <CircleAlert />, warn: <TriangleAlert /> }[t.content.tone]}
-          </span>
-          <ToastContent className="min-w-0 flex-1">
-            <Text slot="title" className="block text-sm font-medium text-fg">{t.content.title}</Text>
-            {t.content.description && <Text slot="description" className="block text-[13px] text-fg-2">{t.content.description}</Text>}
+        <Toast toast={t} variant={variant[t.content.tone]} data-tone={t.content.tone}>
+          <Toast.Indicator variant={variant[t.content.tone]}>{icon[t.content.tone]}</Toast.Indicator>
+          <Toast.Content>
+            <Toast.Title>{t.content.title}</Toast.Title>
+            {t.content.description && <Toast.Description>{t.content.description}</Toast.Description>}
             {t.content.actions && (
               <div className="mt-2 flex gap-2">
                 {t.content.actions.map((a) => (
-                  <RacButton key={a.label} onPress={() => { toastQueue.close(t.key); a.onPress(); }}
-                    className="h-7 rounded-[6px] border border-line px-2.5 text-[13px] font-medium text-fg outline-none hover:bg-raised data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus">
-                    {a.label}
-                  </RacButton>
+                  <HeroButton key={a.label} size="sm" variant="outline" className="h-7" onPress={() => { toastQueue.close(t.key); a.onPress(); }}>{a.label}</HeroButton>
                 ))}
               </div>
             )}
-          </ToastContent>
-          <RacButton slot="close" aria-label="إغلاق" className="grid size-6 place-items-center rounded-[6px] text-fg-3 outline-none hover:bg-raised data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus"><X className="size-3.5" /></RacButton>
+          </Toast.Content>
+          <Toast.CloseButton aria-label="إغلاق" />
         </Toast>
       )}
-    </ToastRegion>
+    </Toast.Provider>
   );
 }

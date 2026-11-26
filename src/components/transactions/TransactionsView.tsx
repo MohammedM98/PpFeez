@@ -2,7 +2,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEve
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router';
 import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
-import { Tabs, TabList, Tab, TabPanel, Menu, MenuItem, Popover, type SortDescriptor, type Selection, type Key } from 'react-aria-components';
+import { type SortDescriptor, type Selection, type Key } from 'react-aria-components';
+import { Tabs, TabList, Tab, TabPanel } from '@/components/ui/Tabs';
+import { Menu, MenuItem, MenuPopover } from '@/components/ui/Menu';
 import { Check, CornerDownLeft, FileCheck2, FileSpreadsheet, MoreHorizontal, X } from 'lucide-react';
 import { api, native } from '@/lib/api';
 import { useAction } from '@/lib/useAction';
@@ -310,13 +312,10 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
       {/* tabs and filters on one line (SPEC 6.5): the table starts high on the screen */}
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line pb-2">
       {/* a single list (the customer's "awaiting approval") needs no tabs of its own */}
-      <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as TxnStatus)} className={cx('-mb-2.5', tabs.length === 1 && 'hidden')}>
-        <TabList aria-label={inbox ? 'الوارد' : 'معاملات العميل'} className="flex gap-1">
+      <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as TxnStatus)} className={cx('-mb-2', tabs.length === 1 && 'hidden')}>
+        <TabList aria-label={inbox ? 'الوارد' : 'معاملات العميل'}>
           {tabs.map((k) => (
-            <Tab key={k} id={k} className={({ isSelected }) => cx(
-              'relative -mb-px flex h-10 cursor-default items-center gap-2 px-3 text-sm outline-none transition-colors duration-150',
-              'data-[focus-visible]:outline-2 data-[focus-visible]:-outline-offset-2 data-[focus-visible]:outline-focus',
-              isSelected ? 'text-fg after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent' : 'text-fg-3 hover:text-fg-2')}>
+            <Tab key={k} id={k}>
               {txnStatus[k]}
               <span className={cx('num text-[12.5px]', k === 'pending_approval' && counts.data?.[k] ? 'text-accent-ink' : 'text-fg-3')}>{counts.data?.[k] ?? ''}</span>
             </Tab>
@@ -435,15 +434,15 @@ export function TransactionsView({ scope, exportSlot }: { scope: TxnScope; expor
           </TableBody>
         </Table>
         {rowMenu && (
-          <Popover triggerRef={{ current: rowMenu.el }} isOpen onOpenChange={(o) => { if (!o) { const el = rowMenu.el; setRowMenu(null); requestAnimationFrame(() => el.isConnected && el.focus()); } }}
-            placement="bottom end" className="min-w-48 rounded-card border border-line bg-surface p-1 shadow-(--shadow-float) outline-none">
-            <Menu aria-label="إجراءات" autoFocus="first" className="outline-none" onAction={(k) => { const t = rowMenu.t; setRowMenu(null); onMenu(t, k as MenuKey); }}>
+          <MenuPopover triggerRef={{ current: rowMenu.el }} isOpen onOpenChange={(o) => { if (!o) { const el = rowMenu.el; setRowMenu(null); requestAnimationFrame(() => el.isConnected && el.focus()); } }}
+            placement="bottom end">
+            <Menu aria-label="إجراءات" autoFocus="first" onAction={(k) => { const t = rowMenu.t; setRowMenu(null); onMenu(t, k as MenuKey); }}>
               {menuKeys(rowMenu.t).map((a) => (
-                <MenuItem key={a} id={a} className={cx('flex h-8 cursor-default items-center rounded-[6px] px-2.5 text-sm outline-none data-[focused]:bg-raised', (a === 'unapprove' || a === 'delete') && 'text-neg')}>{label(a)}</MenuItem>
+                <MenuItem key={a} id={a} variant={a === 'unapprove' || a === 'delete' ? 'danger' : 'default'}>{label(a)}</MenuItem>
               ))}
-              <MenuItem id="detail" className="flex h-8 cursor-default items-center gap-2 rounded-[6px] px-2.5 text-sm text-fg-2 outline-none data-[focused]:bg-raised">عرض التفاصيل <CornerDownLeft className="ms-auto size-3.5" /></MenuItem>
+              <MenuItem id="detail" className="text-fg-2">عرض التفاصيل <CornerDownLeft className="ms-auto size-3.5" /></MenuItem>
             </Menu>
-          </Popover>
+          </MenuPopover>
         )}
         {padBottom > 0 && <div aria-hidden style={{ height: padBottom }} />}
         {!!totals?.length && (
